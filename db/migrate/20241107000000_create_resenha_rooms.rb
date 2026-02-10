@@ -22,7 +22,9 @@ class CreateResenhaRooms < ActiveRecord::Migration[7.0]
       t.timestamps
     end
 
-    add_index :resenha_room_memberships, %i[room_id user_id], unique: true,
+    add_index :resenha_room_memberships,
+              %i[room_id user_id],
+              unique: true,
               name: "idx_resenha_room_memberships_on_room_and_user"
   end
 end

@@ -6,7 +6,8 @@ module Resenha
 
     def index
       guardian.ensure_can_manage_resenha_room!(@room)
-      render_serialized @room.room_memberships, Resenha::RoomMembershipSerializer,
+      render_serialized @room.room_memberships,
+                        Resenha::RoomMembershipSerializer,
                         root: :memberships
     end
 
@@ -14,9 +15,11 @@ module Resenha
       guardian.ensure_can_manage_resenha_room!(@room)
       user = fetch_user
       membership =
-        @room.room_memberships.find_or_create_by!(user: user) do |record|
-          record.role = Resenha::RoomMembership.role_value(params[:role])
-        end
+        @room
+          .room_memberships
+          .find_or_create_by!(user: user) do |record|
+            record.role = Resenha::RoomMembership.role_value(params[:role])
+          end
 
       render_serialized membership, Resenha::RoomMembershipSerializer, root: :membership
     end

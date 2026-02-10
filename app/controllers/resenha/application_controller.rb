@@ -10,7 +10,9 @@ module Resenha
     private
 
     def ensure_enabled!
-      raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_enabled")) unless Resenha.enabled?
+      unless Resenha.enabled?
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_enabled"))
+      end
     end
 
     def guardian

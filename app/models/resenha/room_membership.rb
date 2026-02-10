@@ -9,10 +9,7 @@ module Resenha
 
     ROLE_PARTICIPANT = 0
     ROLE_MODERATOR = 1
-    ROLES = {
-      "participant" => ROLE_PARTICIPANT,
-      "moderator" => ROLE_MODERATOR,
-    }.freeze
+    ROLES = { "participant" => ROLE_PARTICIPANT, "moderator" => ROLE_MODERATOR }.freeze
 
     scope :moderator, -> { where(role: ROLE_MODERATOR) }
 

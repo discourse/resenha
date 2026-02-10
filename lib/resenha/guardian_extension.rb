@@ -19,19 +19,20 @@ module Resenha
       return false unless can_access_resenha?
       return false unless room
 
-      can_manage_resenha_rooms? ||
-        room.creator_id == user&.id ||
+      can_manage_resenha_rooms? || room.creator_id == user&.id ||
         room.moderator_ids.include?(user&.id)
     end
 
     def ensure_can_manage_resenha_room!(room)
-      raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized")) unless
-        can_manage_resenha_room?(room)
+      unless can_manage_resenha_room?(room)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
+      end
     end
 
     def ensure_can_create_resenha_room!
-      raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized")) unless
-        can_manage_resenha_rooms?
+      unless can_manage_resenha_rooms?
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
+      end
     end
 
     def can_join_resenha_room?(room)
@@ -42,8 +43,9 @@ module Resenha
     end
 
     def ensure_can_join_resenha_room!(room)
-      raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized")) unless
-        can_join_resenha_room?(room)
+      unless can_join_resenha_room?(room)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
+      end
     end
 
     def can_see_resenha_room?(room)

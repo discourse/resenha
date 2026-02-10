@@ -12,12 +12,13 @@ module Resenha
       DistributedMutex.synchronize(MUTEX) do
         next if Resenha::Room.exists?
 
-        room = Resenha::Room.create!(
-          name: DEFAULT_NAME,
-          description: I18n.t("resenha.defaults.watercooler_description"),
-          public: true,
-          creator: Discourse.system_user,
-        )
+        room =
+          Resenha::Room.create!(
+            name: DEFAULT_NAME,
+            description: I18n.t("resenha.defaults.watercooler_description"),
+            public: true,
+            creator: Discourse.system_user,
+          )
 
         Resenha::DirectoryBroadcaster.broadcast(action: :created, room: room)
       end

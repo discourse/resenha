@@ -5,13 +5,13 @@ require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 RSpec.describe Resenha::DefaultRoomSeeder do
   before do
     ActiveRecord::Migration.suppress_messages do
-      CreateResenhaRooms.new.change unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
+      unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
+        CreateResenhaRooms.new.change
+      end
     end
   end
 
-  before do
-    wipe_rooms!
-  end
+  before { wipe_rooms! }
 
   it "creates a Watercooler room when resenha is enabled and no rooms exist" do
     SiteSetting.resenha_enabled = true

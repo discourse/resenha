@@ -5,9 +5,7 @@ module Resenha
     self.table_name = "#{Resenha.table_name_prefix}rooms"
 
     belongs_to :creator, class_name: "User"
-    has_many :room_memberships,
-             class_name: "Resenha::RoomMembership",
-             dependent: :destroy
+    has_many :room_memberships, class_name: "Resenha::RoomMembership", dependent: :destroy
     has_many :members, through: :room_memberships, source: :user
 
     validates :name, presence: true, length: { maximum: 80 }

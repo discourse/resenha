@@ -13,12 +13,7 @@ module Resenha
 
       MessageBus.publish(
         Resenha.room_channel(room.id),
-        {
-          type: "signal",
-          room_id: room.id,
-          sender_id: from.id,
-          data: data,
-        },
+        { type: "signal", room_id: room.id, sender_id: from.id, data: data },
         user_ids: Array(recipient_id),
       )
     end
