@@ -128,12 +128,8 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
           </dropdown.item>
         {{/if}}
       {{else}}
-        <dropdown.item
-          class="resenha-participant-sidebar-context-menu__volume"
-        >
-          <label
-            class="resenha-participant-sidebar-context-menu__volume-label"
-          >
+        <dropdown.item class="resenha-participant-sidebar-context-menu__volume">
+          <label class="resenha-participant-sidebar-context-menu__volume-label">
             {{i18n "resenha.participant.volume"}}
           </label>
           <input
