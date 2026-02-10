@@ -2,7 +2,8 @@
 
 module Resenha
   class RoomsController < ApplicationController
-    before_action :load_room, only: %i[show update destroy join leave participants signal kick]
+    before_action :load_room,
+                  only: %i[show update destroy join leave participants signal kick heartbeat]
 
     def index
       Resenha::DefaultRoomSeeder.ensure!
@@ -71,6 +72,12 @@ module Resenha
       guardian.ensure_can_join_resenha_room!(@room)
       Resenha::ParticipantTracker.remove(@room.id, current_user.id)
       Resenha::RoomBroadcaster.publish_participants(@room)
+      head :no_content
+    end
+
+    def heartbeat
+      guardian.ensure_can_join_resenha_room!(@room)
+      Resenha::ParticipantTracker.add(@room.id, current_user.id)
       head :no_content
     end
 

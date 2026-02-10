@@ -51,6 +51,7 @@ All endpoints are namespaced under `/resenha` and respect the regular CSRF/sessi
 | `PUT /resenha/rooms/:id` | Update name/description/visibility. |
 | `DELETE /resenha/rooms/:id` | Delete a room. |
 | `POST /resenha/rooms/:id/join` / `DELETE .../leave` | Mark presence and trigger participant broadcasts. |
+| `POST /resenha/rooms/:id/heartbeat` | Refresh presence TTL without re-broadcasting participants. |
 | `POST /resenha/rooms/:id/signal` | WebRTC signaling relay. Payload must include `recipient_id` plus SDP/candidate data. |
 | `GET/POST/PUT/DELETE /resenha/rooms/:room_id/memberships` | Manage room memberships/roles. |
 

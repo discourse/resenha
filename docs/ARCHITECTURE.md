@@ -31,6 +31,7 @@ Resenha adds lightweight WebRTC voice rooms to Discourse without proxying audio/
 ## Message Flow
 
 1. User joins a room → `POST /resenha/rooms/:id/join` adds them to Redis and broadcasts participants list.
-2. Each participant receiving the broadcast spins up `RTCPeerConnection` objects (only lower user IDs send offers to avoid glare) and relays SDP/ICE payloads via `POST /resenha/rooms/:id/signal`.
-3. Audio flows directly peer-to-peer; Discourse only transports JSON signaling events.
-4. Sidebar avatars and the room screen update automatically as MessageBus notifications arrive.
+2. Clients refresh presence with `POST /resenha/rooms/:id/heartbeat` every 10 seconds (TTL is 30 seconds) without re-broadcasting participants.
+3. Each participant receiving the broadcast spins up `RTCPeerConnection` objects (only lower user IDs send offers to avoid glare) and relays SDP/ICE payloads via `POST /resenha/rooms/:id/signal`.
+4. Audio flows directly peer-to-peer; Discourse only transports JSON signaling events.
+5. Sidebar avatars and the room screen update automatically as MessageBus notifications arrive.

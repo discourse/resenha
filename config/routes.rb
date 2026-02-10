@@ -4,6 +4,7 @@ Resenha::Engine.routes.draw do
   resources :rooms do
     member do
       post :join
+      post :heartbeat
       delete :leave
       get :participants
       post :signal

@@ -22,6 +22,7 @@ export default class ResenhaWebrtcService extends Service {
   #speakingMonitors = new Map();
   #pendingPlaybackElements = new WeakSet();
   #heartbeatTimers = new Map();
+  #heartbeatInFlight = new Set();
   #signalQueues = new Map();
   #signalFlushTimers = new Map();
   #httpSignalQueues = new Map();
@@ -52,6 +53,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#speakingMonitors.clear();
     this.#heartbeatTimers.forEach((timer) => clearInterval(timer));
     this.#heartbeatTimers.clear();
+    this.#heartbeatInFlight.clear();
     this.#peerReconnectTimers.forEach((timer) => clearTimeout(timer));
     this.#peerReconnectTimers.clear();
     this.#signalFlushTimers.forEach((timer) => clearTimeout(timer));
@@ -139,7 +141,7 @@ export default class ResenhaWebrtcService extends Service {
     // Leave any other active rooms first (rooms are mutually exclusive)
     for (const activeRoomId of this.#activeRoomIds) {
       if (activeRoomId !== room.id) {
-        this.leave({ id: activeRoomId });
+        this.leave({ id: activeRoomId }, { keepLocalStream: true });
       }
     }
 
@@ -164,9 +166,18 @@ export default class ResenhaWebrtcService extends Service {
     this.#subscribeToRoom(room.id);
     this.#activeRoomIds.add(room.id);
 
-    const response = await ajax(`/resenha/rooms/${room.id}/join`, {
-      type: "POST",
-    });
+    let response;
+
+    try {
+      response = await ajax(`/resenha/rooms/${room.id}/join`, {
+        type: "POST",
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to join room", error);
+      this.#handleJoinFailure(room.id);
+      return;
+    }
 
     // eslint-disable-next-line no-console
     console.log(
@@ -186,10 +197,12 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  leave(room) {
+  leave(room, options = {}) {
     if (!room?.id) {
       return;
     }
+
+    const keepLocalStream = options.keepLocalStream === true;
 
     ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
     this.#activeRoomIds.delete(room.id);
@@ -197,7 +210,10 @@ export default class ResenhaWebrtcService extends Service {
     this.#teardownAudioMonitor(room.id, this.currentUser?.id);
     this.#stopHeartbeat(room.id);
     this.#teardownRoom(room.id);
-    this.#stopLocalStream();
+
+    if (!keepLocalStream && this.#activeRoomIds.size === 0) {
+      this.#stopLocalStream();
+    }
   }
 
   @action
@@ -328,15 +344,13 @@ export default class ResenhaWebrtcService extends Service {
       this.#roomSubscriptions.delete(roomId);
     }
 
-    const peers = this.#peerConnections.get(roomId) || new Map();
-    peers.forEach((pc, remoteUserId) => {
-      pc.close();
-      this.#clearOfferRetry(roomId, remoteUserId);
-      this.#clearPeerRestart(roomId, remoteUserId);
-      this.#clearConnectionTimeout(roomId, remoteUserId);
-      this.#clearPendingCandidates(roomId, remoteUserId);
-    });
-    this.#peerConnections.delete(roomId);
+    const peers = this.#peerConnections.get(roomId);
+    if (peers) {
+      Array.from(peers.keys()).forEach((remoteUserId) => {
+        this.#destroyPeerConnection(roomId, remoteUserId);
+      });
+      this.#peerConnections.delete(roomId);
+    }
     this.#removeAllRemoteStreams(roomId);
     this.#teardownRoomMonitors(roomId);
     this.#clearSignalQueuesForRoom(roomId);
@@ -398,6 +412,23 @@ export default class ResenhaWebrtcService extends Service {
       }
     };
 
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === "complete") {
+        this.#flushQueuedSignals(roomId, remoteUserId).catch((error) => {
+          // eslint-disable-next-line no-console
+          console.warn("[resenha] failed to flush signal queue", error);
+        });
+      }
+    };
+
+    pc.onicecandidateerror = (event) => {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[resenha] ICE candidate error for user ${remoteUserId}`,
+        event
+      );
+    };
+
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected") {
         this.#clearOfferRetry(roomId, remoteUserId);
@@ -419,10 +450,9 @@ export default class ResenhaWebrtcService extends Service {
       }
 
       if (pc.connectionState === "closed") {
-        this.#clearOfferRetry(roomId, remoteUserId);
-        this.#clearPeerRestart(roomId, remoteUserId);
-        this.#clearConnectionTimeout(roomId, remoteUserId);
-        this.#removeRemoteStream(roomId, remoteUserId);
+        this.#destroyPeerConnection(roomId, remoteUserId, {
+          closeConnection: false,
+        });
       }
     };
 
@@ -497,6 +527,14 @@ export default class ResenhaWebrtcService extends Service {
   async #handleSignal(roomId, payload) {
     const remoteUserId = Number(payload.sender_id);
     const data = payload.data;
+
+    if (!Number.isFinite(remoteUserId) || remoteUserId <= 0) {
+      return;
+    }
+
+    if (remoteUserId === this.currentUser?.id) {
+      return;
+    }
     // eslint-disable-next-line no-console
     console.log(
       `[resenha] 📥 received ${data.type} from user ${remoteUserId} in room ${roomId}`
@@ -625,6 +663,15 @@ export default class ResenhaWebrtcService extends Service {
       return Promise.resolve();
     }
 
+    if (!this.#activeRoomIds.has(roomId)) {
+      return Promise.resolve();
+    }
+
+    const peers = this.#peerConnections.get(roomId);
+    if (!peers || !peers.has(recipientId)) {
+      return Promise.resolve();
+    }
+
     if (payload.type === "candidate") {
       this.#queueSignal(roomId, recipientId, payload);
       return Promise.resolve();
@@ -704,14 +751,7 @@ export default class ResenhaWebrtcService extends Service {
     let peers = this.#peerConnections.get(roomId);
     peers?.forEach((pc, remoteUserId) => {
       if (!participantIds.has(remoteUserId)) {
-        pc.close();
-        peers.delete(remoteUserId);
-        this.#removeRemoteStream(roomId, remoteUserId);
-        this.#clearPeerRestart(roomId, remoteUserId);
-        this.#clearOfferRetry(roomId, remoteUserId);
-        this.#clearConnectionTimeout(roomId, remoteUserId);
-        this.#clearPendingCandidates(roomId, remoteUserId);
-        this.#clearSignalQueue(roomId, remoteUserId);
+        this.#destroyPeerConnection(roomId, remoteUserId);
       }
     });
 
@@ -1084,15 +1124,28 @@ export default class ResenhaWebrtcService extends Service {
         return;
       }
 
+      if (this.#heartbeatInFlight.has(roomId)) {
+        return;
+      }
+
+      this.#heartbeatInFlight.add(roomId);
+
       try {
-        await ajax(`/resenha/rooms/${roomId}/join`, {
+        await ajax(`/resenha/rooms/${roomId}/heartbeat`, {
           type: "POST",
         });
         // eslint-disable-next-line no-console
         console.log(`[resenha] heartbeat sent for room ${roomId}`);
       } catch (error) {
+        const status = error?.jqXHR?.status || error?.status;
         // eslint-disable-next-line no-console
         console.warn(`[resenha] heartbeat failed for room ${roomId}`, error);
+
+        if (status === 403 || status === 404 || status === 410) {
+          this.leave({ id: roomId });
+        }
+      } finally {
+        this.#heartbeatInFlight.delete(roomId);
       }
     }, 10000);
 
@@ -1104,6 +1157,7 @@ export default class ResenhaWebrtcService extends Service {
     if (timer) {
       clearInterval(timer);
       this.#heartbeatTimers.delete(roomId);
+      this.#heartbeatInFlight.delete(roomId);
       // eslint-disable-next-line no-console
       console.log(`[resenha] heartbeat stopped for room ${roomId}`);
     }
@@ -1161,6 +1215,13 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #clearPeerRestart(roomId, remoteUserId) {
+    this.#clearPeerRestartTimer(roomId, remoteUserId);
+
+    // Reset restart attempts on successful connection
+    this.#restartAttempts.delete(this.remotePeerKey(roomId, remoteUserId));
+  }
+
+  #clearPeerRestartTimer(roomId, remoteUserId) {
     const key = this.remotePeerKey(roomId, remoteUserId);
     const timer = this.#peerReconnectTimers.get(key);
 
@@ -1168,9 +1229,6 @@ export default class ResenhaWebrtcService extends Service {
       clearTimeout(timer);
       this.#peerReconnectTimers.delete(key);
     }
-
-    // Reset restart attempts on successful connection
-    this.#restartAttempts.delete(key);
   }
 
   #clearSignalQueuesForRoom(roomId) {
@@ -1361,31 +1419,61 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    this.#destroyPeerConnection(roomId, remoteUserId, {
+      resetRestartAttempts: false,
+    });
+
+    await this.#createPeerConnection(roomId, remoteUserId);
+    await this.#initiateOffer(roomId, remoteUserId);
+  }
+
+  #handleJoinFailure(roomId) {
+    this.#activeRoomIds.delete(roomId);
+    this.#stopHeartbeat(roomId);
+    this.#removeLocalParticipant(roomId);
+    this.#teardownRoom(roomId);
+
+    if (this.#activeRoomIds.size === 0) {
+      this.#stopLocalStream();
+    }
+  }
+
+  #destroyPeerConnection(
+    roomId,
+    remoteUserId,
+    { resetRestartAttempts = true, closeConnection = true } = {}
+  ) {
     const peers = this.#peerConnections.get(roomId);
-    const existing = peers?.get(remoteUserId);
-    if (existing) {
-      try {
-        existing.ontrack = null;
-        existing.onicecandidate = null;
-        existing.onconnectionstatechange = null;
-        existing.close();
-      } catch {
-        // ignore close errors
+    const pc = peers?.get(remoteUserId);
+
+    if (pc) {
+      pc.ontrack = null;
+      pc.onicecandidate = null;
+      pc.onconnectionstatechange = null;
+      pc.oniceconnectionstatechange = null;
+      pc.onicegatheringstatechange = null;
+      pc.onicecandidateerror = null;
+
+      if (closeConnection) {
+        try {
+          pc.close();
+        } catch {
+          // ignore close errors
+        }
       }
+
       peers.delete(remoteUserId);
     }
 
-    this.#removeRemoteStream(roomId, remoteUserId);
     this.#clearOfferRetry(roomId, remoteUserId);
+    if (resetRestartAttempts) {
+      this.#clearPeerRestart(roomId, remoteUserId);
+    } else {
+      this.#clearPeerRestartTimer(roomId, remoteUserId);
+    }
     this.#clearConnectionTimeout(roomId, remoteUserId);
     this.#clearPendingCandidates(roomId, remoteUserId);
-
-    await this.#createPeerConnection(roomId, remoteUserId);
-
-    if (this.currentUser?.id <= remoteUserId) {
-      await this.#initiateOffer(roomId, remoteUserId);
-    } else {
-      this.#scheduleOfferRetry(roomId, remoteUserId, 0);
-    }
+    this.#clearSignalQueue(roomId, remoteUserId);
+    this.#removeRemoteStream(roomId, remoteUserId);
   }
 }
