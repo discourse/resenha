@@ -164,7 +164,10 @@ export default class ResenhaWebrtcService extends Service {
 
         this.#rawLocalStream = rawStream;
 
-        if (this.siteSettings.resenha_noise_suppression) {
+        if (
+          this.siteSettings.resenha_noise_suppression &&
+          this.#isNoiseSuppressionPreferred()
+        ) {
           try {
             await this.#setupNoiseSuppression(rawStream);
             this.noiseSuppressionEnabled = true;
@@ -1570,12 +1573,14 @@ export default class ResenhaWebrtcService extends Service {
     if (this.noiseSuppressionEnabled) {
       this.#teardownNoiseSuppression();
       this.localStream = this.#rawLocalStream;
+      this.#setNoiseSuppressionPreference(false);
       // eslint-disable-next-line no-console
       console.log("[resenha] noise suppression disabled");
     } else {
       try {
         await this.#setupNoiseSuppression(this.#rawLocalStream);
         this.noiseSuppressionEnabled = true;
+        this.#setNoiseSuppressionPreference(true);
         // eslint-disable-next-line no-console
         console.log("[resenha] noise suppression enabled");
       } catch (error) {
@@ -1587,6 +1592,26 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     await this.#replaceTrackOnAllPeers();
+  }
+
+  #isNoiseSuppressionPreferred() {
+    try {
+      return localStorage.getItem("resenha:noise-suppression") === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  #setNoiseSuppressionPreference(enabled) {
+    try {
+      if (enabled) {
+        localStorage.setItem("resenha:noise-suppression", "1");
+      } else {
+        localStorage.removeItem("resenha:noise-suppression");
+      }
+    } catch {
+      // ignore storage errors
+    }
   }
 
   async #replaceTrackOnAllPeers() {
