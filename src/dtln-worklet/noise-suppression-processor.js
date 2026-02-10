@@ -1,6 +1,25 @@
 import dtln from "./dtln.js";
 
-const DTLN_FIXED_BUFFER_SIZE = 512;
+const DTLN_RATE = 16000;
+const DTLN_FRAME_SIZE = 512;
+
+function resample(input, fromRate, toRate) {
+  if (fromRate === toRate) {
+    return input;
+  }
+  const ratio = fromRate / toRate;
+  const outputLen = Math.round(input.length / ratio);
+  const output = new Float32Array(outputLen);
+  for (let i = 0; i < outputLen; i++) {
+    const srcPos = i * ratio;
+    const srcIndex = Math.floor(srcPos);
+    const frac = srcPos - srcIndex;
+    const a = input[srcIndex] || 0;
+    const b = input[Math.min(srcIndex + 1, input.length - 1)] || 0;
+    output[i] = a + frac * (b - a);
+  }
+  return output;
+}
 
 class NoiseSuppressionProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -8,11 +27,14 @@ class NoiseSuppressionProcessor extends AudioWorkletProcessor {
 
     this.dtlnHandle = undefined;
     this.isModuleReady = false;
+    this.nativeRate = sampleRate;
 
-    this.inputBuffer = new Float32Array(DTLN_FIXED_BUFFER_SIZE);
-    this.outputBuffer = new Float32Array(DTLN_FIXED_BUFFER_SIZE);
+    this.inputBuffer = new Float32Array(DTLN_FRAME_SIZE);
+    this.outputBuffer = new Float32Array(DTLN_FRAME_SIZE);
     this.inputIndex = 0;
-    this.outputBytes = 0;
+
+    this.outputQueue = [];
+    this.outputQueueOffset = 0;
 
     dtln.postRun = [
       () => {
@@ -52,22 +74,50 @@ class NoiseSuppressionProcessor extends AudioWorkletProcessor {
         this.dtlnHandle = dtln.dtln_create();
       }
 
-      this.inputBuffer.set(input, this.inputIndex);
-      this.inputIndex += input.length;
+      const downsampled = resample(input, this.nativeRate, DTLN_RATE);
 
-      if (this.inputIndex >= DTLN_FIXED_BUFFER_SIZE) {
-        dtln.dtln_denoise(this.dtlnHandle, this.inputBuffer, this.outputBuffer);
-        this.inputIndex = 0;
-        this.outputBytes = DTLN_FIXED_BUFFER_SIZE;
+      for (let i = 0; i < downsampled.length; i++) {
+        this.inputBuffer[this.inputIndex++] = downsampled[i];
+
+        if (this.inputIndex >= DTLN_FRAME_SIZE) {
+          dtln.dtln_denoise(
+            this.dtlnHandle,
+            this.inputBuffer,
+            this.outputBuffer
+          );
+          this.inputIndex = 0;
+
+          const upsampled = resample(
+            this.outputBuffer,
+            DTLN_RATE,
+            this.nativeRate
+          );
+          this.outputQueue.push(upsampled);
+        }
       }
 
-      if (this.outputBytes > 0) {
-        output.set(this.outputBuffer.subarray(0, input.length));
-        this.outputBuffer.copyWithin(0, input.length);
-        this.outputBytes -= input.length;
-        this.outputBytes = Math.max(0, this.outputBytes);
-      } else {
-        output.fill(0);
+      let written = 0;
+      while (written < output.length && this.outputQueue.length > 0) {
+        const chunk = this.outputQueue[0];
+        const available = chunk.length - this.outputQueueOffset;
+        const needed = output.length - written;
+        const toCopy = Math.min(available, needed);
+
+        output.set(
+          chunk.subarray(this.outputQueueOffset, this.outputQueueOffset + toCopy),
+          written
+        );
+        written += toCopy;
+        this.outputQueueOffset += toCopy;
+
+        if (this.outputQueueOffset >= chunk.length) {
+          this.outputQueue.shift();
+          this.outputQueueOffset = 0;
+        }
+      }
+
+      if (written < output.length) {
+        output.fill(0, written);
       }
     } catch (error) {
       // eslint-disable-next-line no-console

@@ -1509,7 +1509,7 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   async #setupNoiseSuppression(rawStream) {
-    const audioContext = new AudioContext({ sampleRate: 16000 });
+    const audioContext = new AudioContext();
 
     await audioContext.audioWorklet.addModule(
       "/plugins/resenha/javascripts/dtln-worklet.js"
