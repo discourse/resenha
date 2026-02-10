@@ -11,6 +11,7 @@ export default class ResenhaWebrtcService extends Service {
 
   @tracked localStream;
   @tracked audioEnabled = true;
+  @tracked noiseSuppressionEnabled = false;
   @tracked remoteStreamsRevision = 0;
 
   #peerConnections = new Map();
@@ -35,6 +36,11 @@ export default class ResenhaWebrtcService extends Service {
   #participantMuted = new Map();
   #audioElements = new Map();
   #streamToParticipant = new WeakMap();
+
+  #rawLocalStream = null;
+  #noiseSuppressionContext = null;
+  #noiseSuppressionNode = null;
+  #noiseSuppressionSource = null;
 
   static #candidateBatchDelayMs = 75;
   static #candidateBatchSize = 5;
@@ -150,11 +156,31 @@ export default class ResenhaWebrtcService extends Service {
 
     if (!this.localStream) {
       try {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
+        const rawStream = await navigator.mediaDevices.getUserMedia({
           audio: true,
         });
         // eslint-disable-next-line no-console
         console.log("[resenha] local stream obtained");
+
+        this.#rawLocalStream = rawStream;
+
+        if (this.siteSettings.resenha_noise_suppression) {
+          try {
+            await this.#setupNoiseSuppression(rawStream);
+            this.noiseSuppressionEnabled = true;
+            // eslint-disable-next-line no-console
+            console.log("[resenha] noise suppression enabled");
+          } catch (nsError) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[resenha] noise suppression setup failed, using raw stream",
+              nsError
+            );
+            this.localStream = rawStream;
+          }
+        } else {
+          this.localStream = rawStream;
+        }
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to obtain local stream", error);
@@ -1164,12 +1190,17 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #stopLocalStream() {
-    if (!this.localStream) {
-      return;
+    this.#teardownNoiseSuppression();
+
+    if (this.#rawLocalStream) {
+      this.#rawLocalStream.getTracks().forEach((track) => track.stop());
+      this.#rawLocalStream = null;
     }
 
-    this.localStream.getTracks().forEach((track) => track.stop());
-    this.localStream = null;
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream = null;
+    }
   }
 
   #schedulePeerRestart(roomId, remoteUserId, options = {}) {
@@ -1475,5 +1506,108 @@ export default class ResenhaWebrtcService extends Service {
     this.#clearPendingCandidates(roomId, remoteUserId);
     this.#clearSignalQueue(roomId, remoteUserId);
     this.#removeRemoteStream(roomId, remoteUserId);
+  }
+
+  async #setupNoiseSuppression(rawStream) {
+    const audioContext = new AudioContext({ sampleRate: 16000 });
+
+    await audioContext.audioWorklet.addModule(
+      "/plugins/resenha/javascripts/dtln-worklet.js"
+    );
+
+    const source = audioContext.createMediaStreamSource(rawStream);
+    const workletNode = new AudioWorkletNode(
+      audioContext,
+      "noise-suppression-processor"
+    );
+    const destination = audioContext.createMediaStreamDestination();
+
+    source.connect(workletNode);
+    workletNode.connect(destination);
+
+    this.#noiseSuppressionContext = audioContext;
+    this.#noiseSuppressionSource = source;
+    this.#noiseSuppressionNode = workletNode;
+    this.localStream = destination.stream;
+  }
+
+  #teardownNoiseSuppression() {
+    if (this.#noiseSuppressionSource) {
+      try {
+        this.#noiseSuppressionSource.disconnect();
+      } catch {
+        // ignore
+      }
+      this.#noiseSuppressionSource = null;
+    }
+
+    if (this.#noiseSuppressionNode) {
+      try {
+        this.#noiseSuppressionNode.disconnect();
+      } catch {
+        // ignore
+      }
+      this.#noiseSuppressionNode = null;
+    }
+
+    if (this.#noiseSuppressionContext) {
+      try {
+        this.#noiseSuppressionContext.close();
+      } catch {
+        // ignore
+      }
+      this.#noiseSuppressionContext = null;
+    }
+
+    this.noiseSuppressionEnabled = false;
+  }
+
+  async toggleNoiseSuppression() {
+    if (!this.#rawLocalStream) {
+      return;
+    }
+
+    if (this.noiseSuppressionEnabled) {
+      this.#teardownNoiseSuppression();
+      this.localStream = this.#rawLocalStream;
+      // eslint-disable-next-line no-console
+      console.log("[resenha] noise suppression disabled");
+    } else {
+      try {
+        await this.#setupNoiseSuppression(this.#rawLocalStream);
+        this.noiseSuppressionEnabled = true;
+        // eslint-disable-next-line no-console
+        console.log("[resenha] noise suppression enabled");
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to enable noise suppression", error);
+        this.localStream = this.#rawLocalStream;
+        return;
+      }
+    }
+
+    await this.#replaceTrackOnAllPeers();
+  }
+
+  async #replaceTrackOnAllPeers() {
+    const newTrack = this.localStream?.getAudioTracks()?.[0];
+    if (!newTrack) {
+      return;
+    }
+
+    for (const [, peers] of this.#peerConnections) {
+      for (const [, pc] of peers) {
+        for (const sender of pc.getSenders()) {
+          if (sender.track?.kind === "audio") {
+            try {
+              await sender.replaceTrack(newTrack);
+            } catch (error) {
+              // eslint-disable-next-line no-console
+              console.warn("[resenha] failed to replace track on peer", error);
+            }
+          }
+        }
+      }
+    }
   }
 }

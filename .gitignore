@@ -2,3 +2,5 @@ node_modules
 /gems
 /auto_generated
 .env
+/vendor/dtln-rs
+/src/dtln-worklet/dtln.js

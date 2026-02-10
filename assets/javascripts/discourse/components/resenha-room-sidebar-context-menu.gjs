@@ -8,6 +8,7 @@ import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 export default class ResenhaRoomSidebarContextMenu extends Component {
   @service modal;
   @service resenhaWebrtc;
+  @service siteSettings;
 
   get room() {
     return this.args.data.room;
@@ -15,6 +16,22 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
 
   get isConnected() {
     return this.resenhaWebrtc.connectionStateFor(this.room.id) === "connected";
+  }
+
+  get showNoiseSuppressionToggle() {
+    return this.isConnected && this.siteSettings.resenha_noise_suppression;
+  }
+
+  get noiseSuppressionIcon() {
+    return this.resenhaWebrtc.noiseSuppressionEnabled
+      ? "ear-listen"
+      : "volume-high";
+  }
+
+  get noiseSuppressionLabel() {
+    return this.resenhaWebrtc.noiseSuppressionEnabled
+      ? "resenha.room.noise_suppression_on"
+      : "resenha.room.noise_suppression_off";
   }
 
   @action
@@ -29,6 +46,11 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
     this.args.close();
   }
 
+  @action
+  async toggleNoiseSuppression() {
+    await this.resenhaWebrtc.toggleNoiseSuppression();
+  }
+
   <template>
     <DropdownMenu class="resenha-room-sidebar-context-menu" as |dropdown|>
       <dropdown.item>
@@ -40,6 +62,17 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
           class="resenha-room-sidebar-context-menu__room-info"
         />
       </dropdown.item>
+      {{#if this.showNoiseSuppressionToggle}}
+        <dropdown.item>
+          <DButton
+            @action={{this.toggleNoiseSuppression}}
+            @icon={{this.noiseSuppressionIcon}}
+            @label={{this.noiseSuppressionLabel}}
+            @title={{this.noiseSuppressionLabel}}
+            class="resenha-room-sidebar-context-menu__noise-suppression"
+          />
+        </dropdown.item>
+      {{/if}}
       {{#if this.isConnected}}
         <dropdown.item>
           <DButton
