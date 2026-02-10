@@ -169,21 +169,26 @@ export default {
             this.canManageRoom = canManageRoom;
           }
 
-          get hoverType() {
-            if (this.participant.id === this.currentUser?.id) {
-              return null;
+          get #isCurrentUser() {
+            return this.participant.id === this.currentUser?.id;
+          }
+
+          get #showMenu() {
+            if (capabilities.isIpadOS) {
+              return false;
             }
-            return "icon";
+            if (!this.#isCurrentUser) {
+              return true;
+            }
+            return siteSettings.resenha_noise_suppression;
+          }
+
+          get hoverType() {
+            return this.#showMenu ? "icon" : null;
           }
 
           get hoverValue() {
-            if (
-              this.participant.id === this.currentUser?.id ||
-              capabilities.isIpadOS
-            ) {
-              return null;
-            }
-            return "ellipsis-vertical";
+            return this.#showMenu ? "ellipsis-vertical" : null;
           }
 
           get hoverTitle() {
@@ -191,10 +196,7 @@ export default {
           }
 
           get hoverAction() {
-            if (
-              this.participant.id === this.currentUser?.id ||
-              capabilities.isIpadOS
-            ) {
+            if (!this.#showMenu) {
               return noop;
             }
 
@@ -213,6 +215,7 @@ export default {
                   room: this.room,
                   participant: this.participant,
                   canManageRoom: this.canManageRoom,
+                  isCurrentUser: this.#isCurrentUser,
                 },
                 onClose: onMenuClose,
               });

@@ -1,11 +1,16 @@
 {
   "private": true,
+  "scripts": {
+    "build:dtln-worklet": "./scripts/build-dtln-worklet.sh"
+  },
   "devDependencies": {
     "@discourse/lint-configs": "2.11.1",
     "ember-template-lint": "7.0.1",
     "eslint": "9.22.0",
     "prettier": "3.5.3",
-    "stylelint": "16.16.0"
+    "stylelint": "16.16.0",
+    "webpack": "^5.105.1",
+    "webpack-cli": "^6.0.1"
   },
   "engines": {
     "node": ">= 22",

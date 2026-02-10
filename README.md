@@ -28,6 +28,7 @@ Once the site setting flips on, the plugin seeds a default “Watercooler” roo
 | `resenha_allow_trust_level` | Minimum trust level required to create/manage rooms. Defaults to TL2. |
 | `resenha_max_rooms_per_user` | Hard cap on how many rooms a single creator can own (default 5). |
 | `resenha_participant_ttl_seconds` | Number of seconds participant presence is kept in Redis before expiring (default 30). A client-side heartbeat refreshes presence every 10 seconds. |
+| `resenha_noise_suppression` | When true, users can opt into DTLN-based noise suppression via their participant menu. See [Noise Suppression](#noise-suppression). |
 
 All settings live under **Admin > Settings > Plugins**.
 
@@ -62,6 +63,55 @@ Serializers live under `app/serializers/resenha`, and authorization is handled v
 - **Backend:** `Resenha::RoomsController` and `Resenha::RoomMembershipsController` expose CRUD endpoints; `Resenha::ParticipantTracker` keeps Redis-backed presence and broadcasts via `Resenha::RoomBroadcaster` / `Resenha::DirectoryBroadcaster`.
 - **Frontend:** Ember services `resenha-rooms` (presence + MessageBus) and `resenha-webrtc` (media, signaling, speaking detection) drive the sidebar component declared in `initializers/resenha-sidebar.js`.
 - **Sidebar UI:** `resenha/participant-avatars` component renders real-time participant lists. Speaking state is derived from local audio monitors and MessageBus payloads, giving instant feedback while remaining consistent when authoritative data arrives.
+
+## Noise Suppression
+
+Resenha ships optional DTLN-based noise suppression powered by [dtln-rs](https://github.com/DataDog/dtln-rs), a Rust implementation of the Dual-Signal Transformation LSTM Network compiled to WebAssembly. When active, background noise (fans, typing, pets, etc.) is filtered from the user's microphone audio before it reaches other participants.
+
+### How it works
+
+The noise suppression pipeline is inserted between `getUserMedia` and the WebRTC peer connections:
+
+```
+Microphone → AudioContext → AudioWorkletNode (dtln) → MediaStreamDestination → WebRTC peers
+```
+
+The AudioWorklet processor resamples audio from the browser's native sample rate down to 16 kHz (the rate the DTLN model expects), processes 512-sample frames through the WASM denoiser, and resamples the cleaned audio back up — all in real time on a dedicated audio thread.
+
+### Configuration
+
+1. **Admin setting** — Enable `resenha_noise_suppression` under **Admin > Settings > Plugins**. This controls whether the feature is available at all; it does not force it on for users.
+2. **User opt-in** — Once the admin setting is enabled, connected users see a noise suppression toggle in their own participant kebab menu (right-click or hover menu on their avatar in the sidebar). The preference is stored in `localStorage` (`resenha:noise-suppression`) so it persists per device across sessions.
+3. **Runtime toggle** — Users can enable or disable noise suppression mid-call without leaving the room. The audio track is swapped on all peer connections via `replaceTrack()`.
+
+If the worklet fails to load or the admin setting is off, the plugin silently falls back to the raw microphone stream.
+
+### Building the worklet
+
+A pre-built bundle is committed at `public/javascripts/dtln-worklet.js`. You only need to rebuild it when updating the dtln-rs dependency.
+
+**Prerequisites:** Rust toolchain, `wasm32-unknown-emscripten` target, Emscripten SDK, Node.js, and pnpm.
+
+```bash
+# Install the Rust target (one-time)
+rustup target add wasm32-unknown-emscripten
+
+# Build the worklet bundle
+cd plugins/resenha
+bash scripts/build-dtln-worklet.sh
+```
+
+The script clones dtln-rs into `vendor/dtln-rs`, compiles it to WASM via Emscripten, and bundles the result with the AudioWorklet processor using webpack. The output is a single self-contained JS file (~8.5 MB, ~5 MB gzipped) with the WASM binary embedded as base64.
+
+### Key files
+
+| File | Purpose |
+| --- | --- |
+| `public/javascripts/dtln-worklet.js` | Pre-built AudioWorklet bundle served at `/plugins/resenha/javascripts/dtln-worklet.js` |
+| `src/dtln-worklet/noise-suppression-processor.js` | Worklet processor source (resampling + DTLN frame processing) |
+| `src/dtln-worklet/webpack.config.js` | Webpack config for bundling the worklet |
+| `scripts/build-dtln-worklet.sh` | End-to-end build script (clone, compile, bundle) |
+| `vendor/dtln-rs/` | Cloned dtln-rs repo (gitignored) |
 
 ## Development
 

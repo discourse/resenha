@@ -23,3 +23,6 @@ plugins:
     default: ""
     client: true
     secret: true
+  resenha_noise_suppression:
+    default: false
+    client: true

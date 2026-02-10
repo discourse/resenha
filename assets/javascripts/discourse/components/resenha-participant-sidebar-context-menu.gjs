@@ -11,6 +11,7 @@ import { i18n } from "discourse-i18n";
 
 export default class ResenhaParticipantSidebarContextMenu extends Component {
   @service resenhaWebrtc;
+  @service siteSettings;
 
   @tracked volume = 100;
   @tracked isMuted = false;
@@ -35,6 +36,10 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     return this.args.data.participant;
   }
 
+  get isCurrentUser() {
+    return this.args.data.isCurrentUser;
+  }
+
   get canManageRoom() {
     return this.args.data.canManageRoom;
   }
@@ -51,6 +56,22 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
 
   get muteIcon() {
     return this.isMuted ? "volume-xmark" : "volume-high";
+  }
+
+  get showNoiseSuppressionToggle() {
+    return this.isCurrentUser && this.siteSettings.resenha_noise_suppression;
+  }
+
+  get noiseSuppressionIcon() {
+    return this.resenhaWebrtc.noiseSuppressionEnabled
+      ? "ear-listen"
+      : "volume-high";
+  }
+
+  get noiseSuppressionLabel() {
+    return this.resenhaWebrtc.noiseSuppressionEnabled
+      ? "resenha.room.noise_suppression_on"
+      : "resenha.room.noise_suppression_off";
   }
 
   @action
@@ -84,43 +105,62 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     }
   }
 
+  @action
+  async toggleNoiseSuppression() {
+    await this.resenhaWebrtc.toggleNoiseSuppression();
+  }
+
   <template>
     <DropdownMenu
       class="resenha-participant-sidebar-context-menu"
       as |dropdown|
     >
-      <dropdown.item class="resenha-participant-sidebar-context-menu__volume">
-        <label class="resenha-participant-sidebar-context-menu__volume-label">
-          {{i18n "resenha.participant.volume"}}
-        </label>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={{this.volume}}
-          class="resenha-participant-sidebar-context-menu__volume-slider"
-          {{on "input" this.onVolumeChange}}
-        />
-      </dropdown.item>
-      <dropdown.item>
-        <DButton
-          @action={{this.toggleMute}}
-          @icon={{this.muteIcon}}
-          @translatedLabel={{this.muteLabel}}
-          @translatedTitle={{this.muteLabel}}
-          class="resenha-participant-sidebar-context-menu__mute-btn"
-        />
-      </dropdown.item>
-      {{#if this.canKick}}
-        <dropdown.item>
-          <DButton
-            @action={{this.kick}}
-            @icon="right-from-bracket"
-            @label="resenha.participant.kick"
-            @title="resenha.participant.kick"
-            class="resenha-participant-sidebar-context-menu__kick-btn btn-danger"
+      {{#if this.isCurrentUser}}
+        {{#if this.showNoiseSuppressionToggle}}
+          <dropdown.item>
+            <DButton
+              @action={{this.toggleNoiseSuppression}}
+              @icon={{this.noiseSuppressionIcon}}
+              @label={{this.noiseSuppressionLabel}}
+              @title={{this.noiseSuppressionLabel}}
+              class="resenha-participant-sidebar-context-menu__noise-suppression"
+            />
+          </dropdown.item>
+        {{/if}}
+      {{else}}
+        <dropdown.item class="resenha-participant-sidebar-context-menu__volume">
+          <label class="resenha-participant-sidebar-context-menu__volume-label">
+            {{i18n "resenha.participant.volume"}}
+          </label>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={{this.volume}}
+            class="resenha-participant-sidebar-context-menu__volume-slider"
+            {{on "input" this.onVolumeChange}}
           />
         </dropdown.item>
+        <dropdown.item>
+          <DButton
+            @action={{this.toggleMute}}
+            @icon={{this.muteIcon}}
+            @translatedLabel={{this.muteLabel}}
+            @translatedTitle={{this.muteLabel}}
+            class="resenha-participant-sidebar-context-menu__mute-btn"
+          />
+        </dropdown.item>
+        {{#if this.canKick}}
+          <dropdown.item>
+            <DButton
+              @action={{this.kick}}
+              @icon="right-from-bracket"
+              @label="resenha.participant.kick"
+              @title="resenha.participant.kick"
+              class="resenha-participant-sidebar-context-menu__kick-btn btn-danger"
+            />
+          </dropdown.item>
+        {{/if}}
       {{/if}}
     </DropdownMenu>
   </template>
