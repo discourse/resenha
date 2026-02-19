@@ -5,7 +5,6 @@ import { ajax } from "discourse/lib/ajax";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
-  @service messageBus;
   @service siteSettings;
   @service("resenha-rooms") resenhaRooms;
 
@@ -18,7 +17,7 @@ export default class ResenhaWebrtcService extends Service {
   #offerRetryTimers = new Map();
   #remoteStreams = new Map();
   #peerReconnectTimers = new Map();
-  #roomSubscriptions = new Map();
+  #roomHandlerCallbacks = new Map();
   #activeRoomIds = new Set();
   #speakingMonitors = new Map();
   #pendingPlaybackElements = new WeakSet();
@@ -52,9 +51,10 @@ export default class ResenhaWebrtcService extends Service {
   willDestroy() {
     super.willDestroy(...arguments);
     this.#stopLocalStream();
-    this.#roomSubscriptions.forEach((callback, channel) => {
-      this.messageBus.unsubscribe(channel, callback);
+    this.#roomHandlerCallbacks.forEach((callback, roomId) => {
+      this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
     });
+    this.#roomHandlerCallbacks.clear();
     this.#speakingMonitors.forEach((monitor) => monitor?.stop?.());
     this.#speakingMonitors.clear();
     this.#heartbeatTimers.forEach((timer) => clearInterval(timer));
@@ -191,8 +191,8 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    // Subscribe to MessageBus BEFORE joining to avoid missing the participant broadcast
-    this.#subscribeToRoom(room.id);
+    // Register handler BEFORE joining to avoid missing the participant broadcast
+    this.#registerRoomHandler(room.id);
     this.#activeRoomIds.add(room.id);
 
     let response;
@@ -351,26 +351,21 @@ export default class ResenhaWebrtcService extends Service {
     this.#audioElements.delete(key);
   }
 
-  #subscribeToRoom(roomId) {
-    if (this.#roomSubscriptions.has(roomId)) {
-      // eslint-disable-next-line no-console
-      console.log(`[resenha] already subscribed to room ${roomId}`);
+  #registerRoomHandler(roomId) {
+    if (this.#roomHandlerCallbacks.has(roomId)) {
       return;
     }
 
-    const channel = `/resenha/rooms/${roomId}`;
-    // eslint-disable-next-line no-console
-    console.log(`[resenha] subscribing to MessageBus channel: ${channel}`);
     const callback = (payload) => this.#handleRoomMessage(roomId, payload);
-    this.messageBus.subscribe(channel, callback);
-    this.#roomSubscriptions.set(roomId, callback);
+    this.resenhaRooms.registerRoomHandler(roomId, callback);
+    this.#roomHandlerCallbacks.set(roomId, callback);
   }
 
   #teardownRoom(roomId) {
-    const channel = `/resenha/rooms/${roomId}`;
-    if (this.#roomSubscriptions.has(roomId)) {
-      this.messageBus.unsubscribe(channel, this.#roomSubscriptions.get(roomId));
-      this.#roomSubscriptions.delete(roomId);
+    const callback = this.#roomHandlerCallbacks.get(roomId);
+    if (callback) {
+      this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
+      this.#roomHandlerCallbacks.delete(roomId);
     }
 
     const peers = this.#peerConnections.get(roomId);

@@ -13,6 +13,7 @@ export default class ResenhaRoomsService extends Service {
   #roomsById = new Map();
   #roomsBySlug = new Map();
   #roomSubscriptions = new Map();
+  #roomHandlers = new Map();
 
   constructor() {
     super(...arguments);
@@ -37,6 +38,7 @@ export default class ResenhaRoomsService extends Service {
       this.messageBus.unsubscribe(`/resenha/rooms/${roomId}`, callback);
     });
     this.#roomSubscriptions.clear();
+    this.#roomHandlers.clear();
   }
 
   roomById(id) {
@@ -80,6 +82,26 @@ export default class ResenhaRoomsService extends Service {
     this.rooms = Array.from(this.#roomsById.values());
   }
 
+  registerRoomHandler(roomId, callback) {
+    let handlers = this.#roomHandlers.get(roomId);
+    if (!handlers) {
+      handlers = new Set();
+      this.#roomHandlers.set(roomId, handlers);
+    }
+    handlers.add(callback);
+  }
+
+  unregisterRoomHandler(roomId, callback) {
+    const handlers = this.#roomHandlers.get(roomId);
+    if (!handlers) {
+      return;
+    }
+    handlers.delete(callback);
+    if (handlers.size === 0) {
+      this.#roomHandlers.delete(roomId);
+    }
+  }
+
   handleRoomBroadcast(payload) {
     const room = this.#roomsById.get(payload.room_id);
     if (!room) {
@@ -89,6 +111,8 @@ export default class ResenhaRoomsService extends Service {
     if (payload.type === "participants") {
       this.#setRoomParticipants(room.id, payload.participants || []);
     }
+
+    this.#forwardToRoomHandlers(payload.room_id, payload);
   }
 
   #ensureRoomSubscription(roomId) {
@@ -109,6 +133,15 @@ export default class ResenhaRoomsService extends Service {
       this.messageBus.unsubscribe(channel, callback);
       this.#roomSubscriptions.delete(roomId);
     }
+    this.#roomHandlers.delete(roomId);
+  }
+
+  #forwardToRoomHandlers(roomId, payload) {
+    const handlers = this.#roomHandlers.get(roomId);
+    if (!handlers) {
+      return;
+    }
+    handlers.forEach((callback) => callback(payload));
   }
 
   addParticipant(roomId, participant) {
