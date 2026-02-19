@@ -12,7 +12,9 @@ export default class ResenhaWebrtcService extends Service {
   @tracked audioEnabled = true;
   @tracked noiseSuppressionEnabled = false;
   @tracked remoteStreamsRevision = 0;
+  @tracked connectionRevision = 0;
 
+  #connectingRoomIds = new Set();
   #peerConnections = new Map();
   #offerRetryTimers = new Map();
   #remoteStreams = new Map();
@@ -60,6 +62,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#heartbeatTimers.forEach((timer) => clearInterval(timer));
     this.#heartbeatTimers.clear();
     this.#heartbeatInFlight.clear();
+    this.#connectingRoomIds.clear();
     this.#peerReconnectTimers.forEach((timer) => clearTimeout(timer));
     this.#peerReconnectTimers.clear();
     this.#signalFlushTimers.forEach((timer) => clearTimeout(timer));
@@ -136,13 +139,23 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   connectionStateFor(roomId) {
-    return this.#activeRoomIds.has(roomId) ? "connected" : "idle";
+    this.connectionRevision;
+    if (this.#connectingRoomIds.has(roomId)) {
+      return "connecting";
+    }
+    if (this.#activeRoomIds.has(roomId)) {
+      return "connected";
+    }
+    return "idle";
   }
 
   async join(room) {
     if (!room?.id) {
       return;
     }
+
+    this.#connectingRoomIds.add(room.id);
+    this.#bumpConnectionRevision();
 
     // Leave any other active rooms first (rooms are mutually exclusive)
     for (const activeRoomId of this.#activeRoomIds) {
@@ -187,6 +200,8 @@ export default class ResenhaWebrtcService extends Service {
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to obtain local stream", error);
+        this.#connectingRoomIds.delete(room.id);
+        this.#bumpConnectionRevision();
         return;
       }
     }
@@ -224,6 +239,10 @@ export default class ResenhaWebrtcService extends Service {
         participants: response.room.active_participants,
       });
     }
+
+    this.#connectingRoomIds.delete(room.id);
+    this.#bumpConnectionRevision();
+    this.#playConnectedSound();
   }
 
   leave(room, options = {}) {
@@ -232,9 +251,16 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     const keepLocalStream = options.keepLocalStream === true;
+    const wasConnected = this.#activeRoomIds.has(room.id);
 
     ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+    this.#connectingRoomIds.delete(room.id);
     this.#activeRoomIds.delete(room.id);
+    this.#bumpConnectionRevision();
+
+    if (wasConnected && !keepLocalStream) {
+      this.#playDisconnectedSound();
+    }
     this.#removeLocalParticipant(room.id);
     this.#teardownAudioMonitor(room.id, this.currentUser?.id);
     this.#stopHeartbeat(room.id);
@@ -773,11 +799,19 @@ export default class ResenhaWebrtcService extends Service {
     );
 
     let peers = this.#peerConnections.get(roomId);
+
+    const existingPeerIds = new Set(peers?.keys() || []);
+
+    let hasPeerLeft = false;
+
     peers?.forEach((pc, remoteUserId) => {
       if (!participantIds.has(remoteUserId)) {
+        hasPeerLeft = true;
         this.#destroyPeerConnection(roomId, remoteUserId);
       }
     });
+
+    let hasNewPeer = false;
 
     for (const participantId of participantIds) {
       if (participantId === this.currentUser?.id) {
@@ -785,6 +819,9 @@ export default class ResenhaWebrtcService extends Service {
       }
 
       if (!peers?.has(participantId)) {
+        if (existingPeerIds.size > 0 || !this.#connectingRoomIds.has(roomId)) {
+          hasNewPeer = true;
+        }
         // eslint-disable-next-line no-console
         console.log(
           `[resenha] creating peer connection to user ${participantId}`
@@ -803,6 +840,14 @@ export default class ResenhaWebrtcService extends Service {
           );
           this.#scheduleOfferRetry(roomId, participantId);
         }
+      }
+    }
+
+    if (this.#activeRoomIds.has(roomId)) {
+      if (hasNewPeer) {
+        this.#playUserJoinedSound();
+      } else if (hasPeerLeft) {
+        this.#playUserLeftSound();
       }
     }
   }
@@ -1107,6 +1152,110 @@ export default class ResenhaWebrtcService extends Service {
 
   #bumpRemoteStreamsRevision() {
     this.remoteStreamsRevision++;
+  }
+
+  #bumpConnectionRevision() {
+    this.connectionRevision++;
+  }
+
+  #playConnectedSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.frequency.value = 523.25; // C5
+      gain1.gain.setValueAtTime(0.15, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      osc1.connect(gain1).connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.15);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.frequency.value = 659.25; // E5
+      gain2.gain.setValueAtTime(0.001, now);
+      gain2.gain.setValueAtTime(0.15, now + 0.1);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc2.connect(gain2).connect(ctx.destination);
+      osc2.start(now + 0.1);
+      osc2.stop(now + 0.25);
+
+      osc2.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
+  }
+
+  #playDisconnectedSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.frequency.value = 659.25; // E5
+      gain1.gain.setValueAtTime(0.15, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      osc1.connect(gain1).connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.15);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.frequency.value = 523.25; // C5
+      gain2.gain.setValueAtTime(0.001, now);
+      gain2.gain.setValueAtTime(0.15, now + 0.1);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc2.connect(gain2).connect(ctx.destination);
+      osc2.start(now + 0.1);
+      osc2.stop(now + 0.25);
+
+      osc2.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
+  }
+
+  #playUserJoinedSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 659.25; // E5
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.1);
+
+      osc.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
+  }
+
+  #playUserLeftSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 523.25; // C5
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.1);
+
+      osc.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
   }
 
   #schedulePlaybackResume(element) {
@@ -1457,6 +1606,8 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #handleJoinFailure(roomId) {
+    this.#connectingRoomIds.delete(roomId);
+    this.#bumpConnectionRevision();
     this.#activeRoomIds.delete(roomId);
     this.#stopHeartbeat(roomId);
     this.#removeLocalParticipant(roomId);

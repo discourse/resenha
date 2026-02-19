@@ -9,6 +9,7 @@ Resenha is an experimental Discourse plugin that adds Discord-style voice rooms 
 - **Sidebar-first UX** – rooms show up under a “Voice rooms” section; clicking a room toggles join/leave without a route change.
 - **Watercooler out of the box** – enabling the plugin seeds a default room so communities can try voice immediately.
 - **Live presence** – avatars of active participants render directly under each room name, update in real time, and show a green outline whenever a participant is speaking.
+- **Audio cues** – subtle synthesized tones let you know when you connect/disconnect and when others join or leave your room.
 - **Room + membership management** – REST endpoints allow trusted users to create/update/delete rooms, adjust membership roles, and control visibility.
 - **Pure browser WebRTC** – all signaling happens through Discourse + MessageBus; media stays peer-to-peer so no SFU/MCU infrastructure is required.
 
@@ -35,9 +36,10 @@ All settings live under **Admin > Settings > Plugins**.
 ## Using Voice Rooms
 
 1. Visit any Discourse page with the sidebar visible. A **Voice rooms** section appears as soon as at least one room exists.
-2. Click a room name to join. The front-end will request microphone access and establish WebRTC peers with the other members.
-3. Clicking again leaves the room. We optimistically update presence and speaking state locally while the backend broadcasts authoritative updates through MessageBus.
+2. Click a room name to join. A spinner appears in the sidebar while the microphone is acquired and WebRTC peers are set up. Clicking a room while it is connecting is ignored (no double-join).
+3. Once connected, the spinner disappears, the room link becomes active, and an ascending chime confirms the connection. Clicking again leaves the room with a descending chime.
 4. Speaking detection is performed per stream in the browser; avatars get a green outline (and bold username) when RMS levels exceed the threshold.
+5. When another participant joins or leaves, you hear a brief tone (high for join, low for leave) so you stay aware of room changes without looking at the screen.
 
 Rooms are currently “button-only” UI – there is no `/resenha/rooms` page exposed to end users. Moderation and CRUD flows are provided through the REST API or future staff UI.
 

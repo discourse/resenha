@@ -74,12 +74,12 @@ export default {
 
           get classNames() {
             const classes = ["resenha-sidebar-link"];
+            const state = this.resenhaWebrtc.connectionStateFor(this.room.id);
 
-            if (
-              this.resenhaWebrtc.connectionStateFor(this.room.id) ===
-              "connected"
-            ) {
+            if (state === "connected") {
               classes.push("sidebar-section-link--active");
+            } else if (state === "connecting") {
+              classes.push("resenha-sidebar-link--connecting");
             }
 
             return classes.join(" ");
@@ -90,11 +90,13 @@ export default {
           }
 
           get title() {
-            const isConnected =
-              this.resenhaWebrtc.connectionStateFor(this.room.id) ===
-              "connected";
+            const state = this.resenhaWebrtc.connectionStateFor(this.room.id);
 
-            if (isConnected) {
+            if (state === "connecting") {
+              return i18n("resenha.room.connecting");
+            }
+
+            if (state === "connected") {
               return i18n("resenha.room.leave");
             }
 
@@ -115,6 +117,26 @@ export default {
 
           get prefixValue() {
             return "microphone-lines";
+          }
+
+          get suffixType() {
+            if (
+              this.resenhaWebrtc.connectionStateFor(this.room.id) ===
+              "connecting"
+            ) {
+              return "icon";
+            }
+            return null;
+          }
+
+          get suffixValue() {
+            if (
+              this.resenhaWebrtc.connectionStateFor(this.room.id) ===
+              "connecting"
+            ) {
+              return "spinner";
+            }
+            return null;
           }
 
           getParticipantsForSummary() {
@@ -360,7 +382,13 @@ export default {
           return;
         }
 
-        if (resenhaWebrtc.connectionStateFor(room.id) === "connected") {
+        const connectionState = resenhaWebrtc.connectionStateFor(room.id);
+
+        if (connectionState === "connecting") {
+          return;
+        }
+
+        if (connectionState === "connected") {
           resenhaWebrtc.leave(room);
         } else {
           await resenhaWebrtc.join(room);

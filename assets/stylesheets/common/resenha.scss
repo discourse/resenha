@@ -1,3 +1,9 @@
+.resenha-sidebar-link--connecting {
+  .sidebar-section-link-suffix .d-icon {
+    animation: spin 1s linear infinite;
+  }
+}
+
 .resenha-sidebar-participant {
   padding-left: 1.5rem;
   position: relative;
