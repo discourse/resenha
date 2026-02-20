@@ -3,7 +3,7 @@ import { action } from "@ember/object";
 import { service } from "@ember/service";
 import DButton from "discourse/components/d-button";
 import DropdownMenu from "discourse/components/dropdown-menu";
-import { getURL } from "discourse/lib/url";
+import getURL from "discourse/lib/get-url";
 import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 
 export default class ResenhaRoomSidebarContextMenu extends Component {
