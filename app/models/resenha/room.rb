@@ -19,6 +19,7 @@ module Resenha
               }
 
     before_validation :ensure_slug
+    before_save :cook_description
     after_commit :ensure_creator_membership, on: :create
 
     scope :public_rooms, -> { where(public: true) }
@@ -43,6 +44,10 @@ module Resenha
 
     def ensure_slug
       self.slug = Slug.for(name) if slug.blank? && name.present?
+    end
+
+    def cook_description
+      self.cooked_description = (PrettyText.cook(description) if description.present?)
     end
 
     def ensure_creator_membership

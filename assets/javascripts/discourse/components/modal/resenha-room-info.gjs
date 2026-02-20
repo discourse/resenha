@@ -2,6 +2,7 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { fn, hash } from "@ember/helper";
 import { action } from "@ember/object";
+import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
 import DModal from "discourse/components/d-modal";
 import avatar from "discourse/helpers/avatar";
@@ -133,10 +134,10 @@ export default class ResenhaRoomInfoModal extends Component {
             <h2
               class="resenha-room-info-modal__room-name"
             >{{this.room.name}}</h2>
-            {{#if this.room.description}}
-              <p
-                class="resenha-room-info-modal__description"
-              >{{this.room.description}}</p>
+            {{#if this.room.cooked_description}}
+              <div
+                class="resenha-room-info-modal__description cooked"
+              >{{htmlSafe this.room.cooked_description}}</div>
             {{/if}}
           </div>
         </div>

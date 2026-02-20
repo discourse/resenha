@@ -9,6 +9,7 @@ en:
         join: "Join voice room"
         leave: "Leave room"
         info: "Room info"
+        edit: "Edit room"
         menu_title: "Room options"
         connecting: "Connecting to peers…"
         disconnected: "You left the room."

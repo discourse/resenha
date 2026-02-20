@@ -101,7 +101,7 @@ export default {
             }
 
             return (
-              this.room.description ||
+              this.room.description_excerpt ||
               this.room.name ||
               i18n("resenha.room.join")
             );

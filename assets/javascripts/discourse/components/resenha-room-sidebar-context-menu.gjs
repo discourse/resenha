@@ -3,10 +3,12 @@ import { action } from "@ember/object";
 import { service } from "@ember/service";
 import DButton from "discourse/components/d-button";
 import DropdownMenu from "discourse/components/dropdown-menu";
+import { getURL } from "discourse/lib/url";
 import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 
 export default class ResenhaRoomSidebarContextMenu extends Component {
   @service modal;
+  @service currentUser;
   @service resenhaWebrtc;
 
   get room() {
@@ -15,6 +17,10 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
 
   get isConnected() {
     return this.resenhaWebrtc.connectionStateFor(this.room.id) === "connected";
+  }
+
+  get editRoomUrl() {
+    return getURL(`/admin/plugins/resenha/resenha-rooms/${this.room.id}`);
   }
 
   @action
@@ -40,6 +46,17 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
           class="resenha-room-sidebar-context-menu__room-info"
         />
       </dropdown.item>
+      {{#if this.currentUser.admin}}
+        <dropdown.item>
+          <DButton
+            @href={{this.editRoomUrl}}
+            @icon="pencil"
+            @label="resenha.room.edit"
+            @title="resenha.room.edit"
+            class="resenha-room-sidebar-context-menu__edit-room"
+          />
+        </dropdown.item>
+      {{/if}}
       {{#if this.isConnected}}
         <dropdown.item>
           <DButton

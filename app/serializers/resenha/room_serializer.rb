@@ -6,6 +6,7 @@ module Resenha
                :name,
                :slug,
                :description,
+               :cooked_description,
                :public,
                :max_participants,
                :created_at,
@@ -13,7 +14,8 @@ module Resenha
                :member_count,
                :active_participants,
                :creator_id,
-               :can_manage
+               :can_manage,
+               :description_excerpt
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
 
@@ -33,6 +35,10 @@ module Resenha
 
     def can_manage
       scope.can_manage_resenha_room?(object)
+    end
+
+    def description_excerpt
+      object.description&.lines&.first&.truncate(150)
     end
   end
 end
