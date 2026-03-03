@@ -9,6 +9,7 @@ export default class ResenhaRoomsService extends Service {
   @service siteSettings;
 
   @tracked rooms = [];
+  @tracked canCreateRoom = false;
 
   #roomsById = new Map();
   #roomsBySlug = new Map();
@@ -51,6 +52,7 @@ export default class ResenhaRoomsService extends Service {
 
   async #bootstrap() {
     const payload = await ajax("/resenha/rooms.json");
+    this.canCreateRoom = payload.can_create_room ?? false;
     this.#hydrateRooms(payload.rooms);
     return this.rooms;
   }

@@ -2,6 +2,7 @@ import noop from "discourse/helpers/noop";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { withPluginApi } from "discourse/lib/plugin-api";
 import { i18n } from "discourse-i18n";
+import ResenhaCreateRoomModal from "discourse/plugins/resenha/discourse/components/modal/resenha-create-room";
 import ResenhaParticipantSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-context-menu";
 import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-room-sidebar-context-menu";
 
@@ -22,6 +23,7 @@ export default {
       const roomsService = owner.lookup("service:resenha-rooms");
       const resenhaWebrtc = owner.lookup("service:resenha-webrtc");
       const menuService = owner.lookup("service:menu");
+      const modalService = owner.lookup("service:modal");
       const capabilities = owner.lookup("service:capabilities");
 
       api.addSidebarSection((BaseSection, BaseLink) => {
@@ -291,8 +293,29 @@ export default {
             this.resenhaRooms = roomsService;
           }
 
+          get actions() {
+            if (this.resenhaRooms?.canCreateRoom) {
+              return [
+                {
+                  id: "createResenhaRoom",
+                  title: i18n("resenha.sidebar.create"),
+                  action: () =>
+                    modalService.show(ResenhaCreateRoomModal),
+                },
+              ];
+            }
+            return [];
+          }
+
+          get actionsIcon() {
+            return "plus";
+          }
+
           get displaySection() {
-            return (this.resenhaRooms?.rooms?.length || 0) > 0;
+            return (
+              (this.resenhaRooms?.rooms?.length || 0) > 0 ||
+              this.resenhaRooms?.canCreateRoom
+            );
           }
 
           get links() {

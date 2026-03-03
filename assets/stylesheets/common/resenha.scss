@@ -177,6 +177,20 @@
   }
 }
 
+.resenha-room-form {
+  .resenha-admin-back {
+    margin-bottom: 1em;
+  }
+
+  .resenha-room-form__form {
+    max-width: 600px;
+  }
+}
+
+.resenha-create-room-modal .resenha-room-form .resenha-room-form__form {
+  max-width: 100%;
+}
+
 .resenha-room-sidebar-context-menu {
   .btn {
     width: 100%;
@@ -487,5 +501,14 @@
   &__add-btn {
     flex-shrink: 0;
     padding: 0.5rem 0.75rem;
+  }
+
+  &__edit-btn {
+    flex-shrink: 0;
+    align-self: flex-start;
+  }
+
+  &__edit-form .resenha-room-form .resenha-room-form__form {
+    max-width: 100%;
   }
 }

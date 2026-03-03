@@ -9,6 +9,10 @@ import { i18n } from "discourse-i18n";
 export default class ResenhaRoomForm extends Component {
   @tracked isSaving = false;
 
+  get isAdminContext() {
+    return !this.args.onSubmit;
+  }
+
   get formData() {
     return {
       name: this.args.room?.name || "",
@@ -19,7 +23,12 @@ export default class ResenhaRoomForm extends Component {
   }
 
   get submitLabel() {
-    return this.args.room?.id ? "resenha.admin.update" : "resenha.admin.create";
+    if (this.isAdminContext) {
+      return this.args.room?.id
+        ? "resenha.admin.update"
+        : "resenha.admin.create";
+    }
+    return "resenha.room.save";
   }
 
   @action
@@ -27,10 +36,14 @@ export default class ResenhaRoomForm extends Component {
     this.isSaving = true;
 
     try {
-      const room = this.args.room;
-      room.setProperties(data);
-      await room.save();
-      this.args.onSave?.(room);
+      if (this.args.onSubmit) {
+        await this.args.onSubmit(data);
+      } else {
+        const room = this.args.room;
+        room.setProperties(data);
+        await room.save();
+        this.args.onSave?.(room);
+      }
     } catch (e) {
       popupAjaxError(e);
     } finally {
@@ -39,12 +52,17 @@ export default class ResenhaRoomForm extends Component {
   }
 
   <template>
-    <div class="admin-detail resenha-room-form">
-      <BackButton
-        @label="resenha.admin.back"
-        @route="adminPlugins.show.resenha-rooms.index"
-        class="resenha-admin-back"
-      />
+    <div
+      class="resenha-room-form
+        {{if this.isAdminContext 'admin-detail'}}"
+    >
+      {{#if this.isAdminContext}}
+        <BackButton
+          @label="resenha.admin.back"
+          @route="adminPlugins.show.resenha-rooms.index"
+          class="resenha-admin-back"
+        />
+      {{/if}}
 
       <Form
         @data={{this.formData}}

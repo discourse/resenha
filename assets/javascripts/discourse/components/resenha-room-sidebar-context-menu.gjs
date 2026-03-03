@@ -3,12 +3,10 @@ import { action } from "@ember/object";
 import { service } from "@ember/service";
 import DButton from "discourse/components/d-button";
 import DropdownMenu from "discourse/components/dropdown-menu";
-import getURL from "discourse/lib/get-url";
 import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 
 export default class ResenhaRoomSidebarContextMenu extends Component {
   @service modal;
-  @service currentUser;
   @service resenhaWebrtc;
 
   get room() {
@@ -19,13 +17,17 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
     return this.resenhaWebrtc.connectionStateFor(this.room.id) === "connected";
   }
 
-  get editRoomUrl() {
-    return getURL(`/admin/plugins/resenha/resenha-rooms/${this.room.id}`);
-  }
-
   @action
   openRoomInfo() {
     this.modal.show(ResenhaRoomInfoModal, { model: { room: this.room } });
+    this.args.close();
+  }
+
+  @action
+  editRoom() {
+    this.modal.show(ResenhaRoomInfoModal, {
+      model: { room: this.room, isEditing: true },
+    });
     this.args.close();
   }
 
@@ -46,10 +48,10 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
           class="resenha-room-sidebar-context-menu__room-info"
         />
       </dropdown.item>
-      {{#if this.currentUser.admin}}
+      {{#if this.room.can_manage}}
         <dropdown.item>
           <DButton
-            @href={{this.editRoomUrl}}
+            @action={{this.editRoom}}
             @icon="pencil"
             @label="resenha.room.edit"
             @title="resenha.room.edit"

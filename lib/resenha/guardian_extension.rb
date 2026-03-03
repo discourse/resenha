@@ -3,16 +3,13 @@
 module Resenha
   module GuardianExtension
     def can_access_resenha?
-      SiteSetting.resenha_enabled? && authenticated?
+      SiteSetting.resenha_enabled? && authenticated? &&
+        user.in_any_groups?(SiteSetting.resenha_allowed_groups_map)
     end
 
     def can_manage_resenha_rooms?
       return false unless can_access_resenha?
-
-      return true if is_staff?
-
-      SiteSetting.resenha_allow_trust_level >= 0 &&
-        user&.trust_level.to_i >= SiteSetting.resenha_allow_trust_level
+      user.in_any_groups?(SiteSetting.resenha_create_room_allowed_groups_map)
     end
 
     def can_manage_resenha_room?(room)

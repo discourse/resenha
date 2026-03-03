@@ -2,10 +2,18 @@ plugins:
   resenha_enabled:
     default: false
     client: true
-  resenha_allow_trust_level:
-    default: 2
-    min: 0
-    max: 4
+  resenha_allowed_groups:
+    type: group_list
+    list_type: compact
+    default: "0"
+    allow_any: false
+    refresh: true
+  resenha_create_room_allowed_groups:
+    type: group_list
+    list_type: compact
+    default: "1|2|12"
+    allow_any: false
+    refresh: true
   resenha_max_rooms_per_user:
     default: 5
   resenha_participant_ttl_seconds:

@@ -25,7 +25,10 @@ module Resenha
           .order(:created_at)
           .select { |room| guardian.can_see_resenha_room?(room) }
 
-      render_serialized rooms, Resenha::RoomSerializer, root: :rooms
+      render json: {
+        rooms: serialize_data(rooms, Resenha::RoomSerializer),
+        can_create_room: guardian.can_manage_resenha_rooms?,
+      }
     end
 
     def show

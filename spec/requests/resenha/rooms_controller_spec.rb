@@ -18,7 +18,8 @@ RSpec.describe Resenha::RoomsController do
 
   before do
     SiteSetting.resenha_enabled = true
-    SiteSetting.resenha_allow_trust_level = 2
+    SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone]
+    SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
   end
 
   describe "#index" do
@@ -155,8 +156,7 @@ RSpec.describe Resenha::RoomsController do
     it "sets deafened metadata" do
       sign_in(user)
 
-      post "/resenha/rooms/#{room.id}/toggle_mute.json",
-           params: { muted: true, deafened: true }
+      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true, deafened: true }
 
       expect(response.status).to eq(204)
 

@@ -11,7 +11,8 @@ describe "Resenha voice rooms", type: :system do
   before do
     user.activate
     SiteSetting.resenha_enabled = true
-    SiteSetting.resenha_allow_trust_level = 2
+    SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone]
+    SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
   end
 
   context "when plugin is disabled" do
@@ -84,12 +85,12 @@ describe "Resenha voice rooms", type: :system do
       end
     end
 
-    context "when user has insufficient trust level" do
+    context "when user is not in create room groups" do
       fab!(:low_trust_user) { Fabricate(:user, trust_level: TrustLevel[0]) }
 
       before do
         low_trust_user.activate
-        SiteSetting.resenha_allow_trust_level = 2
+        SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
         sign_in(low_trust_user)
       end
 
