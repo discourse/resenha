@@ -62,15 +62,16 @@ end
 #
 # Table name: resenha_rooms
 #
-#  id               :bigint           not null, primary key
-#  description      :text
-#  max_participants :integer
-#  name             :string           not null
-#  public           :boolean          default(FALSE), not null
-#  slug             :string           not null
-#  created_at       :datetime         not null
-#  updated_at       :datetime         not null
-#  creator_id       :bigint           not null
+#  id                 :bigint           not null, primary key
+#  cooked_description :text
+#  description        :text
+#  max_participants   :integer
+#  name               :string           not null
+#  public             :boolean          default(FALSE), not null
+#  slug               :string           not null
+#  created_at         :datetime         not null
+#  updated_at         :datetime         not null
+#  creator_id         :bigint           not null
 #
 # Indexes
 #
