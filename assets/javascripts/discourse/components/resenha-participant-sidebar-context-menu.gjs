@@ -58,6 +58,26 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     return this.isMuted ? "volume-xmark" : "volume-high";
   }
 
+  get micIcon() {
+    return this.resenhaWebrtc.audioEnabled ? "microphone" : "microphone-slash";
+  }
+
+  get micLabel() {
+    return this.resenhaWebrtc.audioEnabled
+      ? i18n("resenha.room.mic_on")
+      : i18n("resenha.room.mic_off");
+  }
+
+  get deafenIcon() {
+    return this.resenhaWebrtc.deafened ? "volume-xmark" : "volume-high";
+  }
+
+  get deafenLabel() {
+    return this.resenhaWebrtc.deafened
+      ? i18n("resenha.room.deafen_off")
+      : i18n("resenha.room.deafen_on");
+  }
+
   get showNoiseSuppressionToggle() {
     return this.isCurrentUser && this.siteSettings.resenha_noise_suppression;
   }
@@ -106,6 +126,16 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
   }
 
   @action
+  toggleMic() {
+    this.resenhaWebrtc.toggleMute();
+  }
+
+  @action
+  toggleDeafen() {
+    this.resenhaWebrtc.toggleDeafen();
+  }
+
+  @action
   async toggleNoiseSuppression() {
     await this.resenhaWebrtc.toggleNoiseSuppression();
   }
@@ -116,6 +146,24 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
       as |dropdown|
     >
       {{#if this.isCurrentUser}}
+        <dropdown.item>
+          <DButton
+            @action={{this.toggleMic}}
+            @icon={{this.micIcon}}
+            @translatedLabel={{this.micLabel}}
+            @translatedTitle={{this.micLabel}}
+            class="resenha-participant-sidebar-context-menu__mic-btn"
+          />
+        </dropdown.item>
+        <dropdown.item>
+          <DButton
+            @action={{this.toggleDeafen}}
+            @icon={{this.deafenIcon}}
+            @translatedLabel={{this.deafenLabel}}
+            @translatedTitle={{this.deafenLabel}}
+            class="resenha-participant-sidebar-context-menu__deafen-btn"
+          />
+        </dropdown.item>
         {{#if this.showNoiseSuppressionToggle}}
           <dropdown.item>
             <DButton

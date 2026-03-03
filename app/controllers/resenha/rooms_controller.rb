@@ -3,7 +3,18 @@
 module Resenha
   class RoomsController < ApplicationController
     before_action :load_room,
-                  only: %i[show update destroy join leave participants signal kick heartbeat]
+                  only: %i[
+                    show
+                    update
+                    destroy
+                    join
+                    leave
+                    participants
+                    signal
+                    kick
+                    heartbeat
+                    toggle_mute
+                  ]
 
     def index
       Resenha::DefaultRoomSeeder.ensure!
@@ -61,6 +72,7 @@ module Resenha
     def join
       guardian.ensure_can_join_resenha_room!(@room)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
+      Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, {})
       Resenha::RoomBroadcaster.publish_participants(@room)
 
       render json: {
@@ -83,15 +95,32 @@ module Resenha
 
     def participants
       guardian.ensure_can_join_resenha_room!(@room)
+      all_metadata = Resenha::ParticipantTracker.get_all_metadata(@room.id)
       render json: {
                participants:
-                 ActiveModel::Serializer::CollectionSerializer.new(
-                   Resenha::ParticipantTracker.list(@room.id),
-                   serializer: BasicUserSerializer,
-                   scope: guardian,
-                   root: false,
-                 ),
+                 Resenha::ParticipantTracker
+                   .list(@room.id)
+                   .map do |user|
+                     BasicUserSerializer
+                       .new(user, scope: guardian, root: false)
+                       .as_json
+                       .merge(all_metadata[user.id] || {})
+                   end,
              }
+    end
+
+    def toggle_mute
+      guardian.ensure_can_join_resenha_room!(@room)
+
+      bool = ActiveModel::Type::Boolean.new
+      metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
+      metadata[:is_muted] = bool.cast(params[:muted]) if params.key?(:muted)
+      metadata[:is_deafened] = bool.cast(params[:deafened]) if params.key?(:deafened)
+      Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
+
+      Resenha::RoomBroadcaster.publish_participants(@room)
+
+      head :no_content
     end
 
     def kick

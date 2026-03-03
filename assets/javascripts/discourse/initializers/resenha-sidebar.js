@@ -196,13 +196,7 @@ export default {
           }
 
           get #showMenu() {
-            if (capabilities.isIpadOS) {
-              return false;
-            }
-            if (!this.#isCurrentUser) {
-              return true;
-            }
-            return siteSettings.resenha_noise_suppression;
+            return !capabilities.isIpadOS;
           }
 
           get hoverType() {
@@ -257,6 +251,10 @@ export default {
 
             if (this.participant.is_muted) {
               classes.push("resenha-sidebar-participant--muted");
+            }
+
+            if (this.participant.is_deafened) {
+              classes.push("resenha-sidebar-participant--deafened");
             }
 
             return classes.join(" ");

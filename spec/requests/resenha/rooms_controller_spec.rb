@@ -116,6 +116,82 @@ RSpec.describe Resenha::RoomsController do
     end
   end
 
+  describe "#toggle_mute" do
+    before { Resenha::ParticipantTracker.add(room.id, user.id) }
+
+    it "sets muted metadata and broadcasts participants" do
+      sign_in(user)
+
+      published = []
+      allow(MessageBus).to receive(:publish) { |channel, data, opts|
+        published << [channel, data, opts]
+      }
+
+      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true }
+
+      expect(response.status).to eq(204)
+
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_muted]).to eq(true)
+
+      participants_message = published.find { |(_, data)| data[:type] == "participants" }
+      expect(participants_message).to be_present
+      muted_participant = participants_message[1][:participants].find { |p| p[:id] == user.id }
+      expect(muted_participant[:is_muted]).to eq(true)
+    end
+
+    it "unmutes when muted is false" do
+      sign_in(user)
+      Resenha::ParticipantTracker.update_metadata(room.id, user.id, { is_muted: true })
+
+      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: false }
+
+      expect(response.status).to eq(204)
+
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_muted]).to eq(false)
+    end
+
+    it "sets deafened metadata" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/toggle_mute.json",
+           params: { muted: true, deafened: true }
+
+      expect(response.status).to eq(204)
+
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_muted]).to eq(true)
+      expect(metadata[:is_deafened]).to eq(true)
+    end
+
+    it "requires authentication" do
+      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true }
+
+      expect(response.status).to eq(403)
+    end
+  end
+
+  describe "#join with metadata" do
+    it "includes is_muted and is_deafened in active_participants when metadata exists" do
+      sign_in(user)
+      Resenha::ParticipantTracker.add(room.id, other_participant.id)
+      Resenha::ParticipantTracker.update_metadata(
+        room.id,
+        other_participant.id,
+        { is_muted: true, is_deafened: true },
+      )
+
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(200)
+      participants = response.parsed_body["room"]["active_participants"]
+      participant = participants.find { |p| p["id"] == other_participant.id }
+      expect(participant["is_muted"]).to eq(true)
+      expect(participant["is_deafened"]).to eq(true)
+    end
+  end
+
   describe "#signal" do
     it "rejects missing payloads" do
       sign_in(user)

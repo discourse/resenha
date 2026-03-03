@@ -11,6 +11,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked localStream;
   @tracked audioEnabled = true;
   @tracked noiseSuppressionEnabled = false;
+  @tracked deafened = false;
   @tracked remoteStreamsRevision = 0;
   @tracked connectionRevision = 0;
 
@@ -206,6 +207,13 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
+    this.audioEnabled = true;
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        track.enabled = true;
+      }
+    }
+
     // Register handler BEFORE joining to avoid missing the participant broadcast
     this.#registerRoomHandler(room.id);
     this.#activeRoomIds.add(room.id);
@@ -351,6 +359,74 @@ export default class ResenhaWebrtcService extends Service {
     return this.#participantMuted.get(key) ?? false;
   }
 
+  toggleMute() {
+    this.audioEnabled = !this.audioEnabled;
+
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        track.enabled = this.audioEnabled;
+      }
+    }
+
+    if (this.audioEnabled && this.deafened) {
+      this.deafened = false;
+    }
+
+    this.#broadcastMuteState();
+  }
+
+  toggleDeafen() {
+    this.deafened = !this.deafened;
+
+    if (this.deafened) {
+      this.audioEnabled = false;
+      if (this.localStream) {
+        for (const track of this.localStream.getAudioTracks()) {
+          track.enabled = false;
+        }
+      }
+    } else {
+      this.audioEnabled = true;
+      if (this.localStream) {
+        for (const track of this.localStream.getAudioTracks()) {
+          track.enabled = true;
+        }
+      }
+    }
+
+    for (const [key, element] of this.#audioElements) {
+      const muted =
+        this.deafened || (this.#participantMuted.get(key) ?? false);
+      const volume = this.#participantVolumes.get(key) ?? 1;
+      element.muted = muted;
+      if (!muted) {
+        element.volume = volume;
+      }
+    }
+
+    this.#broadcastMuteState();
+  }
+
+  #broadcastMuteState() {
+    for (const roomId of this.#activeRoomIds) {
+      this.resenhaRooms?.setParticipantMuted(
+        roomId,
+        this.currentUser?.id,
+        !this.audioEnabled
+      );
+      this.resenhaRooms?.setParticipantDeafened(
+        roomId,
+        this.currentUser?.id,
+        this.deafened
+      );
+
+      ajax(`/resenha/rooms/${roomId}/toggle_mute`, {
+        type: "POST",
+        data: { muted: !this.audioEnabled, deafened: this.deafened },
+      });
+    }
+  }
+
   #applyAudioSettings(roomId, userId) {
     const key = this.remotePeerKey(roomId, userId);
     const element = this.#audioElements.get(key);
@@ -358,7 +434,8 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    const muted = this.#participantMuted.get(key) ?? false;
+    const muted =
+      this.deafened || (this.#participantMuted.get(key) ?? false);
     const volume = this.#participantVolumes.get(key) ?? 1;
 
     element.muted = muted;
@@ -877,6 +954,8 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    participant.is_muted = !this.audioEnabled;
+    participant.is_deafened = this.deafened;
     this.resenhaRooms?.addParticipant(roomId, participant);
   }
 
