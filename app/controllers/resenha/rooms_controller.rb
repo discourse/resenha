@@ -26,9 +26,9 @@ module Resenha
           .select { |room| guardian.can_see_resenha_room?(room) }
 
       render json: {
-        rooms: serialize_data(rooms, Resenha::RoomSerializer),
-        can_create_room: guardian.can_manage_resenha_rooms?,
-      }
+               rooms: serialize_data(rooms, Resenha::RoomSerializer),
+               can_create_room: guardian.can_manage_resenha_rooms?,
+             }
     end
 
     def show

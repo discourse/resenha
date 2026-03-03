@@ -43,6 +43,7 @@ describe "Resenha voice rooms", type: :system do
 
       before do
         user.update!(trust_level: TrustLevel[2])
+        Group.refresh_automatic_groups!
         sign_in(user)
       end
 
