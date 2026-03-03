@@ -1,4 +1,4 @@
-import ResenhaRoomForm from "discourse/plugins/resenha/admin/components/resenha-room-form";
+import ResenhaRoomForm from "discourse/plugins/resenha/discourse/components/resenha-room-form";
 
 <template>
   <ResenhaRoomForm

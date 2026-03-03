@@ -14,7 +14,7 @@ import ComboBox from "discourse/select-kit/components/combo-box";
 import UserChooser from "discourse/select-kit/components/user-chooser";
 import { eq, notEq } from "discourse/truth-helpers";
 import { i18n } from "discourse-i18n";
-import ResenhaRoomForm from "discourse/plugins/resenha/admin/components/resenha-room-form";
+import ResenhaRoomForm from "discourse/plugins/resenha/discourse/components/resenha-room-form";
 
 export default class ResenhaRoomInfoModal extends Component {
   @service resenhaRooms;
