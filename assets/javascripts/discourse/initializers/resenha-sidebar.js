@@ -8,6 +8,7 @@ import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/c
 
 const LINK_NAME_PREFIX = "resenha-room-";
 let sidebarClickHandler;
+let sidebarContextMenuHandler;
 
 export default {
   name: "resenha-sidebar",
@@ -417,6 +418,100 @@ export default {
       };
 
       document.addEventListener("click", sidebarClickHandler);
+
+      if (sidebarContextMenuHandler) {
+        document.removeEventListener("contextmenu", sidebarContextMenuHandler);
+      }
+
+      sidebarContextMenuHandler = (event) => {
+        const findAnchor = (selector) =>
+          event
+            .composedPath?.()
+            ?.find?.(
+              (node) =>
+                node instanceof HTMLElement && node.matches?.(selector)
+            ) || event.target?.closest?.(selector);
+
+        const participantAnchor = findAnchor(
+          ".sidebar-section-link[data-link-name^='resenha-participant-']"
+        );
+
+        if (participantAnchor) {
+          event.preventDefault();
+          event.stopPropagation();
+
+          const linkName = participantAnchor.dataset?.linkName;
+          const suffix = linkName?.replace("resenha-participant-", "");
+          const dashIdx = suffix?.indexOf("-");
+          if (!suffix || dashIdx < 1) {
+            return;
+          }
+
+          const roomId = parseInt(suffix.substring(0, dashIdx), 10);
+          const participantId = parseInt(suffix.substring(dashIdx + 1), 10);
+          const room = roomsService.roomById(roomId);
+          if (!room) {
+            return;
+          }
+
+          const participant = (room.active_participants || []).find(
+            (p) => p.id === participantId
+          );
+          if (!participant) {
+            return;
+          }
+
+          menuService.show(participantAnchor, {
+            identifier: "resenha-participant-menu",
+            component: ResenhaParticipantSidebarContextMenu,
+            placement: "right",
+            data: {
+              room,
+              participant,
+              canManageRoom: room.can_manage,
+              isCurrentUser: participant.id === currentUser?.id,
+            },
+          });
+          return;
+        }
+
+        const roomAnchor = findAnchor(
+          ".sidebar-section-link[data-link-name^='resenha-room-']"
+        );
+
+        if (!roomAnchor) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const linkName = roomAnchor.dataset?.linkName;
+        if (!linkName?.startsWith(LINK_NAME_PREFIX)) {
+          return;
+        }
+
+        const roomId = parseInt(
+          linkName.substring(LINK_NAME_PREFIX.length),
+          10
+        );
+        const room = Number.isNaN(roomId)
+          ? null
+          : roomsService.roomById(roomId);
+
+        if (!room) {
+          return;
+        }
+
+        menuService.show(roomAnchor, {
+          identifier: "resenha-room-menu",
+          component: ResenhaRoomSidebarContextMenu,
+          placement: "right",
+          data: { room },
+        });
+      };
+
+      document.addEventListener("contextmenu", sidebarContextMenuHandler);
     });
   },
 };

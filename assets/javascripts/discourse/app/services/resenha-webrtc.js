@@ -368,6 +368,12 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
+    if (this.audioEnabled) {
+      this.#playUnmuteSound();
+    } else {
+      this.#playMuteSound();
+    }
+
     if (this.audioEnabled && this.deafened) {
       this.deafened = false;
     }
@@ -377,6 +383,12 @@ export default class ResenhaWebrtcService extends Service {
 
   toggleDeafen() {
     this.deafened = !this.deafened;
+
+    if (this.deafened) {
+      this.#playDeafenSound();
+    } else {
+      this.#playUndeafenSound();
+    }
 
     if (this.deafened) {
       this.audioEnabled = false;
@@ -1332,6 +1344,106 @@ export default class ResenhaWebrtcService extends Service {
       osc.stop(now + 0.1);
 
       osc.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
+  }
+
+  #playMuteSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 392.0; // G4
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.08);
+
+      osc.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
+  }
+
+  #playUnmuteSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 440.0; // A4
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.08);
+
+      osc.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
+  }
+
+  #playDeafenSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.frequency.value = 392.0; // G4
+      gain1.gain.setValueAtTime(0.1, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      osc1.connect(gain1).connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.07);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.frequency.value = 293.66; // D4
+      gain2.gain.setValueAtTime(0.001, now);
+      gain2.gain.setValueAtTime(0.1, now + 0.07);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      osc2.connect(gain2).connect(ctx.destination);
+      osc2.start(now + 0.07);
+      osc2.stop(now + 0.14);
+
+      osc2.onended = () => ctx.close();
+    } catch {
+      // audio not available
+    }
+  }
+
+  #playUndeafenSound() {
+    try {
+      const ctx = new AudioContext();
+      const now = ctx.currentTime;
+
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.frequency.value = 293.66; // D4
+      gain1.gain.setValueAtTime(0.1, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      osc1.connect(gain1).connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.07);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.frequency.value = 392.0; // G4
+      gain2.gain.setValueAtTime(0.001, now);
+      gain2.gain.setValueAtTime(0.1, now + 0.07);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      osc2.connect(gain2).connect(ctx.destination);
+      osc2.start(now + 0.07);
+      osc2.stop(now + 0.14);
+
+      osc2.onended = () => ctx.close();
     } catch {
       // audio not available
     }
