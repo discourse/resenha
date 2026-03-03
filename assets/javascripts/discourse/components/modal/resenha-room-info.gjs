@@ -154,7 +154,11 @@ export default class ResenhaRoomInfoModal extends Component {
   }
 
   <template>
-    <DModal @closeModal={{@closeModal}} class="resenha-room-info-modal">
+    <DModal
+      @closeModal={{@closeModal}}
+      @title={{if this.isEditing (i18n "resenha.room.edit")}}
+      class="resenha-room-info-modal"
+    >
       <:body>
         {{#if this.isEditing}}
           <div class="resenha-room-info-modal__edit-form">

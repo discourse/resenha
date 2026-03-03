@@ -73,6 +73,7 @@ export default class ResenhaRoomForm extends Component {
         <form.Field
           @name="name"
           @title={{i18n "resenha.admin.room.name"}}
+          @format="full"
           @validation="required|length:1,80"
           as |field|
         >
@@ -84,6 +85,7 @@ export default class ResenhaRoomForm extends Component {
         <form.Field
           @name="description"
           @title={{i18n "resenha.admin.room.description"}}
+          @format="full"
           as |field|
         >
           <field.Textarea />

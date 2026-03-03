@@ -187,8 +187,20 @@
   }
 }
 
-.resenha-create-room-modal .resenha-room-form .resenha-room-form__form {
-  max-width: 100%;
+.resenha-create-room-modal {
+  .resenha-room-form__form {
+    max-width: 100%;
+  }
+
+  .form-kit__field-toggle {
+    background: var(--primary-very-low);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+  }
+
+  .form-kit__field-input-number .form-kit__container-content {
+    width: var(--form-kit-large-input);
+  }
 }
 
 .resenha-room-sidebar-context-menu {
@@ -508,7 +520,21 @@
     align-self: flex-start;
   }
 
-  &__edit-form .resenha-room-form .resenha-room-form__form {
-    max-width: 100%;
+  &__edit-form {
+    padding: 1.5rem;
+
+    .resenha-room-form__form {
+      max-width: 100%;
+    }
+
+    .form-kit__field-toggle {
+      background: var(--primary-very-low);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+    }
+
+    .form-kit__field-input-number .form-kit__container-content {
+      width: var(--form-kit-large-input);
+    }
   }
 }
