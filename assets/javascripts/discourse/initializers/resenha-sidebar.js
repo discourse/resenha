@@ -300,8 +300,7 @@ export default {
                 {
                   id: "createResenhaRoom",
                   title: i18n("resenha.sidebar.create"),
-                  action: () =>
-                    modalService.show(ResenhaCreateRoomModal),
+                  action: () => modalService.show(ResenhaCreateRoomModal),
                 },
               ];
             }
@@ -428,8 +427,7 @@ export default {
           event
             .composedPath?.()
             ?.find?.(
-              (node) =>
-                node instanceof HTMLElement && node.matches?.(selector)
+              (node) => node instanceof HTMLElement && node.matches?.(selector)
             ) || event.target?.closest?.(selector);
 
         const participantAnchor = findAnchor(

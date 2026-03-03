@@ -407,8 +407,7 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     for (const [key, element] of this.#audioElements) {
-      const muted =
-        this.deafened || (this.#participantMuted.get(key) ?? false);
+      const muted = this.deafened || (this.#participantMuted.get(key) ?? false);
       const volume = this.#participantVolumes.get(key) ?? 1;
       element.muted = muted;
       if (!muted) {
@@ -446,8 +445,7 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    const muted =
-      this.deafened || (this.#participantMuted.get(key) ?? false);
+    const muted = this.deafened || (this.#participantMuted.get(key) ?? false);
     const volume = this.#participantVolumes.get(key) ?? 1;
 
     element.muted = muted;

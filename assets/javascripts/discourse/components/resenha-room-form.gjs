@@ -52,10 +52,7 @@ export default class ResenhaRoomForm extends Component {
   }
 
   <template>
-    <div
-      class="resenha-room-form
-        {{if this.isAdminContext 'admin-detail'}}"
-    >
+    <div class="resenha-room-form {{if this.isAdminContext 'admin-detail'}}">
       {{#if this.isAdminContext}}
         <BackButton
           @label="resenha.admin.back"
