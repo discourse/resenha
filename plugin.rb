@@ -16,6 +16,8 @@ register_svg_icon "volume-high"
 register_svg_icon "microphone"
 register_svg_icon "microphone-slash"
 register_svg_icon "volume-xmark"
+register_svg_icon "walkie-talkie"
+register_svg_icon "keyboard"
 register_asset "stylesheets/common/resenha.scss"
 register_asset "stylesheets/common/resenha-admin.scss", :admin
 

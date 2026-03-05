@@ -296,6 +296,92 @@
       background: var(--danger-low);
     }
   }
+
+  &__mic-btn.--disabled-by-ptt {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &__ptt-hint {
+    display: block;
+    font-size: var(--font-down-2);
+    color: var(--primary-medium);
+    padding: 0 0.75rem 0.25rem;
+  }
+
+  &__ptt-btn.--active {
+    color: var(--tertiary);
+  }
+}
+
+.resenha-ptt-key-capture {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+
+  &__display {
+    flex: 1;
+    padding: 0.35rem 0.5rem;
+    border: 1px dashed var(--primary-low-mid);
+    border-radius: 4px;
+    font-size: var(--font-down-1);
+    color: var(--primary-medium);
+    text-align: center;
+
+    &--captured {
+      border-color: var(--tertiary);
+      border-style: solid;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    &--error {
+      border-color: var(--danger);
+      border-style: solid;
+      color: var(--danger);
+    }
+  }
+
+  &__actions {
+    display: flex;
+    flex-direction: row;
+    gap: 0.15rem;
+    flex-shrink: 0;
+  }
+
+  .btn.btn-flat.resenha-ptt-key-capture__confirm:not(:disabled) {
+    color: var(--success);
+
+    .d-icon {
+      color: var(--success);
+    }
+
+    &:hover {
+      background: var(--success-low);
+    }
+  }
+
+  .btn.btn-flat.resenha-ptt-key-capture__cancel {
+    color: var(--danger);
+
+    .d-icon {
+      color: var(--danger);
+    }
+
+    &:hover {
+      background: var(--danger-low);
+    }
+  }
+}
+
+.resenha-sidebar-participant__ptt-badge {
+  font-size: var(--font-down-2);
+  color: var(--tertiary);
+  font-weight: 600;
+  margin-left: 0.25rem;
 }
 
 .resenha-room-info-modal {

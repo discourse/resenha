@@ -5,6 +5,7 @@ import { i18n } from "discourse-i18n";
 import ResenhaCreateRoomModal from "discourse/plugins/resenha/discourse/components/modal/resenha-create-room";
 import ResenhaParticipantSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-context-menu";
 import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-room-sidebar-context-menu";
+import { humanKeyName } from "../lib/resenha/ptt-utils";
 
 const LINK_NAME_PREFIX = "resenha-room-";
 let sidebarClickHandler;
@@ -274,11 +275,29 @@ export default {
           }
 
           get title() {
-            return this.participant.name || this.participant.username;
+            const name = this.participant.name || this.participant.username;
+            if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
+              return `${name} — ${i18n("resenha.ptt.badge", { key: humanKeyName(this.resenhaWebrtc.pttKey) })}`;
+            }
+            return name;
           }
 
           get text() {
             return this.participant.name || this.participant.username;
+          }
+
+          get suffixType() {
+            if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
+              return "icon";
+            }
+            return null;
+          }
+
+          get suffixValue() {
+            if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
+              return "walkie-talkie";
+            }
+            return null;
           }
 
           get prefixType() {

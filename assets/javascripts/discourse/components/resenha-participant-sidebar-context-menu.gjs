@@ -8,6 +8,8 @@ import DropdownMenu from "discourse/components/dropdown-menu";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
+import { humanKeyName } from "../lib/resenha/ptt-utils";
+import ResenhaPttKeyCapture from "./resenha-ptt-key-capture";
 
 export default class ResenhaParticipantSidebarContextMenu extends Component {
   @service resenhaWebrtc;
@@ -15,6 +17,7 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
 
   @tracked volume = 100;
   @tracked isMuted = false;
+  @tracked showKeyCapture = false;
 
   constructor() {
     super(...arguments);
@@ -76,6 +79,26 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     return this.resenhaWebrtc.deafened
       ? i18n("resenha.room.deafen_off")
       : i18n("resenha.room.deafen_on");
+  }
+
+  get isPttEnabled() {
+    return this.resenhaWebrtc.pttEnabled;
+  }
+
+  get pttToggleLabel() {
+    return this.isPttEnabled
+      ? i18n("resenha.ptt.disable")
+      : i18n("resenha.ptt.enable");
+  }
+
+  get pttKeyLabel() {
+    return i18n("resenha.ptt.configure_key", {
+      key: humanKeyName(this.resenhaWebrtc.pttKey),
+    });
+  }
+
+  get micDisabledByPtt() {
+    return this.isCurrentUser && this.isPttEnabled;
   }
 
   get showNoiseSuppressionToggle() {
@@ -140,6 +163,31 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     await this.resenhaWebrtc.toggleNoiseSuppression();
   }
 
+  @action
+  togglePtt() {
+    if (this.isPttEnabled) {
+      this.resenhaWebrtc.disablePtt();
+    } else {
+      this.resenhaWebrtc.enablePtt();
+    }
+  }
+
+  @action
+  openKeyCapture() {
+    this.showKeyCapture = true;
+  }
+
+  @action
+  onKeyCaptureConfirm(keyCode) {
+    this.resenhaWebrtc.setPttKey(keyCode);
+    this.showKeyCapture = false;
+  }
+
+  @action
+  onKeyCaptureCancel() {
+    this.showKeyCapture = false;
+  }
+
   <template>
     <DropdownMenu
       class="resenha-participant-sidebar-context-menu"
@@ -151,9 +199,20 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
             @action={{this.toggleMic}}
             @icon={{this.micIcon}}
             @translatedLabel={{this.micLabel}}
-            @translatedTitle={{this.micLabel}}
-            class="resenha-participant-sidebar-context-menu__mic-btn"
+            @translatedTitle={{if
+              this.micDisabledByPtt
+              (i18n "resenha.ptt.controlled_by_ptt")
+              this.micLabel
+            }}
+            @disabled={{this.micDisabledByPtt}}
+            class="resenha-participant-sidebar-context-menu__mic-btn
+              {{if this.micDisabledByPtt '--disabled-by-ptt'}}"
           />
+          {{#if this.micDisabledByPtt}}
+            <span
+              class="resenha-participant-sidebar-context-menu__ptt-hint"
+            >{{i18n "resenha.ptt.controlled_by_ptt"}}</span>
+          {{/if}}
         </dropdown.item>
         <dropdown.item>
           <DButton
@@ -173,6 +232,34 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
               @title={{this.noiseSuppressionLabel}}
               class="resenha-participant-sidebar-context-menu__noise-suppression"
             />
+          </dropdown.item>
+        {{/if}}
+        <dropdown.item>
+          <DButton
+            @action={{this.togglePtt}}
+            @icon={{if this.isPttEnabled "walkie-talkie" "walkie-talkie"}}
+            @translatedLabel={{this.pttToggleLabel}}
+            @translatedTitle={{this.pttToggleLabel}}
+            class="resenha-participant-sidebar-context-menu__ptt-btn
+              {{if this.isPttEnabled '--active'}}"
+          />
+        </dropdown.item>
+        {{#if this.isPttEnabled}}
+          <dropdown.item>
+            {{#if this.showKeyCapture}}
+              <ResenhaPttKeyCapture
+                @onConfirm={{this.onKeyCaptureConfirm}}
+                @onCancel={{this.onKeyCaptureCancel}}
+              />
+            {{else}}
+              <DButton
+                @action={{this.openKeyCapture}}
+                @icon="keyboard"
+                @translatedLabel={{this.pttKeyLabel}}
+                @translatedTitle={{this.pttKeyLabel}}
+                class="resenha-participant-sidebar-context-menu__ptt-key-btn"
+              />
+            {{/if}}
           </dropdown.item>
         {{/if}}
       {{else}}

@@ -24,6 +24,14 @@ en:
         noise_suppression_off: "Enable noise suppression"
         deafen_on: "Deafen"
         deafen_off: "Undeafen"
+      ptt:
+        enable: "Push to Talk"
+        disable: "Disable Push to Talk"
+        configure_key: "PTT Key: %{key}"
+        press_key: "Press a key…"
+        reserved_key: "This key is reserved."
+        controlled_by_ptt: "Controlled by Push to Talk"
+        badge: "PTT: %{key}"
       idle:
         auto_muted: "You were auto-muted after being idle."
         click_to_unmute: "Click to unmute."

@@ -7,6 +7,7 @@ import AudioMonitor from "../../lib/resenha/audio-monitor";
 import IdleTracker from "../../lib/resenha/idle-tracker";
 import NoiseSuppressionManager from "../../lib/resenha/noise-suppression";
 import PeerManager from "../../lib/resenha/peer-manager";
+import PttManager from "../../lib/resenha/ptt-manager";
 import SignalingManager from "../../lib/resenha/signaling";
 import {
   playConnectedSound,
@@ -33,6 +34,9 @@ export default class ResenhaWebrtcService extends Service {
   @tracked remoteStreamsRevision = 0;
   @tracked connectionRevision = 0;
   @tracked idleState = "active";
+  @tracked pttEnabled = false;
+  @tracked pttKey = "Space";
+  @tracked pttActive = false;
 
   #connectingRoomIds = new Set();
   #activeRoomIds = new Set();
@@ -52,9 +56,20 @@ export default class ResenhaWebrtcService extends Service {
   #audioMonitor;
   #idleTracker;
   #noiseSuppression;
+  #pttManager;
 
   constructor() {
     super(...arguments);
+
+    this.#pttManager = new PttManager({
+      onPress: () => this.#handlePttPress(),
+      onReleaseImmediate: () => this.#handlePttRelease(),
+      onReleaseDebounced: () => this.#broadcastMuteState(),
+      isConnected: () => this.#activeRoomIds.size > 0,
+    });
+
+    this.pttEnabled = this.#pttManager.enabled;
+    this.pttKey = this.#pttManager.key;
 
     this.#signaling = new SignalingManager({
       isActiveRoom: (id) => this.#activeRoomIds.has(id),
@@ -100,6 +115,7 @@ export default class ResenhaWebrtcService extends Service {
   willDestroy() {
     super.willDestroy(...arguments);
 
+    this.#pttManager.destroy();
     this.#idleTracker.stop();
     this.#audioMonitor.destroyAll();
     this.#peerManager.destroyAll();
@@ -236,10 +252,19 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    this.audioEnabled = true;
-    if (this.localStream) {
-      for (const track of this.localStream.getAudioTracks()) {
-        track.enabled = true;
+    if (this.pttEnabled) {
+      this.audioEnabled = false;
+      if (this.localStream) {
+        for (const track of this.localStream.getAudioTracks()) {
+          track.enabled = false;
+        }
+      }
+    } else {
+      this.audioEnabled = true;
+      if (this.localStream) {
+        for (const track of this.localStream.getAudioTracks()) {
+          track.enabled = true;
+        }
       }
     }
 
@@ -283,6 +308,11 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#connectingRoomIds.delete(room.id);
     this.#bumpConnectionRevision();
+
+    if (this.pttEnabled) {
+      this.#pttManager.startListening();
+    }
+
     playConnectedSound();
   }
 
@@ -294,6 +324,8 @@ export default class ResenhaWebrtcService extends Service {
     const keepLocalStream = options.keepLocalStream === true;
     const wasConnected = this.#activeRoomIds.has(room.id);
 
+    this.#pttManager.resetActive();
+    this.pttActive = false;
     ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
     this.#connectingRoomIds.delete(room.id);
     this.#activeRoomIds.delete(room.id);
@@ -307,6 +339,7 @@ export default class ResenhaWebrtcService extends Service {
 
     if (this.#activeRoomIds.size === 0) {
       this.#idleTracker.stop();
+      this.#pttManager.stopListening();
     }
 
     const teardown = () => {
@@ -406,6 +439,10 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   toggleMute() {
+    if (this.pttEnabled) {
+      return;
+    }
+
     this.audioEnabled = !this.audioEnabled;
 
     if (this.localStream) {
@@ -446,10 +483,19 @@ export default class ResenhaWebrtcService extends Service {
         }
       }
     } else {
-      this.audioEnabled = true;
-      if (this.localStream) {
-        for (const track of this.localStream.getAudioTracks()) {
-          track.enabled = true;
+      if (this.pttEnabled) {
+        this.audioEnabled = false;
+        if (this.localStream) {
+          for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = false;
+          }
+        }
+      } else {
+        this.audioEnabled = true;
+        if (this.localStream) {
+          for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = true;
+          }
         }
       }
     }
@@ -494,6 +540,48 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     await this.#replaceTrackOnAllPeers();
+  }
+
+  enablePtt() {
+    this.#pttManager.enable();
+    this.pttEnabled = true;
+    this.pttActive = false;
+
+    this.audioEnabled = false;
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        track.enabled = false;
+      }
+    }
+
+    this.#broadcastMuteState();
+
+    if (this.#activeRoomIds.size > 0) {
+      this.#pttManager.startListening();
+    }
+  }
+
+  disablePtt() {
+    this.#pttManager.disable();
+    this.pttEnabled = false;
+    this.pttActive = false;
+
+    this.audioEnabled = true;
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        track.enabled = true;
+      }
+    }
+
+    this.#broadcastMuteState();
+  }
+
+  setPttKey(keyCode) {
+    if (!this.#pttManager.setKey(keyCode)) {
+      return false;
+    }
+    this.pttKey = keyCode;
+    return true;
   }
 
   // --- Private orchestration ---
@@ -1087,5 +1175,31 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     return { idleMs, afkMs, disconnectMs };
+  }
+
+  // --- Push-to-Talk ---
+
+  #handlePttPress() {
+    this.pttActive = true;
+    this.audioEnabled = true;
+
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        track.enabled = true;
+      }
+    }
+
+    this.#broadcastMuteState();
+  }
+
+  #handlePttRelease() {
+    this.pttActive = false;
+    this.audioEnabled = false;
+
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        track.enabled = false;
+      }
+    }
   }
 }
