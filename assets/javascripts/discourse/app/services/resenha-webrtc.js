@@ -3,6 +3,22 @@ import { action } from "@ember/object";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
 import { i18n } from "discourse-i18n";
+import AudioMonitor from "../../lib/resenha/audio-monitor";
+import IdleTracker from "../../lib/resenha/idle-tracker";
+import NoiseSuppressionManager from "../../lib/resenha/noise-suppression";
+import PeerManager from "../../lib/resenha/peer-manager";
+import SignalingManager from "../../lib/resenha/signaling";
+import {
+  playConnectedSound,
+  playDeafenSound,
+  playDisconnectedSound,
+  playMuteSound,
+  playUndeafenSound,
+  playUnmuteSound,
+  playUserJoinedSound,
+  playUserLeftSound,
+  schedulePlaybackResume,
+} from "../../lib/resenha/sound-effects";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
@@ -19,89 +35,92 @@ export default class ResenhaWebrtcService extends Service {
   @tracked idleState = "active";
 
   #connectingRoomIds = new Set();
-  #peerConnections = new Map();
-  #offerRetryTimers = new Map();
-  #remoteStreams = new Map();
-  #peerReconnectTimers = new Map();
-  #roomHandlerCallbacks = new Map();
   #activeRoomIds = new Set();
-  #speakingMonitors = new Map();
-  #pendingPlaybackElements = new WeakSet();
+  #remoteStreams = new Map();
+  #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
   #heartbeatInFlight = new Set();
-  #signalQueues = new Map();
-  #signalFlushTimers = new Map();
-  #httpSignalQueues = new Map();
-  #httpSignalFlushTimers = new Map();
-  #pendingCandidates = new Map();
-  #restartAttempts = new Map();
-  #offerRetryAttempts = new Map();
-  #connectionTimeouts = new Map();
   #participantVolumes = new Map();
   #participantMuted = new Map();
   #audioElements = new Map();
   #streamToParticipant = new WeakMap();
-
-  #lastActivityAt = 0;
-  #idleCheckTimerId = null;
-  #activityThrottled = false;
-  #wasAutoMuted = false;
-  #lastBroadcastedIdleState = null;
-  #boundActivityHandler = null;
-  #voiceActivityThrottled = false;
-
+  #pendingPlaybackElements = new WeakSet();
   #rawLocalStream = null;
-  #noiseSuppressionContext = null;
-  #noiseSuppressionNode = null;
-  #noiseSuppressionSource = null;
 
-  static #candidateBatchDelayMs = 75;
-  static #candidateBatchSize = 5;
-  static #httpBatchDelayMs = 25;
-  static #maxRestartAttempts = 5;
-  static #maxOfferRetries = 3;
-  static #connectionTimeoutMs = 30000;
+  #signaling;
+  #peerManager;
+  #audioMonitor;
+  #idleTracker;
+  #noiseSuppression;
+
+  constructor() {
+    super(...arguments);
+
+    this.#signaling = new SignalingManager({
+      isActiveRoom: (id) => this.#activeRoomIds.has(id),
+      hasPeer: (roomId, uid) => this.#peerManager.has(roomId, uid),
+    });
+
+    this.#peerManager = new PeerManager({
+      getIceServers: () => this.iceServers,
+      getLocalStream: () => this.localStream,
+      sendSignal: (roomId, uid, payload) =>
+        this.#signaling.send(roomId, uid, payload),
+      flushQueuedSignals: (roomId, uid) =>
+        this.#signaling.flushQueued(roomId, uid),
+      onTrack: (roomId, uid, stream) =>
+        this.#registerRemoteStream(roomId, uid, stream),
+      clearSignalQueue: (roomId, uid) =>
+        this.#signaling.clearForPeer(roomId, uid),
+      onPeerDestroyed: (roomId, uid) =>
+        this.#removeRemoteStream(roomId, uid),
+    });
+
+    this.#audioMonitor = new AudioMonitor({
+      onSpeakingChange: (roomId, userId, speaking) =>
+        this.resenhaRooms?.setParticipantSpeaking(roomId, userId, speaking),
+      onVoiceActivity: () => this.#idleTracker?.onVoiceActivity(),
+    });
+
+    this.#idleTracker = new IdleTracker({
+      onIdleStateChange: (state, wasAfk) =>
+        this.#handleIdleStateChange(state, wasAfk),
+      onAutoMute: () => this.#handleAutoMute(),
+      onDisconnect: () => this.#handleIdleDisconnect(),
+      getThresholds: () => this.#getIdleThresholds(),
+    });
+
+    this.#noiseSuppression = new NoiseSuppressionManager({
+      onStreamReady: (stream) => {
+        this.localStream = stream;
+      },
+    });
+  }
 
   willDestroy() {
     super.willDestroy(...arguments);
+
+    this.#idleTracker.stop();
+    this.#audioMonitor.destroyAll();
+    this.#peerManager.destroyAll();
+    this.#signaling.destroy();
+    this.#noiseSuppression.teardown();
+
     this.#stopLocalStream();
+
     this.#roomHandlerCallbacks.forEach((callback, roomId) => {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
     });
     this.#roomHandlerCallbacks.clear();
-    this.#speakingMonitors.forEach((monitor) => monitor?.stop?.());
-    this.#speakingMonitors.clear();
     this.#heartbeatTimers.forEach((timer) => clearInterval(timer));
     this.#heartbeatTimers.clear();
     this.#heartbeatInFlight.clear();
-    this.#stopIdleTracking();
     this.#connectingRoomIds.clear();
-    this.#peerReconnectTimers.forEach((timer) => clearTimeout(timer));
-    this.#peerReconnectTimers.clear();
-    this.#signalFlushTimers.forEach((timer) => clearTimeout(timer));
-    this.#signalFlushTimers.clear();
-    this.#httpSignalFlushTimers.forEach((timer) => clearTimeout(timer));
-    this.#httpSignalFlushTimers.clear();
-    this.#httpSignalQueues.forEach((entry) => {
-      entry?.pending?.forEach((pending) => pending.resolve?.());
-    });
-    this.#httpSignalQueues.clear();
-    this.#signalQueues.clear();
-    this.#pendingCandidates.clear();
-    this.#restartAttempts.clear();
-    this.#offerRetryAttempts.clear();
-    this.#connectionTimeouts.forEach((timer) => clearTimeout(timer));
-    this.#connectionTimeouts.clear();
   }
 
-  /**
-   * Parse ICE servers from site settings (STUN and TURN)
-   * @returns {Array<{urls: string, username?: string, credential?: string}>} Array of ICE server configurations
-   */
   get iceServers() {
     const servers = [];
 
-    // Add STUN servers
     const stunServers = this.siteSettings.resenha_stun_servers;
     if (stunServers) {
       stunServers
@@ -113,7 +132,6 @@ export default class ResenhaWebrtcService extends Service {
         });
     }
 
-    // Add TURN servers with credentials
     const turnServers = this.siteSettings.resenha_turn_servers;
     if (turnServers) {
       const username = this.siteSettings.resenha_turn_username;
@@ -170,7 +188,6 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingRoomIds.add(room.id);
     this.#bumpConnectionRevision();
 
-    // Leave any other active rooms first (rooms are mutually exclusive)
     for (const activeRoomId of this.#activeRoomIds) {
       if (activeRoomId !== room.id) {
         this.leave({ id: activeRoomId }, { keepLocalStream: true });
@@ -192,10 +209,10 @@ export default class ResenhaWebrtcService extends Service {
 
         if (
           this.siteSettings.resenha_noise_suppression &&
-          this.#isNoiseSuppressionPreferred()
+          this.#noiseSuppression.isPreferred()
         ) {
           try {
-            await this.#setupNoiseSuppression(rawStream);
+            await this.#noiseSuppression.setup(rawStream);
             this.noiseSuppressionEnabled = true;
             // eslint-disable-next-line no-console
             console.log("[resenha] noise suppression enabled");
@@ -226,7 +243,6 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    // Register handler BEFORE joining to avoid missing the participant broadcast
     this.#registerRoomHandler(room.id);
     this.#activeRoomIds.add(room.id);
 
@@ -250,11 +266,15 @@ export default class ResenhaWebrtcService extends Service {
     );
 
     this.#addLocalParticipant(room.id);
-    this.#ensureAudioMonitor(room.id, this.currentUser?.id, this.localStream);
+    this.#audioMonitor.ensure(
+      room.id,
+      this.currentUser?.id,
+      this.localStream,
+      true
+    );
     this.#startHeartbeat(room.id);
-    this.#startIdleTracking();
+    this.#idleTracker.start();
 
-    // Process the initial participant list from the join response
     if (response?.room?.active_participants) {
       await this.#handleParticipants(room.id, {
         participants: response.room.active_participants,
@@ -263,7 +283,7 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#connectingRoomIds.delete(room.id);
     this.#bumpConnectionRevision();
-    this.#playConnectedSound();
+    playConnectedSound();
   }
 
   leave(room, options = {}) {
@@ -280,15 +300,15 @@ export default class ResenhaWebrtcService extends Service {
     this.#bumpConnectionRevision();
 
     if (wasConnected && !keepLocalStream) {
-      this.#playDisconnectedSound();
+      playDisconnectedSound();
     }
     this.#removeLocalParticipant(room.id);
-    this.#teardownAudioMonitor(room.id, this.currentUser?.id);
+    this.#audioMonitor.teardown(room.id, this.currentUser?.id);
     this.#stopHeartbeat(room.id);
     this.#teardownRoom(room.id);
 
     if (this.#activeRoomIds.size === 0) {
-      this.#stopIdleTracking();
+      this.#idleTracker.stop();
     }
 
     if (!keepLocalStream && this.#activeRoomIds.size === 0) {
@@ -328,7 +348,7 @@ export default class ResenhaWebrtcService extends Service {
         const playPromise = element.play();
         playPromise?.catch?.((error) => {
           if (error?.name === "NotAllowedError") {
-            this.#schedulePlaybackResume(element);
+            schedulePlaybackResume(element, this.#pendingPlaybackElements);
           } else {
             // eslint-disable-next-line no-console
             console.warn("[resenha] audio element failed to play", error);
@@ -336,7 +356,7 @@ export default class ResenhaWebrtcService extends Service {
         });
       } catch (error) {
         if (error?.name === "NotAllowedError") {
-          this.#schedulePlaybackResume(element);
+          schedulePlaybackResume(element, this.#pendingPlaybackElements);
         } else {
           // eslint-disable-next-line no-console
           console.warn("[resenha] audio element failed to play", error);
@@ -386,11 +406,11 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (this.audioEnabled) {
-      this.#playUnmuteSound();
-      this.#wasAutoMuted = false;
-      this.#resetActivity();
+      playUnmuteSound();
+      this.#idleTracker.wasAutoMuted = false;
+      this.#idleTracker.resetActivity();
     } else {
-      this.#playMuteSound();
+      playMuteSound();
     }
 
     if (this.audioEnabled && this.deafened) {
@@ -404,9 +424,9 @@ export default class ResenhaWebrtcService extends Service {
     this.deafened = !this.deafened;
 
     if (this.deafened) {
-      this.#playDeafenSound();
+      playDeafenSound();
     } else {
-      this.#playUndeafenSound();
+      playUndeafenSound();
     }
 
     if (this.deafened) {
@@ -436,6 +456,38 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#broadcastMuteState();
   }
+
+  async toggleNoiseSuppression() {
+    if (!this.#rawLocalStream) {
+      return;
+    }
+
+    if (this.noiseSuppressionEnabled) {
+      this.#noiseSuppression.teardown();
+      this.noiseSuppressionEnabled = false;
+      this.localStream = this.#rawLocalStream;
+      this.#noiseSuppression.setPreference(false);
+      // eslint-disable-next-line no-console
+      console.log("[resenha] noise suppression disabled");
+    } else {
+      try {
+        await this.#noiseSuppression.setup(this.#rawLocalStream);
+        this.noiseSuppressionEnabled = true;
+        this.#noiseSuppression.setPreference(true);
+        // eslint-disable-next-line no-console
+        console.log("[resenha] noise suppression enabled");
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to enable noise suppression", error);
+        this.localStream = this.#rawLocalStream;
+        return;
+      }
+    }
+
+    await this.#replaceTrackOnAllPeers();
+  }
+
+  // --- Private orchestration ---
 
   #broadcastMuteState() {
     for (const roomId of this.#activeRoomIds) {
@@ -500,165 +552,11 @@ export default class ResenhaWebrtcService extends Service {
       this.#roomHandlerCallbacks.delete(roomId);
     }
 
-    const peers = this.#peerConnections.get(roomId);
-    if (peers) {
-      Array.from(peers.keys()).forEach((remoteUserId) => {
-        this.#destroyPeerConnection(roomId, remoteUserId);
-      });
-      this.#peerConnections.delete(roomId);
-    }
+    this.#peerManager.destroyRoom(roomId);
     this.#removeAllRemoteStreams(roomId);
-    this.#teardownRoomMonitors(roomId);
-    this.#clearSignalQueuesForRoom(roomId);
-    this.#clearHttpSignalQueue(roomId);
-  }
-
-  #clearPendingCandidates(roomId, remoteUserId) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-    this.#pendingCandidates.delete(key);
-  }
-
-  async #createPeerConnection(roomId, remoteUserId) {
-    let roomPeers = this.#peerConnections.get(roomId);
-    if (!roomPeers) {
-      roomPeers = new Map();
-      this.#peerConnections.set(roomId, roomPeers);
-    }
-
-    if (roomPeers.has(remoteUserId)) {
-      return roomPeers.get(remoteUserId);
-    }
-
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    roomPeers.set(remoteUserId, pc);
-
-    this.localStream?.getTracks().forEach((track) => {
-      pc.addTrack(track, this.localStream);
-    });
-
-    pc.ontrack = (event) => {
-      const stream = event.streams?.[0] || new MediaStream([event.track]);
-      this.#registerRemoteStream(roomId, remoteUserId, stream);
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        const candidatePayload =
-          typeof event.candidate.toJSON === "function"
-            ? event.candidate.toJSON()
-            : {
-                candidate: event.candidate.candidate,
-                sdpMid: event.candidate.sdpMid,
-                sdpMLineIndex: event.candidate.sdpMLineIndex,
-                usernameFragment: event.candidate.usernameFragment,
-              };
-
-        this.#sendSignal(roomId, remoteUserId, {
-          type: "candidate",
-          candidate: candidatePayload,
-        }).catch((error) => {
-          // eslint-disable-next-line no-console
-          console.warn("[resenha] failed to send candidate", error);
-        });
-      } else {
-        this.#flushQueuedSignals(roomId, remoteUserId).catch((error) => {
-          // eslint-disable-next-line no-console
-          console.warn("[resenha] failed to flush signal queue", error);
-        });
-      }
-    };
-
-    pc.onicegatheringstatechange = () => {
-      if (pc.iceGatheringState === "complete") {
-        this.#flushQueuedSignals(roomId, remoteUserId).catch((error) => {
-          // eslint-disable-next-line no-console
-          console.warn("[resenha] failed to flush signal queue", error);
-        });
-      }
-    };
-
-    pc.onicecandidateerror = (event) => {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[resenha] ICE candidate error for user ${remoteUserId}`,
-        event
-      );
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "connected") {
-        this.#clearOfferRetry(roomId, remoteUserId);
-        this.#clearPeerRestart(roomId, remoteUserId);
-        this.#clearConnectionTimeout(roomId, remoteUserId);
-        return;
-      }
-
-      if (pc.connectionState === "failed") {
-        this.#clearOfferRetry(roomId, remoteUserId);
-        this.#clearConnectionTimeout(roomId, remoteUserId);
-        this.#schedulePeerRestart(roomId, remoteUserId, { immediate: true });
-        return;
-      }
-
-      if (pc.connectionState === "disconnected") {
-        this.#schedulePeerRestart(roomId, remoteUserId);
-        return;
-      }
-
-      if (pc.connectionState === "closed") {
-        this.#destroyPeerConnection(roomId, remoteUserId, {
-          closeConnection: false,
-        });
-      }
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === "failed") {
-        this.#schedulePeerRestart(roomId, remoteUserId, { immediate: true });
-      } else if (pc.iceConnectionState === "disconnected") {
-        this.#schedulePeerRestart(roomId, remoteUserId);
-      }
-    };
-
-    // Start connection establishment timeout
-    this.#startConnectionTimeout(roomId, remoteUserId, pc);
-
-    return pc;
-  }
-
-  #startConnectionTimeout(roomId, remoteUserId, pc) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-
-    if (this.#connectionTimeouts.has(key)) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this.#connectionTimeouts.delete(key);
-
-      if (
-        pc.connectionState !== "connected" &&
-        pc.connectionState !== "closed"
-      ) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha] connection timeout (${ResenhaWebrtcService.#connectionTimeoutMs}ms) for user ${remoteUserId}, state: ${pc.connectionState}`
-        );
-        this.#schedulePeerRestart(roomId, remoteUserId, { immediate: true });
-      }
-    }, ResenhaWebrtcService.#connectionTimeoutMs);
-
-    this.#connectionTimeouts.set(key, timer);
-  }
-
-  #clearConnectionTimeout(roomId, remoteUserId) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-    const timer = this.#connectionTimeouts.get(key);
-
-    if (timer) {
-      clearTimeout(timer);
-      this.#connectionTimeouts.delete(key);
-    }
+    this.#audioMonitor.teardownRoom(roomId);
+    this.#signaling.clearForRoom(roomId);
+    this.#signaling.clearHttpQueue(roomId);
   }
 
   async #handleRoomMessage(roomId, payload) {
@@ -695,14 +593,12 @@ export default class ResenhaWebrtcService extends Service {
     console.log(
       `[resenha] 📥 received ${data.type} from user ${remoteUserId} in room ${roomId}`
     );
-    const pc = await this.#createPeerConnection(roomId, remoteUserId);
+    const pc = await this.#peerManager.create(roomId, remoteUserId);
 
     if (data.type === "offer") {
-      this.#clearOfferRetry(roomId, remoteUserId);
+      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
 
-      // Handle glare condition: both peers send offers simultaneously
       if (pc.signalingState === "have-local-offer") {
-        // Use polite peer pattern: lower user ID yields
         if (this.currentUser?.id < remoteUserId) {
           // eslint-disable-next-line no-console
           console.log(
@@ -720,10 +616,14 @@ export default class ResenhaWebrtcService extends Service {
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
-        await this.#flushPendingCandidates(roomId, remoteUserId, pc);
+        await this.#peerManager.flushPendingCandidates(
+          roomId,
+          remoteUserId,
+          pc
+        );
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        this.#sendSignal(roomId, remoteUserId, answer).catch((error) => {
+        this.#signaling.send(roomId, remoteUserId, answer).catch((error) => {
           // eslint-disable-next-line no-console
           console.warn("[resenha] failed to send answer", error);
         });
@@ -735,7 +635,7 @@ export default class ResenhaWebrtcService extends Service {
         );
       }
     } else if (data.type === "answer") {
-      this.#clearOfferRetry(roomId, remoteUserId);
+      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
 
       if (pc.signalingState !== "have-local-offer") {
         // eslint-disable-next-line no-console
@@ -747,7 +647,11 @@ export default class ResenhaWebrtcService extends Service {
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
-        await this.#flushPendingCandidates(roomId, remoteUserId, pc);
+        await this.#peerManager.flushPendingCandidates(
+          roomId,
+          remoteUserId,
+          pc
+        );
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn(
@@ -756,11 +660,14 @@ export default class ResenhaWebrtcService extends Service {
         );
       }
     } else if (data.type === "candidate") {
-      this.#clearOfferRetry(roomId, remoteUserId);
+      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
 
-      // Queue candidates if remote description not yet set
       if (!pc.remoteDescription) {
-        this.#queuePendingCandidate(roomId, remoteUserId, data.candidate);
+        this.#peerManager.queuePendingCandidate(
+          roomId,
+          remoteUserId,
+          data.candidate
+        );
         return;
       }
 
@@ -776,124 +683,6 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  #queuePendingCandidate(roomId, remoteUserId, candidate) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-    const queue = this.#pendingCandidates.get(key) || [];
-    queue.push(candidate);
-    this.#pendingCandidates.set(key, queue);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] queued ICE candidate for user ${remoteUserId} (${queue.length} pending)`
-    );
-  }
-
-  async #flushPendingCandidates(roomId, remoteUserId, pc) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-    const candidates = this.#pendingCandidates.get(key);
-
-    if (!candidates?.length) {
-      return;
-    }
-
-    this.#pendingCandidates.delete(key);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] flushing ${candidates.length} queued ICE candidates for user ${remoteUserId}`
-    );
-
-    for (const candidate of candidates) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha] failed to add queued ICE candidate for user ${remoteUserId}`,
-          error
-        );
-      }
-    }
-  }
-
-  async #sendSignal(roomId, recipientId, payload) {
-    if (!roomId || !recipientId || !payload) {
-      return Promise.resolve();
-    }
-
-    if (!this.#activeRoomIds.has(roomId)) {
-      return Promise.resolve();
-    }
-
-    const peers = this.#peerConnections.get(roomId);
-    if (!peers || !peers.has(recipientId)) {
-      return Promise.resolve();
-    }
-
-    if (payload.type === "candidate") {
-      this.#queueSignal(roomId, recipientId, payload);
-      return Promise.resolve();
-    }
-
-    await this.#flushQueuedSignals(roomId, recipientId);
-    await this.#postSignals(roomId, recipientId, [payload]);
-  }
-
-  #queueSignal(roomId, recipientId, payload) {
-    const key = this.remotePeerKey(roomId, recipientId);
-    const queue = this.#signalQueues.get(key) || [];
-    queue.push(payload);
-    this.#signalQueues.set(key, queue);
-
-    if (queue.length >= ResenhaWebrtcService.#candidateBatchSize) {
-      this.#flushQueuedSignals(roomId, recipientId).catch((error) => {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to flush signal queue", error);
-      });
-      return;
-    }
-
-    const existingTimer = this.#signalFlushTimers.get(key);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-
-    const timer = setTimeout(() => {
-      this.#signalFlushTimers.delete(key);
-      this.#flushQueuedSignals(roomId, recipientId).catch((error) => {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to flush signal queue", error);
-      });
-    }, ResenhaWebrtcService.#candidateBatchDelayMs);
-
-    this.#signalFlushTimers.set(key, timer);
-  }
-
-  async #flushQueuedSignals(roomId, recipientId) {
-    const key = this.remotePeerKey(roomId, recipientId);
-    const queue = this.#signalQueues.get(key);
-
-    if (!queue?.length) {
-      return;
-    }
-
-    this.#signalQueues.delete(key);
-
-    const timer = this.#signalFlushTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      this.#signalFlushTimers.delete(key);
-    }
-
-    await this.#postSignals(roomId, recipientId, queue);
-  }
-
-  async #postSignals(roomId, recipientId, events) {
-    if (!events?.length || !this.#activeRoomIds.has(roomId)) {
-      return;
-    }
-
-    await this.#enqueueHttpSignals(roomId, recipientId, events);
-  }
-
   async #handleParticipants(roomId, payload) {
     const participantIds = new Set(
       (payload.participants || []).map((participant) => Number(participant.id))
@@ -904,7 +693,7 @@ export default class ResenhaWebrtcService extends Service {
       `[resenha] handleParticipants room=${roomId}, participants=[${Array.from(participantIds)}], currentUser=${this.currentUser?.id}`
     );
 
-    let peers = this.#peerConnections.get(roomId);
+    let peers = this.#peerManager.getRoomPeers(roomId);
 
     const existingPeerIds = new Set(peers?.keys() || []);
 
@@ -913,7 +702,7 @@ export default class ResenhaWebrtcService extends Service {
     peers?.forEach((pc, remoteUserId) => {
       if (!participantIds.has(remoteUserId)) {
         hasPeerLeft = true;
-        this.#destroyPeerConnection(roomId, remoteUserId);
+        this.#peerManager.destroy(roomId, remoteUserId);
       }
     });
 
@@ -924,7 +713,7 @@ export default class ResenhaWebrtcService extends Service {
         continue;
       }
 
-      if (!peers?.has(participantId)) {
+      if (!this.#peerManager.has(roomId, participantId)) {
         if (existingPeerIds.size > 0 || !this.#connectingRoomIds.has(roomId)) {
           hasNewPeer = true;
         }
@@ -932,28 +721,27 @@ export default class ResenhaWebrtcService extends Service {
         console.log(
           `[resenha] creating peer connection to user ${participantId}`
         );
-        await this.#createPeerConnection(roomId, participantId);
-        peers = this.#peerConnections.get(roomId);
+        await this.#peerManager.create(roomId, participantId);
 
         if (this.currentUser?.id <= participantId) {
           // eslint-disable-next-line no-console
           console.log(`[resenha] initiating offer to user ${participantId}`);
-          await this.#initiateOffer(roomId, participantId);
+          await this.#peerManager.initiateOffer(roomId, participantId);
         } else {
           // eslint-disable-next-line no-console
           console.log(
             `[resenha] scheduling offer retry for user ${participantId}`
           );
-          this.#scheduleOfferRetry(roomId, participantId);
+          this.#peerManager.scheduleOfferRetry(roomId, participantId);
         }
       }
     }
 
     if (this.#activeRoomIds.has(roomId)) {
       if (hasNewPeer) {
-        this.#playUserJoinedSound();
+        playUserJoinedSound();
       } else if (hasPeerLeft) {
-        this.#playUserLeftSound();
+        playUserLeftSound();
       }
     }
   }
@@ -996,204 +784,6 @@ export default class ResenhaWebrtcService extends Service {
     this.resenhaRooms?.removeParticipant(roomId, this.currentUser.id);
   }
 
-  async #initiateOffer(roomId, remoteUserId) {
-    const peers = this.#peerConnections.get(roomId);
-    const pc = peers?.get(remoteUserId);
-
-    if (!pc || pc.signalingState !== "stable") {
-      return;
-    }
-
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      this.#sendSignal(roomId, remoteUserId, offer).catch((error) => {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to send offer", error);
-      });
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to create offer", error);
-    }
-  }
-
-  #scheduleOfferRetry(roomId, remoteUserId, delay = 2000) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-
-    if (this.#offerRetryTimers.has(key)) {
-      return;
-    }
-
-    const attempts = this.#offerRetryAttempts.get(key) || 0;
-
-    if (attempts >= ResenhaWebrtcService.#maxOfferRetries) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[resenha] max offer retries (${ResenhaWebrtcService.#maxOfferRetries}) reached for user ${remoteUserId}`
-      );
-      return;
-    }
-
-    // Exponential backoff: 2s → 4s → 8s
-    const actualDelay = delay * Math.pow(2, attempts);
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] scheduling offer retry for user ${remoteUserId} (attempt ${attempts + 1}/${ResenhaWebrtcService.#maxOfferRetries}, delay ${actualDelay}ms)`
-    );
-
-    const timer = setTimeout(async () => {
-      this.#offerRetryTimers.delete(key);
-      this.#offerRetryAttempts.set(key, attempts + 1);
-      await this.#initiateOffer(roomId, remoteUserId);
-    }, actualDelay);
-
-    this.#offerRetryTimers.set(key, timer);
-  }
-
-  #clearOfferRetry(roomId, remoteUserId) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-    const timer = this.#offerRetryTimers.get(key);
-
-    if (timer) {
-      clearTimeout(timer);
-      this.#offerRetryTimers.delete(key);
-    }
-
-    // Reset retry attempts on successful signal
-    this.#offerRetryAttempts.delete(key);
-  }
-
-  #ensureAudioMonitor(roomId, userId, stream) {
-    if (!roomId || !userId || !stream) {
-      return;
-    }
-
-    const audioContextClass =
-      typeof window !== "undefined" &&
-      (window.AudioContext || window.webkitAudioContext);
-
-    if (!audioContextClass) {
-      return;
-    }
-
-    const key = this.remotePeerKey(roomId, userId);
-    const existing = this.#speakingMonitors.get(key);
-    if (existing?.stream === stream) {
-      return;
-    }
-
-    if (existing) {
-      this.#teardownAudioMonitor(roomId, userId);
-    }
-
-    try {
-      const audioContext = new audioContextClass();
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 512;
-      source.connect(analyser);
-
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let rafId = null;
-      let speaking = false;
-      let stopSpeakingTimer = null;
-
-      const sample = () => {
-        analyser.getByteTimeDomainData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          const deviation = dataArray[i] - 128;
-          sum += deviation * deviation;
-        }
-        const rms = Math.sqrt(sum / dataArray.length);
-        const isSpeaking = rms > 8;
-
-        if (isSpeaking && userId === this.currentUser?.id && !this.#voiceActivityThrottled) {
-          this.#voiceActivityThrottled = true;
-          setTimeout(() => {
-            this.#voiceActivityThrottled = false;
-          }, 10000);
-          this.#resetActivity();
-        }
-
-        if (isSpeaking && !speaking) {
-          // Start speaking immediately
-          if (stopSpeakingTimer) {
-            clearTimeout(stopSpeakingTimer);
-            stopSpeakingTimer = null;
-          }
-          speaking = true;
-          this.resenhaRooms?.setParticipantSpeaking(roomId, userId, true);
-        } else if (!isSpeaking && speaking && !stopSpeakingTimer) {
-          // Delay stopping to avoid flickering
-          stopSpeakingTimer = setTimeout(() => {
-            speaking = false;
-            stopSpeakingTimer = null;
-            this.resenhaRooms?.setParticipantSpeaking(roomId, userId, false);
-          }, 500);
-        }
-
-        rafId =
-          typeof window !== "undefined"
-            ? window.requestAnimationFrame(sample)
-            : null;
-      };
-
-      sample();
-
-      this.#speakingMonitors.set(key, {
-        stream,
-        stop() {
-          if (rafId && typeof window !== "undefined") {
-            window.cancelAnimationFrame(rafId);
-          }
-
-          if (stopSpeakingTimer) {
-            clearTimeout(stopSpeakingTimer);
-            stopSpeakingTimer = null;
-          }
-
-          try {
-            source.disconnect();
-          } catch {
-            // ignore
-          }
-
-          audioContext.close();
-        },
-      });
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to initialize audio monitor", error);
-    }
-  }
-
-  #teardownAudioMonitor(roomId, userId) {
-    if (!roomId || !userId) {
-      return;
-    }
-
-    const key = this.remotePeerKey(roomId, userId);
-    const monitor = this.#speakingMonitors.get(key);
-    if (!monitor) {
-      return;
-    }
-
-    monitor.stop?.();
-    this.#speakingMonitors.delete(key);
-    this.resenhaRooms?.setParticipantSpeaking(roomId, userId, false);
-  }
-
-  #teardownRoomMonitors(roomId) {
-    Array.from(this.#speakingMonitors.keys()).forEach((key) => {
-      if (key.startsWith(`${roomId}:`)) {
-        const [, userId] = key.split(":");
-        this.#teardownAudioMonitor(roomId, Number(userId));
-      }
-    });
-  }
-
   #removeAllRemoteStreams(roomId) {
     const entries = this.#remoteStreams.get(roomId);
     if (!entries?.length) {
@@ -1204,7 +794,7 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     entries.forEach((entry) =>
-      this.#teardownAudioMonitor(roomId, Number(entry.userId))
+      this.#audioMonitor.teardown(roomId, Number(entry.userId))
     );
     this.#remoteStreams.delete(roomId);
     this.#bumpRemoteStreamsRevision();
@@ -1234,7 +824,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#remoteStreams.set(roomId, next);
     this.#streamToParticipant.set(stream, { roomId, userId: remoteUserId });
     this.#bumpRemoteStreamsRevision();
-    this.#ensureAudioMonitor(roomId, remoteUserId, stream);
+    this.#audioMonitor.ensure(roomId, remoteUserId, stream, false);
   }
 
   #removeRemoteStream(roomId, remoteUserId) {
@@ -1262,7 +852,7 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     this.#bumpRemoteStreamsRevision();
-    this.#teardownAudioMonitor(roomId, remoteUserId);
+    this.#audioMonitor.teardown(roomId, remoteUserId);
     this.#untrackAudioElement(roomId, remoteUserId);
   }
 
@@ -1274,239 +864,11 @@ export default class ResenhaWebrtcService extends Service {
     this.connectionRevision++;
   }
 
-  #playConnectedSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.frequency.value = 523.25; // C5
-      gain1.gain.setValueAtTime(0.15, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-      osc1.connect(gain1).connect(ctx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.15);
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.frequency.value = 659.25; // E5
-      gain2.gain.setValueAtTime(0.001, now);
-      gain2.gain.setValueAtTime(0.15, now + 0.1);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-      osc2.connect(gain2).connect(ctx.destination);
-      osc2.start(now + 0.1);
-      osc2.stop(now + 0.25);
-
-      osc2.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #playDisconnectedSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.frequency.value = 659.25; // E5
-      gain1.gain.setValueAtTime(0.15, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-      osc1.connect(gain1).connect(ctx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.15);
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.frequency.value = 523.25; // C5
-      gain2.gain.setValueAtTime(0.001, now);
-      gain2.gain.setValueAtTime(0.15, now + 0.1);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-      osc2.connect(gain2).connect(ctx.destination);
-      osc2.start(now + 0.1);
-      osc2.stop(now + 0.25);
-
-      osc2.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #playUserJoinedSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 659.25; // E5
-      gain.gain.setValueAtTime(0.12, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.1);
-
-      osc.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #playUserLeftSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 523.25; // C5
-      gain.gain.setValueAtTime(0.12, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.1);
-
-      osc.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #playMuteSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 392.0; // G4
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.08);
-
-      osc.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #playUnmuteSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 440.0; // A4
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.08);
-
-      osc.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #playDeafenSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.frequency.value = 392.0; // G4
-      gain1.gain.setValueAtTime(0.1, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
-      osc1.connect(gain1).connect(ctx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.07);
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.frequency.value = 293.66; // D4
-      gain2.gain.setValueAtTime(0.001, now);
-      gain2.gain.setValueAtTime(0.1, now + 0.07);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
-      osc2.connect(gain2).connect(ctx.destination);
-      osc2.start(now + 0.07);
-      osc2.stop(now + 0.14);
-
-      osc2.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #playUndeafenSound() {
-    try {
-      const ctx = new AudioContext();
-      const now = ctx.currentTime;
-
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.frequency.value = 293.66; // D4
-      gain1.gain.setValueAtTime(0.1, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
-      osc1.connect(gain1).connect(ctx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.07);
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.frequency.value = 392.0; // G4
-      gain2.gain.setValueAtTime(0.001, now);
-      gain2.gain.setValueAtTime(0.1, now + 0.07);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
-      osc2.connect(gain2).connect(ctx.destination);
-      osc2.start(now + 0.07);
-      osc2.stop(now + 0.14);
-
-      osc2.onended = () => ctx.close();
-    } catch {
-      // audio not available
-    }
-  }
-
-  #schedulePlaybackResume(element) {
-    if (
-      !element ||
-      typeof document === "undefined" ||
-      this.#pendingPlaybackElements.has(element)
-    ) {
-      return;
-    }
-
-    this.#pendingPlaybackElements.add(element);
-
-    const resume = () => {
-      try {
-        element.play?.();
-      } catch {
-        // ignore subsequent failures
-      }
-
-      document.removeEventListener("pointerdown", resume);
-      document.removeEventListener("keydown", resume);
-      this.#pendingPlaybackElements.delete(element);
-    };
-
-    document.addEventListener("pointerdown", resume, { once: true });
-    document.addEventListener("keydown", resume, { once: true });
-  }
-
   #startHeartbeat(roomId) {
     if (this.#heartbeatTimers.has(roomId)) {
       return;
     }
 
-    // Send heartbeat every 10 seconds (TTL is 30 seconds, so this gives us buffer)
     const timer = setInterval(async () => {
       if (!this.#activeRoomIds.has(roomId)) {
         this.#stopHeartbeat(roomId);
@@ -1521,9 +883,9 @@ export default class ResenhaWebrtcService extends Service {
 
       try {
         const data = {};
-        if (this.idleState !== this.#lastBroadcastedIdleState) {
+        if (this.idleState !== this.#idleTracker.lastBroadcastedIdleState) {
           data.idle_state = this.idleState;
-          this.#lastBroadcastedIdleState = this.idleState;
+          this.#idleTracker.lastBroadcastedIdleState = this.idleState;
         }
         await ajax(`/resenha/rooms/${roomId}/heartbeat`, {
           type: "POST",
@@ -1558,22 +920,62 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  #resetActivity() {
-    if (this.#activityThrottled) {
-      this.#lastActivityAt = Date.now();
+  #handleJoinFailure(roomId) {
+    this.#connectingRoomIds.delete(roomId);
+    this.#bumpConnectionRevision();
+    this.#activeRoomIds.delete(roomId);
+    this.#stopHeartbeat(roomId);
+    this.#removeLocalParticipant(roomId);
+    this.#teardownRoom(roomId);
+
+    if (this.#activeRoomIds.size === 0) {
+      this.#stopLocalStream();
+    }
+  }
+
+  #stopLocalStream() {
+    this.#noiseSuppression.teardown();
+    this.noiseSuppressionEnabled = false;
+
+    if (this.#rawLocalStream) {
+      this.#rawLocalStream.getTracks().forEach((track) => track.stop());
+      this.#rawLocalStream = null;
+    }
+
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream = null;
+    }
+  }
+
+  async #replaceTrackOnAllPeers() {
+    const newTrack = this.localStream?.getAudioTracks()?.[0];
+    if (!newTrack) {
       return;
     }
 
-    this.#lastActivityAt = Date.now();
-    this.#activityThrottled = true;
-    setTimeout(() => {
-      this.#activityThrottled = false;
-    }, 10000);
+    for (const [, peers] of this.#peerManager.allPeerConnections()) {
+      for (const [, pc] of peers) {
+        for (const sender of pc.getSenders()) {
+          if (sender.track?.kind === "audio") {
+            try {
+              await sender.replaceTrack(newTrack);
+            } catch (error) {
+              // eslint-disable-next-line no-console
+              console.warn("[resenha] failed to replace track on peer", error);
+            }
+          }
+        }
+      }
+    }
+  }
 
-    if (this.idleState !== "active") {
-      const wasAfk = this.idleState === "afk";
+  // --- Idle tracker callbacks ---
+
+  #handleIdleStateChange(newState, wasAfk) {
+    if (newState === "active" && this.idleState !== "active") {
       this.idleState = "active";
-      this.#lastBroadcastedIdleState = null;
+      this.#idleTracker.lastBroadcastedIdleState = null;
 
       for (const roomId of this.#activeRoomIds) {
         this.resenhaRooms?.setParticipantIdleState(
@@ -1583,7 +985,7 @@ export default class ResenhaWebrtcService extends Service {
         );
       }
 
-      if (wasAfk && this.#wasAutoMuted) {
+      if (wasAfk && this.#idleTracker.wasAutoMuted) {
         this.toasts.success({
           duration: 5000,
           data: {
@@ -1598,63 +1000,66 @@ export default class ResenhaWebrtcService extends Service {
           },
         });
       }
+    } else if (newState === "idle" && this.idleState !== "idle") {
+      this.idleState = "idle";
+      this.#idleTracker.lastBroadcastedIdleState = null;
+
+      for (const roomId of this.#activeRoomIds) {
+        this.resenhaRooms?.setParticipantIdleState(
+          roomId,
+          this.currentUser?.id,
+          "idle"
+        );
+      }
     }
   }
 
-  #startIdleTracking() {
-    if (this.#idleCheckTimerId) {
-      return;
+  #handleAutoMute() {
+    if (this.idleState !== "afk") {
+      this.idleState = "afk";
+      this.#idleTracker.lastBroadcastedIdleState = null;
+
+      if (this.audioEnabled) {
+        this.audioEnabled = false;
+        if (this.localStream) {
+          for (const track of this.localStream.getAudioTracks()) {
+            track.enabled = false;
+          }
+        }
+        this.#broadcastMuteState();
+      }
+
+      for (const roomId of this.#activeRoomIds) {
+        this.resenhaRooms?.setParticipantIdleState(
+          roomId,
+          this.currentUser?.id,
+          "afk"
+        );
+      }
+    }
+  }
+
+  #handleIdleDisconnect() {
+    const roomNames = [];
+    for (const roomId of this.#activeRoomIds) {
+      const room = this.resenhaRooms?.roomById(roomId);
+      if (room) {
+        roomNames.push(room.name);
+      }
     }
 
-    this.#lastActivityAt = Date.now();
-    this.idleState = "active";
-    this.#wasAutoMuted = false;
-    this.#lastBroadcastedIdleState = null;
+    for (const roomId of [...this.#activeRoomIds]) {
+      this.leave({ id: roomId });
+    }
 
-    this.#boundActivityHandler = () => this.#resetActivity();
-    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
-    events.forEach((event) => {
-      document.addEventListener(event, this.#boundActivityHandler, {
-        passive: true,
-      });
+    const name = roomNames[0] || "the room";
+    this.toasts.default({
+      duration: 8000,
+      data: { message: i18n("resenha.idle.disconnected", { room: name }) },
     });
-
-    this.#idleCheckTimerId = setInterval(() => this.#checkIdleState(), 30000);
   }
 
-  #stopIdleTracking() {
-    if (this.#idleCheckTimerId) {
-      clearInterval(this.#idleCheckTimerId);
-      this.#idleCheckTimerId = null;
-    }
-
-    if (this.#boundActivityHandler) {
-      const events = [
-        "mousemove",
-        "mousedown",
-        "keydown",
-        "scroll",
-        "touchstart",
-      ];
-      events.forEach((event) => {
-        document.removeEventListener(event, this.#boundActivityHandler);
-      });
-      this.#boundActivityHandler = null;
-    }
-
-    this.idleState = "active";
-    this.#wasAutoMuted = false;
-    this.#activityThrottled = false;
-    this.#voiceActivityThrottled = false;
-    this.#lastBroadcastedIdleState = null;
-  }
-
-  #checkIdleState() {
-    if (this.#activeRoomIds.size === 0) {
-      return;
-    }
-
-    const elapsed = Date.now() - this.#lastActivityAt;
+  #getIdleThresholds() {
     let idleMs =
       this.siteSettings.resenha_idle_threshold_minutes * 60 * 1000;
     let afkMs =
@@ -1662,7 +1067,6 @@ export default class ResenhaWebrtcService extends Service {
     let disconnectMs =
       this.siteSettings.resenha_afk_disconnect_threshold_minutes * 60 * 1000;
 
-    // Enforce ordering: idle < afk < disconnect (disable lower stages if misconfigured)
     if (afkMs > 0 && idleMs > 0 && idleMs >= afkMs) {
       idleMs = 0;
     }
@@ -1673,527 +1077,6 @@ export default class ResenhaWebrtcService extends Service {
       idleMs = 0;
     }
 
-    if (disconnectMs > 0 && elapsed >= disconnectMs) {
-      const roomNames = [];
-      for (const roomId of this.#activeRoomIds) {
-        const room = this.resenhaRooms?.roomById(roomId);
-        if (room) {
-          roomNames.push(room.name);
-        }
-      }
-
-      for (const roomId of [...this.#activeRoomIds]) {
-        this.leave({ id: roomId });
-      }
-
-      const name = roomNames[0] || "the room";
-      this.toasts.default({
-        duration: 8000,
-        data: { message: i18n("resenha.idle.disconnected", { room: name }) },
-      });
-      return;
-    }
-
-    if (afkMs > 0 && elapsed >= afkMs) {
-      if (this.idleState !== "afk") {
-        this.idleState = "afk";
-        this.#lastBroadcastedIdleState = null;
-
-        if (this.audioEnabled) {
-          this.audioEnabled = false;
-          if (this.localStream) {
-            for (const track of this.localStream.getAudioTracks()) {
-              track.enabled = false;
-            }
-          }
-          this.#wasAutoMuted = true;
-          this.#broadcastMuteState();
-        }
-
-        for (const roomId of this.#activeRoomIds) {
-          this.resenhaRooms?.setParticipantIdleState(
-            roomId,
-            this.currentUser?.id,
-            "afk"
-          );
-        }
-      }
-      return;
-    }
-
-    if (idleMs > 0 && elapsed >= idleMs) {
-      if (this.idleState !== "idle") {
-        this.idleState = "idle";
-        this.#lastBroadcastedIdleState = null;
-
-        for (const roomId of this.#activeRoomIds) {
-          this.resenhaRooms?.setParticipantIdleState(
-            roomId,
-            this.currentUser?.id,
-            "idle"
-          );
-        }
-      }
-      return;
-    }
-
-    if (this.idleState !== "active") {
-      this.idleState = "active";
-      this.#lastBroadcastedIdleState = null;
-
-      for (const roomId of this.#activeRoomIds) {
-        this.resenhaRooms?.setParticipantIdleState(
-          roomId,
-          this.currentUser?.id,
-          "active"
-        );
-      }
-    }
-  }
-
-  #stopLocalStream() {
-    this.#teardownNoiseSuppression();
-
-    if (this.#rawLocalStream) {
-      this.#rawLocalStream.getTracks().forEach((track) => track.stop());
-      this.#rawLocalStream = null;
-    }
-
-    if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
-      this.localStream = null;
-    }
-  }
-
-  #schedulePeerRestart(roomId, remoteUserId, options = {}) {
-    if (!this.#activeRoomIds.has(roomId)) {
-      return;
-    }
-
-    const key = this.remotePeerKey(roomId, remoteUserId);
-
-    if (this.#peerReconnectTimers.has(key)) {
-      return;
-    }
-
-    const attempts = this.#restartAttempts.get(key) || 0;
-
-    if (attempts >= ResenhaWebrtcService.#maxRestartAttempts) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[resenha] max restart attempts (${ResenhaWebrtcService.#maxRestartAttempts}) reached for user ${remoteUserId}`
-      );
-      return;
-    }
-
-    // Exponential backoff: 200ms → 400ms → 800ms → 1600ms → 3200ms (capped at 5000ms)
-    const baseDelay = options.immediate ? 200 : 1500;
-    const delay = Math.min(baseDelay * Math.pow(2, attempts), 5000);
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] scheduling peer restart for user ${remoteUserId} (attempt ${attempts + 1}/${ResenhaWebrtcService.#maxRestartAttempts}, delay ${delay}ms)`
-    );
-
-    const timer = setTimeout(() => {
-      this.#peerReconnectTimers.delete(key);
-      this.#restartAttempts.set(key, attempts + 1);
-      this.#restartPeerConnection(roomId, remoteUserId).catch((error) => {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to restart peer connection", error);
-      });
-    }, delay);
-
-    this.#peerReconnectTimers.set(key, timer);
-  }
-
-  #clearPeerRestart(roomId, remoteUserId) {
-    this.#clearPeerRestartTimer(roomId, remoteUserId);
-
-    // Reset restart attempts on successful connection
-    this.#restartAttempts.delete(this.remotePeerKey(roomId, remoteUserId));
-  }
-
-  #clearPeerRestartTimer(roomId, remoteUserId) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-    const timer = this.#peerReconnectTimers.get(key);
-
-    if (timer) {
-      clearTimeout(timer);
-      this.#peerReconnectTimers.delete(key);
-    }
-  }
-
-  #clearSignalQueuesForRoom(roomId) {
-    const prefix = `${roomId}:`;
-
-    Array.from(this.#signalQueues.keys()).forEach((key) => {
-      if (!key.startsWith(prefix)) {
-        return;
-      }
-
-      const timer = this.#signalFlushTimers.get(key);
-
-      if (timer) {
-        clearTimeout(timer);
-        this.#signalFlushTimers.delete(key);
-      }
-
-      this.#signalQueues.delete(key);
-    });
-  }
-
-  #clearSignalQueue(roomId, remoteUserId) {
-    const key = this.remotePeerKey(roomId, remoteUserId);
-    const timer = this.#signalFlushTimers.get(key);
-
-    if (timer) {
-      clearTimeout(timer);
-      this.#signalFlushTimers.delete(key);
-    }
-
-    this.#signalQueues.delete(key);
-  }
-
-  #clearHttpSignalQueue(roomId) {
-    const timer = this.#httpSignalFlushTimers.get(roomId);
-    if (timer) {
-      clearTimeout(timer);
-      this.#httpSignalFlushTimers.delete(roomId);
-    }
-
-    const entry = this.#httpSignalQueues.get(roomId);
-    if (!entry) {
-      return;
-    }
-
-    entry.recipients?.clear?.();
-    entry.pending?.forEach((pending) => pending.resolve?.());
-    entry.pending = [];
-    this.#httpSignalQueues.delete(roomId);
-  }
-
-  #enqueueHttpSignals(roomId, recipientId, events) {
-    if (!roomId || !recipientId || !events?.length) {
-      return Promise.resolve();
-    }
-
-    let entry = this.#httpSignalQueues.get(roomId);
-
-    if (!entry) {
-      entry = {
-        recipients: new Map(),
-        pending: [],
-      };
-
-      this.#httpSignalQueues.set(roomId, entry);
-    }
-
-    const roomQueue = entry.recipients;
-    const existingEvents = roomQueue.get(recipientId);
-
-    if (existingEvents) {
-      existingEvents.push(...events);
-    } else {
-      roomQueue.set(recipientId, [...events]);
-    }
-
-    const promise = new Promise((resolve, reject) => {
-      entry.pending.push({ resolve, reject });
-    });
-
-    this.#scheduleHttpFlush(roomId);
-
-    return promise;
-  }
-
-  #scheduleHttpFlush(roomId) {
-    if (this.#httpSignalFlushTimers.has(roomId)) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this.#httpSignalFlushTimers.delete(roomId);
-      this.#flushHttpSignals(roomId).catch((error) => {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to flush HTTP signal queue", error);
-      });
-    }, ResenhaWebrtcService.#httpBatchDelayMs);
-
-    this.#httpSignalFlushTimers.set(roomId, timer);
-  }
-
-  async #flushHttpSignals(roomId) {
-    const entry = this.#httpSignalQueues.get(roomId);
-    if (!entry) {
-      return;
-    }
-
-    if (!this.#activeRoomIds.has(roomId)) {
-      entry.recipients?.clear?.();
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
-      this.#httpSignalQueues.delete(roomId);
-      return;
-    }
-
-    const roomQueue = entry.recipients;
-    if (!roomQueue?.size) {
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
-      return;
-    }
-
-    const messages = [];
-
-    roomQueue.forEach((events, recipientId) => {
-      if (!events?.length) {
-        return;
-      }
-
-      messages.push({
-        recipient_id: recipientId,
-        events,
-      });
-    });
-
-    roomQueue.clear();
-
-    if (!messages.length) {
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
-      return;
-    }
-
-    const payload = this.#buildSignalPayload(messages);
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] 🚀 sending ${messages.length} batched signal recipient(s) in room ${roomId}`
-    );
-
-    try {
-      await ajax(`/resenha/rooms/${roomId}/signal`, {
-        type: "POST",
-        data: { payload },
-      });
-
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
-    } catch (error) {
-      entry.pending.splice(0).forEach((pending) => pending.reject?.(error));
-      throw error;
-    }
-  }
-
-  #buildSignalPayload(messages) {
-    if (messages.length === 1) {
-      const [message] = messages;
-
-      if (message.events.length === 1) {
-        return {
-          ...message.events[0],
-          recipient_id: message.recipient_id,
-        };
-      }
-
-      return {
-        recipient_id: message.recipient_id,
-        events: message.events,
-      };
-    }
-
-    return {
-      messages: messages.map((message) => ({
-        recipient_id: message.recipient_id,
-        events: message.events,
-      })),
-    };
-  }
-
-  async #restartPeerConnection(roomId, remoteUserId) {
-    if (!this.#activeRoomIds.has(roomId)) {
-      return;
-    }
-
-    this.#destroyPeerConnection(roomId, remoteUserId, {
-      resetRestartAttempts: false,
-    });
-
-    await this.#createPeerConnection(roomId, remoteUserId);
-    await this.#initiateOffer(roomId, remoteUserId);
-  }
-
-  #handleJoinFailure(roomId) {
-    this.#connectingRoomIds.delete(roomId);
-    this.#bumpConnectionRevision();
-    this.#activeRoomIds.delete(roomId);
-    this.#stopHeartbeat(roomId);
-    this.#removeLocalParticipant(roomId);
-    this.#teardownRoom(roomId);
-
-    if (this.#activeRoomIds.size === 0) {
-      this.#stopLocalStream();
-    }
-  }
-
-  #destroyPeerConnection(
-    roomId,
-    remoteUserId,
-    { resetRestartAttempts = true, closeConnection = true } = {}
-  ) {
-    const peers = this.#peerConnections.get(roomId);
-    const pc = peers?.get(remoteUserId);
-
-    if (pc) {
-      pc.ontrack = null;
-      pc.onicecandidate = null;
-      pc.onconnectionstatechange = null;
-      pc.oniceconnectionstatechange = null;
-      pc.onicegatheringstatechange = null;
-      pc.onicecandidateerror = null;
-
-      if (closeConnection) {
-        try {
-          pc.close();
-        } catch {
-          // ignore close errors
-        }
-      }
-
-      peers.delete(remoteUserId);
-    }
-
-    this.#clearOfferRetry(roomId, remoteUserId);
-    if (resetRestartAttempts) {
-      this.#clearPeerRestart(roomId, remoteUserId);
-    } else {
-      this.#clearPeerRestartTimer(roomId, remoteUserId);
-    }
-    this.#clearConnectionTimeout(roomId, remoteUserId);
-    this.#clearPendingCandidates(roomId, remoteUserId);
-    this.#clearSignalQueue(roomId, remoteUserId);
-    this.#removeRemoteStream(roomId, remoteUserId);
-  }
-
-  async #setupNoiseSuppression(rawStream) {
-    const audioContext = new AudioContext();
-
-    await audioContext.audioWorklet.addModule(
-      "/plugins/resenha/javascripts/dtln-worklet.js"
-    );
-
-    const source = audioContext.createMediaStreamSource(rawStream);
-    const workletNode = new AudioWorkletNode(
-      audioContext,
-      "noise-suppression-processor"
-    );
-    const destination = audioContext.createMediaStreamDestination();
-
-    source.connect(workletNode);
-    workletNode.connect(destination);
-
-    this.#noiseSuppressionContext = audioContext;
-    this.#noiseSuppressionSource = source;
-    this.#noiseSuppressionNode = workletNode;
-    this.localStream = destination.stream;
-  }
-
-  #teardownNoiseSuppression() {
-    if (this.#noiseSuppressionSource) {
-      try {
-        this.#noiseSuppressionSource.disconnect();
-      } catch {
-        // ignore
-      }
-      this.#noiseSuppressionSource = null;
-    }
-
-    if (this.#noiseSuppressionNode) {
-      try {
-        this.#noiseSuppressionNode.disconnect();
-      } catch {
-        // ignore
-      }
-      this.#noiseSuppressionNode = null;
-    }
-
-    if (this.#noiseSuppressionContext) {
-      try {
-        this.#noiseSuppressionContext.close();
-      } catch {
-        // ignore
-      }
-      this.#noiseSuppressionContext = null;
-    }
-
-    this.noiseSuppressionEnabled = false;
-  }
-
-  async toggleNoiseSuppression() {
-    if (!this.#rawLocalStream) {
-      return;
-    }
-
-    if (this.noiseSuppressionEnabled) {
-      this.#teardownNoiseSuppression();
-      this.localStream = this.#rawLocalStream;
-      this.#setNoiseSuppressionPreference(false);
-      // eslint-disable-next-line no-console
-      console.log("[resenha] noise suppression disabled");
-    } else {
-      try {
-        await this.#setupNoiseSuppression(this.#rawLocalStream);
-        this.noiseSuppressionEnabled = true;
-        this.#setNoiseSuppressionPreference(true);
-        // eslint-disable-next-line no-console
-        console.log("[resenha] noise suppression enabled");
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to enable noise suppression", error);
-        this.localStream = this.#rawLocalStream;
-        return;
-      }
-    }
-
-    await this.#replaceTrackOnAllPeers();
-  }
-
-  #isNoiseSuppressionPreferred() {
-    try {
-      return localStorage.getItem("resenha:noise-suppression") === "1";
-    } catch {
-      return false;
-    }
-  }
-
-  #setNoiseSuppressionPreference(enabled) {
-    try {
-      if (enabled) {
-        localStorage.setItem("resenha:noise-suppression", "1");
-      } else {
-        localStorage.removeItem("resenha:noise-suppression");
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }
-
-  async #replaceTrackOnAllPeers() {
-    const newTrack = this.localStream?.getAudioTracks()?.[0];
-    if (!newTrack) {
-      return;
-    }
-
-    for (const [, peers] of this.#peerConnections) {
-      for (const [, pc] of peers) {
-        for (const sender of pc.getSenders()) {
-          if (sender.track?.kind === "audio") {
-            try {
-              await sender.replaceTrack(newTrack);
-            } catch (error) {
-              // eslint-disable-next-line no-console
-              console.warn("[resenha] failed to replace track on peer", error);
-            }
-          }
-        }
-      }
-    }
+    return { idleMs, afkMs, disconnectMs };
   }
 }
