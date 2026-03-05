@@ -62,14 +62,16 @@ export default class AudioMonitor {
           this.#onVoiceActivity();
         }
 
-        if (isSpeaking && !speaking) {
+        if (isSpeaking) {
           if (stopSpeakingTimer) {
             clearTimeout(stopSpeakingTimer);
             stopSpeakingTimer = null;
           }
-          speaking = true;
-          this.#onSpeakingChange(roomId, userId, true);
-        } else if (!isSpeaking && speaking && !stopSpeakingTimer) {
+          if (!speaking) {
+            speaking = true;
+            this.#onSpeakingChange(roomId, userId, true);
+          }
+        } else if (speaking && !stopSpeakingTimer) {
           stopSpeakingTimer = setTimeout(() => {
             speaking = false;
             stopSpeakingTimer = null;
