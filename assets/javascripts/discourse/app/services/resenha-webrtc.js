@@ -2,11 +2,13 @@ import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
+import { i18n } from "discourse-i18n";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
   @service siteSettings;
   @service("resenha-rooms") resenhaRooms;
+  @service toasts;
 
   @tracked localStream;
   @tracked audioEnabled = true;
@@ -14,6 +16,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked deafened = false;
   @tracked remoteStreamsRevision = 0;
   @tracked connectionRevision = 0;
+  @tracked idleState = "active";
 
   #connectingRoomIds = new Set();
   #peerConnections = new Map();
@@ -39,6 +42,14 @@ export default class ResenhaWebrtcService extends Service {
   #audioElements = new Map();
   #streamToParticipant = new WeakMap();
 
+  #lastActivityAt = 0;
+  #idleCheckTimerId = null;
+  #activityThrottled = false;
+  #wasAutoMuted = false;
+  #lastBroadcastedIdleState = null;
+  #boundActivityHandler = null;
+  #voiceActivityThrottled = false;
+
   #rawLocalStream = null;
   #noiseSuppressionContext = null;
   #noiseSuppressionNode = null;
@@ -63,6 +74,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#heartbeatTimers.forEach((timer) => clearInterval(timer));
     this.#heartbeatTimers.clear();
     this.#heartbeatInFlight.clear();
+    this.#stopIdleTracking();
     this.#connectingRoomIds.clear();
     this.#peerReconnectTimers.forEach((timer) => clearTimeout(timer));
     this.#peerReconnectTimers.clear();
@@ -240,6 +252,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#addLocalParticipant(room.id);
     this.#ensureAudioMonitor(room.id, this.currentUser?.id, this.localStream);
     this.#startHeartbeat(room.id);
+    this.#startIdleTracking();
 
     // Process the initial participant list from the join response
     if (response?.room?.active_participants) {
@@ -273,6 +286,10 @@ export default class ResenhaWebrtcService extends Service {
     this.#teardownAudioMonitor(room.id, this.currentUser?.id);
     this.#stopHeartbeat(room.id);
     this.#teardownRoom(room.id);
+
+    if (this.#activeRoomIds.size === 0) {
+      this.#stopIdleTracking();
+    }
 
     if (!keepLocalStream && this.#activeRoomIds.size === 0) {
       this.#stopLocalStream();
@@ -370,6 +387,8 @@ export default class ResenhaWebrtcService extends Service {
 
     if (this.audioEnabled) {
       this.#playUnmuteSound();
+      this.#wasAutoMuted = false;
+      this.#resetActivity();
     } else {
       this.#playMuteSound();
     }
@@ -1090,6 +1109,14 @@ export default class ResenhaWebrtcService extends Service {
         const rms = Math.sqrt(sum / dataArray.length);
         const isSpeaking = rms > 8;
 
+        if (isSpeaking && userId === this.currentUser?.id && !this.#voiceActivityThrottled) {
+          this.#voiceActivityThrottled = true;
+          setTimeout(() => {
+            this.#voiceActivityThrottled = false;
+          }, 10000);
+          this.#resetActivity();
+        }
+
         if (isSpeaking && !speaking) {
           // Start speaking immediately
           if (stopSpeakingTimer) {
@@ -1493,8 +1520,14 @@ export default class ResenhaWebrtcService extends Service {
       this.#heartbeatInFlight.add(roomId);
 
       try {
+        const data = {};
+        if (this.idleState !== this.#lastBroadcastedIdleState) {
+          data.idle_state = this.idleState;
+          this.#lastBroadcastedIdleState = this.idleState;
+        }
         await ajax(`/resenha/rooms/${roomId}/heartbeat`, {
           type: "POST",
+          data,
         });
         // eslint-disable-next-line no-console
         console.log(`[resenha] heartbeat sent for room ${roomId}`);
@@ -1522,6 +1555,199 @@ export default class ResenhaWebrtcService extends Service {
       this.#heartbeatInFlight.delete(roomId);
       // eslint-disable-next-line no-console
       console.log(`[resenha] heartbeat stopped for room ${roomId}`);
+    }
+  }
+
+  #resetActivity() {
+    if (this.#activityThrottled) {
+      this.#lastActivityAt = Date.now();
+      return;
+    }
+
+    this.#lastActivityAt = Date.now();
+    this.#activityThrottled = true;
+    setTimeout(() => {
+      this.#activityThrottled = false;
+    }, 10000);
+
+    if (this.idleState !== "active") {
+      const wasAfk = this.idleState === "afk";
+      this.idleState = "active";
+      this.#lastBroadcastedIdleState = null;
+
+      for (const roomId of this.#activeRoomIds) {
+        this.resenhaRooms?.setParticipantIdleState(
+          roomId,
+          this.currentUser?.id,
+          "active"
+        );
+      }
+
+      if (wasAfk && this.#wasAutoMuted) {
+        this.toasts.success({
+          duration: 5000,
+          data: {
+            message: i18n("resenha.idle.auto_muted"),
+            actions: [
+              {
+                label: i18n("resenha.idle.click_to_unmute"),
+                class: "btn-primary",
+                action: () => this.toggleMute(),
+              },
+            ],
+          },
+        });
+      }
+    }
+  }
+
+  #startIdleTracking() {
+    if (this.#idleCheckTimerId) {
+      return;
+    }
+
+    this.#lastActivityAt = Date.now();
+    this.idleState = "active";
+    this.#wasAutoMuted = false;
+    this.#lastBroadcastedIdleState = null;
+
+    this.#boundActivityHandler = () => this.#resetActivity();
+    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
+    events.forEach((event) => {
+      document.addEventListener(event, this.#boundActivityHandler, {
+        passive: true,
+      });
+    });
+
+    this.#idleCheckTimerId = setInterval(() => this.#checkIdleState(), 30000);
+  }
+
+  #stopIdleTracking() {
+    if (this.#idleCheckTimerId) {
+      clearInterval(this.#idleCheckTimerId);
+      this.#idleCheckTimerId = null;
+    }
+
+    if (this.#boundActivityHandler) {
+      const events = [
+        "mousemove",
+        "mousedown",
+        "keydown",
+        "scroll",
+        "touchstart",
+      ];
+      events.forEach((event) => {
+        document.removeEventListener(event, this.#boundActivityHandler);
+      });
+      this.#boundActivityHandler = null;
+    }
+
+    this.idleState = "active";
+    this.#wasAutoMuted = false;
+    this.#activityThrottled = false;
+    this.#voiceActivityThrottled = false;
+    this.#lastBroadcastedIdleState = null;
+  }
+
+  #checkIdleState() {
+    if (this.#activeRoomIds.size === 0) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.#lastActivityAt;
+    let idleMs =
+      this.siteSettings.resenha_idle_threshold_minutes * 60 * 1000;
+    let afkMs =
+      this.siteSettings.resenha_afk_auto_mute_threshold_minutes * 60 * 1000;
+    let disconnectMs =
+      this.siteSettings.resenha_afk_disconnect_threshold_minutes * 60 * 1000;
+
+    // Enforce ordering: idle < afk < disconnect (disable lower stages if misconfigured)
+    if (afkMs > 0 && idleMs > 0 && idleMs >= afkMs) {
+      idleMs = 0;
+    }
+    if (disconnectMs > 0 && afkMs > 0 && afkMs >= disconnectMs) {
+      afkMs = 0;
+    }
+    if (disconnectMs > 0 && idleMs > 0 && idleMs >= disconnectMs) {
+      idleMs = 0;
+    }
+
+    if (disconnectMs > 0 && elapsed >= disconnectMs) {
+      const roomNames = [];
+      for (const roomId of this.#activeRoomIds) {
+        const room = this.resenhaRooms?.roomById(roomId);
+        if (room) {
+          roomNames.push(room.name);
+        }
+      }
+
+      for (const roomId of [...this.#activeRoomIds]) {
+        this.leave({ id: roomId });
+      }
+
+      const name = roomNames[0] || "the room";
+      this.toasts.default({
+        duration: 8000,
+        data: { message: i18n("resenha.idle.disconnected", { room: name }) },
+      });
+      return;
+    }
+
+    if (afkMs > 0 && elapsed >= afkMs) {
+      if (this.idleState !== "afk") {
+        this.idleState = "afk";
+        this.#lastBroadcastedIdleState = null;
+
+        if (this.audioEnabled) {
+          this.audioEnabled = false;
+          if (this.localStream) {
+            for (const track of this.localStream.getAudioTracks()) {
+              track.enabled = false;
+            }
+          }
+          this.#wasAutoMuted = true;
+          this.#broadcastMuteState();
+        }
+
+        for (const roomId of this.#activeRoomIds) {
+          this.resenhaRooms?.setParticipantIdleState(
+            roomId,
+            this.currentUser?.id,
+            "afk"
+          );
+        }
+      }
+      return;
+    }
+
+    if (idleMs > 0 && elapsed >= idleMs) {
+      if (this.idleState !== "idle") {
+        this.idleState = "idle";
+        this.#lastBroadcastedIdleState = null;
+
+        for (const roomId of this.#activeRoomIds) {
+          this.resenhaRooms?.setParticipantIdleState(
+            roomId,
+            this.currentUser?.id,
+            "idle"
+          );
+        }
+      }
+      return;
+    }
+
+    if (this.idleState !== "active") {
+      this.idleState = "active";
+      this.#lastBroadcastedIdleState = null;
+
+      for (const roomId of this.#activeRoomIds) {
+        this.resenhaRooms?.setParticipantIdleState(
+          roomId,
+          this.currentUser?.id,
+          "active"
+        );
+      }
     }
   }
 

@@ -93,6 +93,17 @@ module Resenha
     def heartbeat
       guardian.ensure_can_join_resenha_room!(@room)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
+
+      if params.key?(:idle_state)
+        idle_state = params[:idle_state].to_s
+        if %w[active idle afk].include?(idle_state)
+          metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
+          metadata[:idle_state] = idle_state
+          Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
+          Resenha::RoomBroadcaster.publish_participants(@room)
+        end
+      end
+
       head :no_content
     end
 

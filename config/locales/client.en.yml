@@ -24,6 +24,10 @@ en:
         noise_suppression_off: "Enable noise suppression"
         deafen_on: "Deafen"
         deafen_off: "Undeafen"
+      idle:
+        auto_muted: "You were auto-muted after being idle."
+        click_to_unmute: "Click to unmute."
+        disconnected: "You were disconnected from %{room} due to inactivity."
       participant:
         menu_title: "Participant options"
         volume: "Volume"

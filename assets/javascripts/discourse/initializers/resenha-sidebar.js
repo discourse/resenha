@@ -260,6 +260,12 @@ export default {
               classes.push("resenha-sidebar-participant--deafened");
             }
 
+            if (this.participant.idle_state === "idle") {
+              classes.push("resenha-sidebar-participant--idle");
+            } else if (this.participant.idle_state === "afk") {
+              classes.push("resenha-sidebar-participant--afk");
+            }
+
             return classes.join(" ");
           }
 

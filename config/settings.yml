@@ -34,3 +34,18 @@ plugins:
   resenha_noise_suppression:
     default: false
     client: true
+  resenha_idle_threshold_minutes:
+    default: 5
+    min: 0
+    max: 60
+    client: true
+  resenha_afk_auto_mute_threshold_minutes:
+    default: 15
+    min: 0
+    max: 120
+    client: true
+  resenha_afk_disconnect_threshold_minutes:
+    default: 30
+    min: 0
+    max: 240
+    client: true

@@ -259,6 +259,40 @@ export default class ResenhaRoomsService extends Service {
     }
   }
 
+  setParticipantIdleState(roomId, userId, idleState) {
+    const targetId = Number(userId);
+    if (!targetId) {
+      return;
+    }
+
+    const room = this.#roomsById.get(roomId);
+    if (!room || !Array.isArray(room.active_participants)) {
+      return;
+    }
+
+    let changed = false;
+    room.active_participants = room.active_participants.map((participant) => {
+      const participantId = Number(participant?.id);
+      if (!participantId || participantId !== targetId) {
+        return participant;
+      }
+
+      if (participant.idle_state === idleState) {
+        return participant;
+      }
+
+      changed = true;
+      return {
+        ...participant,
+        idle_state: idleState,
+      };
+    });
+
+    if (changed) {
+      this.rooms = [...this.rooms];
+    }
+  }
+
   setParticipantDeafened(roomId, userId, deafened) {
     const targetId = Number(userId);
     if (!targetId) {
@@ -309,6 +343,7 @@ export default class ResenhaRoomsService extends Service {
             is_speaking: participant.is_speaking === true,
             is_muted: participant.is_muted === true,
             is_deafened: participant.is_deafened === true,
+            idle_state: participant.idle_state,
           },
         ])
     );
@@ -325,6 +360,7 @@ export default class ResenhaRoomsService extends Service {
         is_speaking: previousState.is_speaking,
         is_muted: participant.is_muted ?? previousState.is_muted,
         is_deafened: participant.is_deafened ?? previousState.is_deafened,
+        idle_state: participant.idle_state ?? previousState.idle_state,
       };
     });
     this.rooms = [...this.rooms];
