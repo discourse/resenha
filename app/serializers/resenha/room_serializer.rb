@@ -16,7 +16,8 @@ module Resenha
                :active_participants,
                :creator_id,
                :can_manage,
-               :description_excerpt
+               :description_excerpt,
+               :visit_count
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
 
@@ -50,6 +51,14 @@ module Resenha
 
     def description_excerpt
       object.description&.lines&.first&.truncate(150)
+    end
+
+    def visit_count
+      Resenha::Session.where(user_id: scope.user.id, room_id: object.id).count
+    end
+
+    def include_visit_count?
+      scope.user.present? && @options[:include_visit_count]
     end
   end
 end

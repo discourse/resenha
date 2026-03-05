@@ -14,6 +14,8 @@ Resenha::Engine.routes.draw do
 
     resources :memberships, controller: "room_memberships", only: %i[index create update destroy]
   end
+
+  get "contacts" => "contacts#index"
 end
 
 Discourse::Application.routes.draw do
