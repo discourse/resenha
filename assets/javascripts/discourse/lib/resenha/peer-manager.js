@@ -73,9 +73,11 @@ export default class PeerManager {
     roomPeers.set(remoteUserId, pc);
 
     const localStream = this.#getLocalStream();
-    localStream?.getTracks().forEach((track) => {
-      pc.addTrack(track, localStream);
-    });
+    if (localStream) {
+      for (const track of localStream.getTracks()) {
+        pc.addTrack(track, localStream);
+      }
+    }
 
     pc.ontrack = (event) => {
       const stream = event.streams?.[0] || new MediaStream([event.track]);

@@ -18,6 +18,8 @@ register_svg_icon "microphone-slash"
 register_svg_icon "volume-xmark"
 register_svg_icon "walkie-talkie"
 register_svg_icon "keyboard"
+register_svg_icon "phone-slash"
+register_svg_icon "podcast"
 register_asset "stylesheets/common/resenha.scss"
 register_asset "stylesheets/common/resenha-admin.scss", :admin
 

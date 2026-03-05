@@ -39,6 +39,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked pttActive = false;
 
   #connectingRoomIds = new Set();
+  #roleChangeInProgress = new Set();
   #activeRoomIds = new Set();
   #remoteStreams = new Map();
   #roomHandlerCallbacks = new Map();
@@ -87,8 +88,7 @@ export default class ResenhaWebrtcService extends Service {
         this.#registerRemoteStream(roomId, uid, stream),
       clearSignalQueue: (roomId, uid) =>
         this.#signaling.clearForPeer(roomId, uid),
-      onPeerDestroyed: (roomId, uid) =>
-        this.#removeRemoteStream(roomId, uid),
+      onPeerDestroyed: (roomId, uid) => this.#removeRemoteStream(roomId, uid),
     });
 
     this.#audioMonitor = new AudioMonitor({
@@ -196,6 +196,28 @@ export default class ResenhaWebrtcService extends Service {
     return "idle";
   }
 
+  #canSpeakInRoom(room) {
+    if (room.room_type !== "stage") {
+      return true;
+    }
+    const participant = (room.active_participants || []).find(
+      (p) => Number(p?.id) === this.currentUser?.id
+    );
+    const role = participant?.role;
+    return role === "moderator" || role === "speaker";
+  }
+
+  #participantCanSpeak(room, participantId) {
+    if (room.room_type !== "stage") {
+      return true;
+    }
+    const participant = (room.active_participants || []).find(
+      (p) => Number(p?.id) === Number(participantId)
+    );
+    const role = participant?.role;
+    return role === "moderator" || role === "speaker";
+  }
+
   async join(room) {
     if (!room?.id) {
       return;
@@ -212,61 +234,6 @@ export default class ResenhaWebrtcService extends Service {
 
     // eslint-disable-next-line no-console
     console.log(`[resenha] joining room ${room.id}`);
-
-    if (!this.localStream) {
-      try {
-        const rawStream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
-        // eslint-disable-next-line no-console
-        console.log("[resenha] local stream obtained");
-
-        this.#rawLocalStream = rawStream;
-
-        if (
-          this.siteSettings.resenha_noise_suppression &&
-          this.#noiseSuppression.isPreferred()
-        ) {
-          try {
-            await this.#noiseSuppression.setup(rawStream);
-            this.noiseSuppressionEnabled = true;
-            // eslint-disable-next-line no-console
-            console.log("[resenha] noise suppression enabled");
-          } catch (nsError) {
-            // eslint-disable-next-line no-console
-            console.warn(
-              "[resenha] noise suppression setup failed, using raw stream",
-              nsError
-            );
-            this.localStream = rawStream;
-          }
-        } else {
-          this.localStream = rawStream;
-        }
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to obtain local stream", error);
-        this.#connectingRoomIds.delete(room.id);
-        this.#bumpConnectionRevision();
-        return;
-      }
-    }
-
-    if (this.pttEnabled) {
-      this.audioEnabled = false;
-      if (this.localStream) {
-        for (const track of this.localStream.getAudioTracks()) {
-          track.enabled = false;
-        }
-      }
-    } else {
-      this.audioEnabled = true;
-      if (this.localStream) {
-        for (const track of this.localStream.getAudioTracks()) {
-          track.enabled = true;
-        }
-      }
-    }
 
     this.#registerRoomHandler(room.id);
     this.#activeRoomIds.add(room.id);
@@ -290,13 +257,43 @@ export default class ResenhaWebrtcService extends Service {
       response?.room?.active_participants
     );
 
+    const joinedRoom = response?.room;
+    const isStageListener =
+      joinedRoom?.room_type === "stage" && !this.#canSpeakInRoom(joinedRoom);
+
+    if (!isStageListener && !this.localStream) {
+      const acquired = await this.#acquireMicrophone();
+      if (!acquired) {
+        this.#handleJoinFailure(room.id);
+        return;
+      }
+    }
+
+    if (this.localStream) {
+      if (this.pttEnabled) {
+        this.audioEnabled = false;
+        for (const track of this.localStream.getAudioTracks()) {
+          track.enabled = false;
+        }
+      } else {
+        this.audioEnabled = true;
+        for (const track of this.localStream.getAudioTracks()) {
+          track.enabled = true;
+        }
+      }
+    }
+
     this.#addLocalParticipant(room.id);
-    this.#audioMonitor.ensure(
-      room.id,
-      this.currentUser?.id,
-      this.localStream,
-      true
-    );
+
+    if (this.localStream) {
+      this.#audioMonitor.ensure(
+        room.id,
+        this.currentUser?.id,
+        this.localStream,
+        true
+      );
+    }
+
     this.#startHeartbeat(room.id);
     this.#idleTracker.start();
 
@@ -309,7 +306,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingRoomIds.delete(room.id);
     this.#bumpConnectionRevision();
 
-    if (this.pttEnabled) {
+    if (this.pttEnabled && this.localStream) {
       this.#pttManager.startListening();
     }
 
@@ -670,6 +667,8 @@ export default class ResenhaWebrtcService extends Service {
       await this.#handleSignal(roomId, payload);
     } else if (payload.type === "participants") {
       await this.#handleParticipants(roomId, payload);
+    } else if (payload.type === "role_change") {
+      await this.#handleRoleChange(roomId, payload);
     } else if (payload.type === "kicked") {
       this.#handleKicked(roomId);
     }
@@ -781,8 +780,9 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   async #handleParticipants(roomId, payload) {
+    const participants = payload.participants || [];
     const participantIds = new Set(
-      (payload.participants || []).map((participant) => Number(participant.id))
+      participants.map((participant) => Number(participant.id))
     );
 
     // eslint-disable-next-line no-console
@@ -790,8 +790,15 @@ export default class ResenhaWebrtcService extends Service {
       `[resenha] handleParticipants room=${roomId}, participants=[${Array.from(participantIds)}], currentUser=${this.currentUser?.id}`
     );
 
-    let peers = this.#peerManager.getRoomPeers(roomId);
+    if (this.#roleChangeInProgress.has(roomId)) {
+      return;
+    }
 
+    const room = this.resenhaRooms?.roomById(roomId);
+    const isStage = room?.room_type === "stage";
+    const iCanSpeak = room ? this.#canSpeakInRoom(room) : true;
+
+    let peers = this.#peerManager.getRoomPeers(roomId);
     const existingPeerIds = new Set(peers?.keys() || []);
 
     let hasPeerLeft = false;
@@ -805,9 +812,26 @@ export default class ResenhaWebrtcService extends Service {
 
     let hasNewPeer = false;
 
-    for (const participantId of participantIds) {
+    for (const participant of participants) {
+      const participantId = Number(participant.id);
+      if (!participantId || participantId <= 0) {
+        continue;
+      }
       if (participantId === this.currentUser?.id) {
         continue;
+      }
+
+      if (isStage) {
+        const theyCanSpeak =
+          participant.role === "moderator" || participant.role === "speaker";
+        const shouldConnect = iCanSpeak || theyCanSpeak;
+
+        if (!shouldConnect) {
+          if (this.#peerManager.has(roomId, participantId)) {
+            this.#peerManager.destroy(roomId, participantId);
+          }
+          continue;
+        }
       }
 
       if (!this.#peerManager.has(roomId, participantId)) {
@@ -818,19 +842,8 @@ export default class ResenhaWebrtcService extends Service {
         console.log(
           `[resenha] creating peer connection to user ${participantId}`
         );
-        await this.#peerManager.create(roomId, participantId);
 
-        if (this.currentUser?.id <= participantId) {
-          // eslint-disable-next-line no-console
-          console.log(`[resenha] initiating offer to user ${participantId}`);
-          await this.#peerManager.initiateOffer(roomId, participantId);
-        } else {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[resenha] scheduling offer retry for user ${participantId}`
-          );
-          this.#peerManager.scheduleOfferRetry(roomId, participantId);
-        }
+        await this.#createAndOfferPeer(roomId, participantId);
       }
     }
 
@@ -847,6 +860,166 @@ export default class ResenhaWebrtcService extends Service {
     // eslint-disable-next-line no-console
     console.log(`[resenha] kicked from room ${roomId}`);
     this.leave({ id: roomId });
+  }
+
+  async #acquireMicrophone() {
+    try {
+      const rawStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      // eslint-disable-next-line no-console
+      console.log("[resenha] local stream obtained");
+
+      this.#rawLocalStream = rawStream;
+
+      if (
+        this.siteSettings.resenha_noise_suppression &&
+        this.#noiseSuppression.isPreferred()
+      ) {
+        try {
+          await this.#noiseSuppression.setup(rawStream);
+          this.noiseSuppressionEnabled = true;
+          // eslint-disable-next-line no-console
+          console.log("[resenha] noise suppression enabled");
+        } catch (nsError) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[resenha] noise suppression setup failed, using raw stream",
+            nsError
+          );
+          this.localStream = rawStream;
+        }
+      } else {
+        this.localStream = rawStream;
+      }
+
+      return true;
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to obtain local stream", error);
+      return false;
+    }
+  }
+
+  async #handleRoleChange(roomId, payload) {
+    const targetUserId = Number(payload.user_id);
+    const newRole = payload.role;
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[resenha] role_change: user=${targetUserId}, role=${newRole}, room=${roomId}`
+    );
+
+    if (targetUserId === this.currentUser?.id) {
+      await this.#handleOwnRoleChange(roomId, newRole);
+    } else {
+      this.#handlePeerRoleChange(roomId, targetUserId);
+    }
+  }
+
+  async #handleOwnRoleChange(roomId, newRole) {
+    const canSpeak = newRole === "speaker" || newRole === "moderator";
+
+    // Block #handleParticipants while we reconfigure the local stream,
+    // so the subsequent "participants" broadcast doesn't create peers
+    // before the mic is ready.
+    this.#roleChangeInProgress.add(roomId);
+
+    // Destroy all existing peers immediately.
+    this.#peerManager.destroyRoom(roomId);
+    this.#removeAllRemoteStreams(roomId);
+    this.#signaling.clearForRoom(roomId);
+    this.#signaling.clearHttpQueue(roomId);
+
+    if (canSpeak) {
+      if (!this.localStream) {
+        const acquired = await this.#acquireMicrophone();
+        if (!acquired) {
+          this.#roleChangeInProgress.delete(roomId);
+          this.toasts.error({
+            duration: 5000,
+            data: { message: i18n("resenha.stage.mic_denied") },
+          });
+          return;
+        }
+
+        this.audioEnabled = true;
+        for (const track of this.localStream.getAudioTracks()) {
+          track.enabled = true;
+        }
+      }
+
+      this.#audioMonitor.ensure(
+        roomId,
+        this.currentUser?.id,
+        this.localStream,
+        true
+      );
+
+      this.toasts.success({
+        duration: 5000,
+        data: { message: i18n("resenha.stage.promoted_to_speaker") },
+      });
+    } else {
+      this.#stopLocalStream();
+      this.audioEnabled = false;
+      this.toasts.default({
+        duration: 5000,
+        data: { message: i18n("resenha.stage.demoted_to_listener") },
+      });
+    }
+
+    this.#roleChangeInProgress.delete(roomId);
+
+    // Rebuild peers now that localStream is ready (or stopped).
+    this.#reconnectAllPeers(roomId);
+  }
+
+  #handlePeerRoleChange(roomId, userId) {
+    // Destroy the stale peer; the subsequent "participants" broadcast
+    // from the server will rebuild connections with the correct topology.
+    if (this.#peerManager.has(roomId, userId)) {
+      this.#peerManager.destroy(roomId, userId);
+      this.#removeRemoteStream(roomId, userId);
+    }
+  }
+
+  async #createAndOfferPeer(roomId, remoteUserId) {
+    await this.#peerManager.create(roomId, remoteUserId);
+    if (this.currentUser?.id <= remoteUserId) {
+      await this.#peerManager.initiateOffer(roomId, remoteUserId);
+    } else {
+      this.#peerManager.scheduleOfferRetry(roomId, remoteUserId);
+    }
+  }
+
+  #reconnectAllPeers(roomId) {
+    this.#peerManager.destroyRoom(roomId);
+    this.#removeAllRemoteStreams(roomId);
+    this.#signaling.clearForRoom(roomId);
+    this.#signaling.clearHttpQueue(roomId);
+
+    const room = this.resenhaRooms?.roomById(roomId);
+    if (!room) {
+      return;
+    }
+
+    const participants = room.active_participants || [];
+    const iCanSpeak = this.#canSpeakInRoom(room);
+
+    for (const participant of participants) {
+      const participantId = Number(participant?.id);
+      if (participantId === this.currentUser?.id) {
+        continue;
+      }
+
+      const theyCanSpeak = this.#participantCanSpeak(room, participantId);
+      const shouldConnect = iCanSpeak || theyCanSpeak;
+
+      if (shouldConnect) {
+        this.#createAndOfferPeer(roomId, participantId);
+      }
+    }
   }
 
   #currentUserParticipant() {
@@ -870,6 +1043,12 @@ export default class ResenhaWebrtcService extends Service {
 
     participant.is_muted = !this.audioEnabled;
     participant.is_deafened = this.deafened;
+
+    const room = this.resenhaRooms?.roomById(roomId);
+    if (room?.membership?.role_name) {
+      participant.role = room.membership.role_name;
+    }
+
     this.resenhaRooms?.addParticipant(roomId, participant);
   }
 
@@ -1157,8 +1336,7 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #getIdleThresholds() {
-    let idleMs =
-      this.siteSettings.resenha_idle_threshold_minutes * 60 * 1000;
+    let idleMs = this.siteSettings.resenha_idle_threshold_minutes * 60 * 1000;
     let afkMs =
       this.siteSettings.resenha_afk_auto_mute_threshold_minutes * 60 * 1000;
     let disconnectMs =

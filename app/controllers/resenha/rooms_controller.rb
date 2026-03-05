@@ -75,7 +75,10 @@ module Resenha
     def join
       guardian.ensure_can_join_resenha_room!(@room)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
-      Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, {})
+
+      membership = @room.room_memberships.find_by(user_id: current_user.id)
+      role = membership&.role_name || "participant"
+      Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, { role: role })
       Resenha::RoomBroadcaster.publish_participants(@room)
 
       render json: {
@@ -127,6 +130,12 @@ module Resenha
       guardian.ensure_can_join_resenha_room!(@room)
 
       bool = ActiveModel::Type::Boolean.new
+      wants_unmute = params.key?(:muted) && !bool.cast(params[:muted])
+
+      if wants_unmute && @room.stage? && !guardian.can_speak_in_resenha_room?(@room)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.listeners_cannot_unmute"))
+      end
+
       metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
       metadata[:is_muted] = bool.cast(params[:muted]) if params.key?(:muted)
       metadata[:is_deafened] = bool.cast(params[:deafened]) if params.key?(:deafened)
@@ -216,7 +225,13 @@ module Resenha
     private
 
     def room_params
-      params.require(:room).permit(:name, :description, :public, :max_participants)
+      permitted =
+        params.require(:room).permit(:name, :description, :public, :max_participants, :room_type)
+      if permitted.key?(:room_type)
+        permitted[:room_type] = Resenha::Room::ROOM_TYPES[permitted[:room_type].to_s] ||
+          Resenha::Room::ROOM_TYPE_OPEN
+      end
+      permitted
     end
 
     def extract_batched_messages(payload)

@@ -120,7 +120,9 @@ export default {
           }
 
           get prefixValue() {
-            return "microphone-lines";
+            return this.room.room_type === "stage"
+              ? "podcast"
+              : "microphone-lines";
           }
 
           get suffixType() {
@@ -185,6 +187,8 @@ export default {
             user,
             menu,
             canManageRoom,
+            isListener,
+            isFirstListener,
           }) {
             super(...arguments);
             this.room = room;
@@ -193,6 +197,8 @@ export default {
             this.currentUser = user;
             this.menuService = menu;
             this.canManageRoom = canManageRoom;
+            this.isStageListener = isListener || false;
+            this.isFirstListener = isFirstListener || false;
           }
 
           get #isCurrentUser() {
@@ -248,6 +254,14 @@ export default {
 
           get classNames() {
             const classes = ["resenha-sidebar-participant"];
+
+            if (this.isStageListener) {
+              classes.push("resenha-sidebar-participant--listener");
+            }
+
+            if (this.isFirstListener) {
+              classes.push("resenha-sidebar-participant--listeners-start");
+            }
 
             if (this.participant.is_speaking) {
               classes.push("resenha-sidebar-participant--speaking");
@@ -309,6 +323,40 @@ export default {
           }
         };
 
+        const ListenerCountLink = class extends BaseLink {
+          constructor({ room, count }) {
+            super(...arguments);
+            this.room = room;
+            this.count = count;
+          }
+
+          get name() {
+            return `resenha-listener-count-${this.room.id}`;
+          }
+
+          get classNames() {
+            return "resenha-sidebar-participant resenha-sidebar-participant--listener-count";
+          }
+
+          get href() {
+            return "#";
+          }
+
+          get text() {
+            return i18n("resenha.stage.more_listeners", {
+              count: this.count,
+            });
+          }
+
+          get prefixType() {
+            return "icon";
+          }
+
+          get prefixValue() {
+            return "users";
+          }
+        };
+
         const RoomsSection = class extends BaseSection {
           name = "resenha-rooms";
           text = i18n("resenha.sidebar.title");
@@ -356,18 +404,73 @@ export default {
               result.push(roomLink);
 
               const canManageRoom = room.can_manage;
+              const participants = roomLink.getParticipantsForSummary();
 
-              for (const participant of roomLink.getParticipantsForSummary()) {
-                result.push(
-                  new ParticipantLink({
-                    room,
-                    participant,
-                    webrtcService: resenhaWebrtc,
-                    user: currentUser,
-                    menu: menuService,
-                    canManageRoom,
-                  })
+              if (room.room_type === "stage" && participants.length > 0) {
+                const speakers = participants.filter((p) => {
+                  const role = p.role;
+                  return role === "moderator" || role === "speaker";
+                });
+                const listeners = participants.filter((p) => {
+                  const role = p.role;
+                  return role !== "moderator" && role !== "speaker";
+                });
+
+                for (const participant of speakers) {
+                  result.push(
+                    new ParticipantLink({
+                      room,
+                      participant,
+                      webrtcService: resenhaWebrtc,
+                      user: currentUser,
+                      menu: menuService,
+                      canManageRoom,
+                    })
+                  );
+                }
+
+                const maxVisibleListeners = 5;
+                const visibleListeners = listeners.slice(
+                  0,
+                  maxVisibleListeners
                 );
+
+                visibleListeners.forEach((participant, index) => {
+                  result.push(
+                    new ParticipantLink({
+                      room,
+                      participant,
+                      webrtcService: resenhaWebrtc,
+                      user: currentUser,
+                      menu: menuService,
+                      canManageRoom,
+                      isListener: true,
+                      isFirstListener: index === 0,
+                    })
+                  );
+                });
+
+                if (listeners.length > maxVisibleListeners) {
+                  result.push(
+                    new ListenerCountLink({
+                      room,
+                      count: listeners.length - maxVisibleListeners,
+                    })
+                  );
+                }
+              } else {
+                for (const participant of participants) {
+                  result.push(
+                    new ParticipantLink({
+                      room,
+                      participant,
+                      webrtcService: resenhaWebrtc,
+                      user: currentUser,
+                      menu: menuService,
+                      canManageRoom,
+                    })
+                  );
+                }
               }
             }
 

@@ -8,6 +8,7 @@ module Resenha
                :description,
                :cooked_description,
                :public,
+               :room_type,
                :max_participants,
                :created_at,
                :updated_at,
@@ -37,6 +38,10 @@ module Resenha
             .as_json
             .merge(all_metadata[user.id] || {})
         end
+    end
+
+    def room_type
+      object.room_type_name
     end
 
     def can_manage

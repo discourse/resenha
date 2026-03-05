@@ -48,5 +48,12 @@ module Resenha
     def can_see_resenha_room?(room)
       can_join_resenha_room?(room)
     end
+
+    def can_speak_in_resenha_room?(room)
+      return true if room.open?
+      return true if user&.admin?
+      membership = room.room_memberships.find { |m| m.user_id == user&.id }
+      membership&.can_speak? || false
+    end
   end
 end

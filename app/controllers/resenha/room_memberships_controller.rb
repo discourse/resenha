@@ -14,12 +14,18 @@ module Resenha
     def create
       guardian.ensure_can_manage_resenha_room!(@room)
       user = fetch_user
-      membership =
-        @room
-          .room_memberships
-          .find_or_create_by!(user: user) do |record|
-            record.role = Resenha::RoomMembership.role_value(params[:role])
-          end
+      role = Resenha::RoomMembership.role_value(params[:role])
+      membership = @room.room_memberships.find_or_initialize_by(user: user)
+      membership.role = role
+      membership.save!
+
+      if Resenha::ParticipantTracker.user_ids(@room.id).include?(user.id)
+        metadata = Resenha::ParticipantTracker.get_metadata(@room.id, user.id)
+        metadata[:role] = membership.role_name
+        Resenha::ParticipantTracker.update_metadata(@room.id, user.id, metadata)
+        Resenha::RoomBroadcaster.publish_role_change(@room, user.id, membership.role_name)
+        Resenha::RoomBroadcaster.publish_participants(@room)
+      end
 
       render_serialized membership, Resenha::RoomMembershipSerializer, root: :membership
     end
@@ -27,7 +33,21 @@ module Resenha
     def update
       guardian.ensure_can_manage_resenha_room!(@room)
       membership = @room.room_memberships.find(params[:id])
-      membership.update!(role: Resenha::RoomMembership.role_value(params.require(:role)))
+      new_role = params.require(:role)
+      membership.update!(role: Resenha::RoomMembership.role_value(new_role))
+
+      if Resenha::ParticipantTracker.user_ids(@room.id).include?(membership.user_id)
+        metadata = Resenha::ParticipantTracker.get_metadata(@room.id, membership.user_id)
+        metadata[:role] = membership.role_name
+        Resenha::ParticipantTracker.update_metadata(@room.id, membership.user_id, metadata)
+        Resenha::RoomBroadcaster.publish_role_change(
+          @room,
+          membership.user_id,
+          membership.role_name,
+        )
+        Resenha::RoomBroadcaster.publish_participants(@room)
+      end
+
       render_serialized membership, Resenha::RoomMembershipSerializer, root: :membership
     end
 

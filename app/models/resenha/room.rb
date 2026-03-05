@@ -4,18 +4,23 @@ module Resenha
   class Room < ActiveRecord::Base
     self.table_name = "#{Resenha.table_name_prefix}rooms"
 
+    ROOM_TYPE_OPEN = 0
+    ROOM_TYPE_STAGE = 1
+    ROOM_TYPES = { "open" => ROOM_TYPE_OPEN, "stage" => ROOM_TYPE_STAGE }.freeze
+
     belongs_to :creator, class_name: "User"
     has_many :room_memberships, class_name: "Resenha::RoomMembership", dependent: :destroy
     has_many :members, through: :room_memberships, source: :user
 
     validates :name, presence: true, length: { maximum: 80 }
     validates :slug, presence: true, uniqueness: true
+    validates :room_type, inclusion: { in: ROOM_TYPES.values }
     validates :max_participants,
               numericality: {
                 only_integer: true,
                 allow_nil: true,
                 greater_than_or_equal_to: 2,
-                less_than_or_equal_to: 50,
+                less_than_or_equal_to: ->(r) { r.stage? ? 200 : 50 },
               }
 
     before_validation :ensure_slug
@@ -23,6 +28,18 @@ module Resenha
     after_commit :ensure_creator_membership, on: :create
 
     scope :public_rooms, -> { where(public: true) }
+
+    def open?
+      room_type == ROOM_TYPE_OPEN
+    end
+
+    def stage?
+      room_type == ROOM_TYPE_STAGE
+    end
+
+    def room_type_name
+      ROOM_TYPES.key(room_type) || "open"
+    end
 
     def moderator_ids
       room_memberships.moderator.pluck(:user_id)

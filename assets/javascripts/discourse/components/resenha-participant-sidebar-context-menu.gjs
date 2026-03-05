@@ -7,6 +7,7 @@ import DButton from "discourse/components/d-button";
 import DropdownMenu from "discourse/components/dropdown-menu";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import { not } from "discourse/truth-helpers";
 import { i18n } from "discourse-i18n";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
 import ResenhaPttKeyCapture from "./resenha-ptt-key-capture";
@@ -49,6 +50,41 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
 
   get canKick() {
     return this.canManageRoom && this.participant.id !== this.room.creator_id;
+  }
+
+  get isStageRoom() {
+    return this.room.room_type === "stage";
+  }
+
+  get isListenerInStage() {
+    if (!this.isStageRoom || !this.isCurrentUser) {
+      return false;
+    }
+    const role = this.participant.role;
+    return role !== "moderator" && role !== "speaker";
+  }
+
+  get participantIsSpeakerOrMod() {
+    const role = this.participant.role;
+    return role === "moderator" || role === "speaker";
+  }
+
+  get canPromoteToSpeaker() {
+    return (
+      this.canManageRoom &&
+      this.isStageRoom &&
+      !this.isCurrentUser &&
+      !this.participantIsSpeakerOrMod
+    );
+  }
+
+  get canDemoteToListener() {
+    return (
+      this.canManageRoom &&
+      this.isStageRoom &&
+      !this.isCurrentUser &&
+      this.participant.role === "speaker"
+    );
   }
 
   get muteLabel() {
@@ -188,32 +224,56 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     this.showKeyCapture = false;
   }
 
+  @action
+  async promoteToSpeaker() {
+    await this.#changeParticipantRole("speaker");
+  }
+
+  @action
+  async demoteToListener() {
+    await this.#changeParticipantRole("participant");
+  }
+
+  async #changeParticipantRole(newRole) {
+    try {
+      await ajax(`/resenha/rooms/${this.room.id}/memberships`, {
+        type: "POST",
+        data: { user_id: this.participant.id, role: newRole },
+      });
+      this.args.close();
+    } catch (error) {
+      popupAjaxError(error);
+    }
+  }
+
   <template>
     <DropdownMenu
       class="resenha-participant-sidebar-context-menu"
       as |dropdown|
     >
       {{#if this.isCurrentUser}}
-        <dropdown.item>
-          <DButton
-            @action={{this.toggleMic}}
-            @icon={{this.micIcon}}
-            @translatedLabel={{this.micLabel}}
-            @translatedTitle={{if
-              this.micDisabledByPtt
-              (i18n "resenha.ptt.controlled_by_ptt")
-              this.micLabel
-            }}
-            @disabled={{this.micDisabledByPtt}}
-            class="resenha-participant-sidebar-context-menu__mic-btn
-              {{if this.micDisabledByPtt '--disabled-by-ptt'}}"
-          />
-          {{#if this.micDisabledByPtt}}
-            <span
-              class="resenha-participant-sidebar-context-menu__ptt-hint"
-            >{{i18n "resenha.ptt.controlled_by_ptt"}}</span>
-          {{/if}}
-        </dropdown.item>
+        {{#unless this.isListenerInStage}}
+          <dropdown.item>
+            <DButton
+              @action={{this.toggleMic}}
+              @icon={{this.micIcon}}
+              @translatedLabel={{this.micLabel}}
+              @translatedTitle={{if
+                this.micDisabledByPtt
+                (i18n "resenha.ptt.controlled_by_ptt")
+                this.micLabel
+              }}
+              @disabled={{this.micDisabledByPtt}}
+              class="resenha-participant-sidebar-context-menu__mic-btn
+                {{if this.micDisabledByPtt '--disabled-by-ptt'}}"
+            />
+            {{#if this.micDisabledByPtt}}
+              <span
+                class="resenha-participant-sidebar-context-menu__ptt-hint"
+              >{{i18n "resenha.ptt.controlled_by_ptt"}}</span>
+            {{/if}}
+          </dropdown.item>
+        {{/unless}}
         <dropdown.item>
           <DButton
             @action={{this.toggleDeafen}}
@@ -223,68 +283,132 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
             class="resenha-participant-sidebar-context-menu__deafen-btn"
           />
         </dropdown.item>
-        {{#if this.showNoiseSuppressionToggle}}
+        {{#unless this.isListenerInStage}}
+          {{#if this.showNoiseSuppressionToggle}}
+            <dropdown.item>
+              <DButton
+                @action={{this.toggleNoiseSuppression}}
+                @icon={{this.noiseSuppressionIcon}}
+                @label={{this.noiseSuppressionLabel}}
+                @title={{this.noiseSuppressionLabel}}
+                class="resenha-participant-sidebar-context-menu__noise-suppression"
+              />
+            </dropdown.item>
+          {{/if}}
           <dropdown.item>
             <DButton
-              @action={{this.toggleNoiseSuppression}}
-              @icon={{this.noiseSuppressionIcon}}
-              @label={{this.noiseSuppressionLabel}}
-              @title={{this.noiseSuppressionLabel}}
-              class="resenha-participant-sidebar-context-menu__noise-suppression"
+              @action={{this.togglePtt}}
+              @icon={{if this.isPttEnabled "walkie-talkie" "walkie-talkie"}}
+              @translatedLabel={{this.pttToggleLabel}}
+              @translatedTitle={{this.pttToggleLabel}}
+              class="resenha-participant-sidebar-context-menu__ptt-btn
+                {{if this.isPttEnabled '--active'}}"
             />
           </dropdown.item>
-        {{/if}}
-        <dropdown.item>
-          <DButton
-            @action={{this.togglePtt}}
-            @icon={{if this.isPttEnabled "walkie-talkie" "walkie-talkie"}}
-            @translatedLabel={{this.pttToggleLabel}}
-            @translatedTitle={{this.pttToggleLabel}}
-            class="resenha-participant-sidebar-context-menu__ptt-btn
-              {{if this.isPttEnabled '--active'}}"
-          />
-        </dropdown.item>
-        {{#if this.isPttEnabled}}
+          {{#if this.isPttEnabled}}
+            <dropdown.item>
+              {{#if this.showKeyCapture}}
+                <ResenhaPttKeyCapture
+                  @onConfirm={{this.onKeyCaptureConfirm}}
+                  @onCancel={{this.onKeyCaptureCancel}}
+                />
+              {{else}}
+                <DButton
+                  @action={{this.openKeyCapture}}
+                  @icon="keyboard"
+                  @translatedLabel={{this.pttKeyLabel}}
+                  @translatedTitle={{this.pttKeyLabel}}
+                  class="resenha-participant-sidebar-context-menu__ptt-key-btn"
+                />
+              {{/if}}
+            </dropdown.item>
+          {{/if}}
+        {{/unless}}
+        {{#if this.isListenerInStage}}
           <dropdown.item>
-            {{#if this.showKeyCapture}}
-              <ResenhaPttKeyCapture
-                @onConfirm={{this.onKeyCaptureConfirm}}
-                @onCancel={{this.onKeyCaptureCancel}}
-              />
-            {{else}}
-              <DButton
-                @action={{this.openKeyCapture}}
-                @icon="keyboard"
-                @translatedLabel={{this.pttKeyLabel}}
-                @translatedTitle={{this.pttKeyLabel}}
-                class="resenha-participant-sidebar-context-menu__ptt-key-btn"
-              />
-            {{/if}}
+            <span
+              class="resenha-participant-sidebar-context-menu__stage-hint"
+            >{{i18n "resenha.room.listeners_cannot_unmute"}}</span>
           </dropdown.item>
         {{/if}}
       {{else}}
-        <dropdown.item class="resenha-participant-sidebar-context-menu__volume">
-          <label class="resenha-participant-sidebar-context-menu__volume-label">
-            {{i18n "resenha.participant.volume"}}
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={{this.volume}}
-            class="resenha-participant-sidebar-context-menu__volume-slider"
-            {{on "input" this.onVolumeChange}}
-          />
-        </dropdown.item>
-        <dropdown.item>
-          <DButton
-            @action={{this.toggleMute}}
-            @icon={{this.muteIcon}}
-            @translatedLabel={{this.muteLabel}}
-            @translatedTitle={{this.muteLabel}}
-            class="resenha-participant-sidebar-context-menu__mute-btn"
-          />
-        </dropdown.item>
+        {{#if this.participantIsSpeakerOrMod}}
+          <dropdown.item
+            class="resenha-participant-sidebar-context-menu__volume"
+          >
+            <label
+              class="resenha-participant-sidebar-context-menu__volume-label"
+            >
+              {{i18n "resenha.participant.volume"}}
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={{this.volume}}
+              class="resenha-participant-sidebar-context-menu__volume-slider"
+              {{on "input" this.onVolumeChange}}
+            />
+          </dropdown.item>
+          <dropdown.item>
+            <DButton
+              @action={{this.toggleMute}}
+              @icon={{this.muteIcon}}
+              @translatedLabel={{this.muteLabel}}
+              @translatedTitle={{this.muteLabel}}
+              class="resenha-participant-sidebar-context-menu__mute-btn"
+            />
+          </dropdown.item>
+        {{else if (not this.isStageRoom)}}
+          <dropdown.item
+            class="resenha-participant-sidebar-context-menu__volume"
+          >
+            <label
+              class="resenha-participant-sidebar-context-menu__volume-label"
+            >
+              {{i18n "resenha.participant.volume"}}
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={{this.volume}}
+              class="resenha-participant-sidebar-context-menu__volume-slider"
+              {{on "input" this.onVolumeChange}}
+            />
+          </dropdown.item>
+          <dropdown.item>
+            <DButton
+              @action={{this.toggleMute}}
+              @icon={{this.muteIcon}}
+              @translatedLabel={{this.muteLabel}}
+              @translatedTitle={{this.muteLabel}}
+              class="resenha-participant-sidebar-context-menu__mute-btn"
+            />
+          </dropdown.item>
+        {{/if}}
+        {{#if this.canPromoteToSpeaker}}
+          <dropdown.item>
+            <DButton
+              @action={{this.promoteToSpeaker}}
+              @icon="microphone"
+              @label="resenha.stage.make_speaker"
+              @title="resenha.stage.make_speaker"
+              class="resenha-participant-sidebar-context-menu__promote-btn"
+            />
+          </dropdown.item>
+        {{/if}}
+        {{#if this.canDemoteToListener}}
+          <dropdown.item>
+            <DButton
+              @action={{this.demoteToListener}}
+              @icon="volume-xmark"
+              @label="resenha.stage.move_to_listeners"
+              @title="resenha.stage.move_to_listeners"
+              class="resenha-participant-sidebar-context-menu__demote-btn"
+            />
+          </dropdown.item>
+        {{/if}}
         {{#if this.canKick}}
           <dropdown.item>
             <DButton

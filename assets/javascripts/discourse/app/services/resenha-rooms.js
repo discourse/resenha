@@ -112,6 +112,8 @@ export default class ResenhaRoomsService extends Service {
 
     if (payload.type === "participants") {
       this.#setRoomParticipants(room.id, payload.participants || []);
+    } else if (payload.type === "role_change") {
+      this.setParticipantRole(payload.room_id, payload.user_id, payload.role);
     }
 
     this.#forwardToRoomHandlers(payload.room_id, payload);
@@ -285,6 +287,40 @@ export default class ResenhaRoomsService extends Service {
       return {
         ...participant,
         idle_state: idleState,
+      };
+    });
+
+    if (changed) {
+      this.rooms = [...this.rooms];
+    }
+  }
+
+  setParticipantRole(roomId, userId, role) {
+    const targetId = Number(userId);
+    if (!targetId) {
+      return;
+    }
+
+    const room = this.#roomsById.get(roomId);
+    if (!room || !Array.isArray(room.active_participants)) {
+      return;
+    }
+
+    let changed = false;
+    room.active_participants = room.active_participants.map((participant) => {
+      const participantId = Number(participant?.id);
+      if (!participantId || participantId !== targetId) {
+        return participant;
+      }
+
+      if (participant.role === role) {
+        return participant;
+      }
+
+      changed = true;
+      return {
+        ...participant,
+        role,
       };
     });
 

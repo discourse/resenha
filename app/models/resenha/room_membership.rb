@@ -9,9 +9,15 @@ module Resenha
 
     ROLE_PARTICIPANT = 0
     ROLE_MODERATOR = 1
-    ROLES = { "participant" => ROLE_PARTICIPANT, "moderator" => ROLE_MODERATOR }.freeze
+    ROLE_SPEAKER = 2
+    ROLES = {
+      "participant" => ROLE_PARTICIPANT,
+      "moderator" => ROLE_MODERATOR,
+      "speaker" => ROLE_SPEAKER,
+    }.freeze
 
     scope :moderator, -> { where(role: ROLE_MODERATOR) }
+    scope :speaker, -> { where(role: ROLE_SPEAKER) }
 
     def moderator?
       role == ROLE_MODERATOR
@@ -19,6 +25,14 @@ module Resenha
 
     def participant?
       role == ROLE_PARTICIPANT
+    end
+
+    def speaker?
+      role == ROLE_SPEAKER
+    end
+
+    def can_speak?
+      moderator? || speaker?
     end
 
     def role_name

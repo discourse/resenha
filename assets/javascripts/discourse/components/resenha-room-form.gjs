@@ -18,8 +18,32 @@ export default class ResenhaRoomForm extends Component {
       name: this.args.room?.name || "",
       description: this.args.room?.description || "",
       public: this.args.room?.public ?? false,
+      room_type: this.args.room?.room_type || "open",
       max_participants: this.args.room?.max_participants || null,
     };
+  }
+
+  get maxParticipantsValidation() {
+    return "integer|number:2,200";
+  }
+
+  isStageType(roomType) {
+    return roomType === "stage";
+  }
+
+  get roomTypeOptions() {
+    return [
+      {
+        id: "open",
+        name: i18n("resenha.room.type_open"),
+        description: i18n("resenha.room.type_open_description"),
+      },
+      {
+        id: "stage",
+        name: i18n("resenha.room.type_stage"),
+        description: i18n("resenha.room.type_stage_description"),
+      },
+    ];
   }
 
   get submitLabel() {
@@ -89,6 +113,29 @@ export default class ResenhaRoomForm extends Component {
         </form.Field>
 
         <form.Field
+          @name="room_type"
+          @title={{i18n "resenha.admin.room.room_type"}}
+          @format="full"
+          as |field|
+        >
+          <field.RadioGroup as |radioGroup|>
+            {{#each this.roomTypeOptions as |option|}}
+              <radioGroup.Radio @value={{option.id}}>
+                <strong>{{option.name}}</strong>
+                —
+                {{option.description}}
+              </radioGroup.Radio>
+            {{/each}}
+          </field.RadioGroup>
+        </form.Field>
+
+        {{#if (this.isStageType form.data.room_type)}}
+          <div class="resenha-room-form__stage-hint">
+            {{i18n "resenha.room.type_stage_hint"}}
+          </div>
+        {{/if}}
+
+        <form.Field
           @name="public"
           @title={{i18n "resenha.admin.room.public"}}
           @helpText={{i18n "resenha.admin.room.public_help"}}
@@ -101,7 +148,7 @@ export default class ResenhaRoomForm extends Component {
           @name="max_participants"
           @title={{i18n "resenha.admin.room.max_participants"}}
           @description={{i18n "resenha.admin.room.max_participants_help"}}
-          @validation="integer|number:2,50"
+          @validation={{this.maxParticipantsValidation}}
           as |field|
         >
           <field.Input @type="number" />

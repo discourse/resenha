@@ -6,6 +6,8 @@ module Resenha
 
     class << self
       def add(room_id, user_id)
+        return if user_id.to_i <= 0
+
         redis.sadd(key(room_id), user_id)
         redis.expire(key(room_id), SiteSetting.resenha_participant_ttl_seconds)
       end
@@ -16,11 +18,12 @@ module Resenha
       end
 
       def list(room_id)
-        User.where(id: redis.smembers(key(room_id)))
+        ids = redis.smembers(key(room_id)).map(&:to_i).select(&:positive?)
+        User.where(id: ids)
       end
 
       def user_ids(room_id)
-        redis.smembers(key(room_id)).map(&:to_i)
+        redis.smembers(key(room_id)).map(&:to_i).select(&:positive?)
       end
 
       def clear(room_id)

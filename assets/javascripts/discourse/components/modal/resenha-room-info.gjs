@@ -40,17 +40,33 @@ export default class ResenhaRoomInfoModal extends Component {
   }
 
   get showMembershipManagement() {
-    return this.room.can_manage && !this.room.public;
+    return (
+      this.room.can_manage &&
+      (!this.room.public || this.room.room_type === "stage")
+    );
   }
 
   get roleOptions() {
-    return [
+    const options = [
       {
         id: "participant",
         name: i18n("resenha.room_info.members.participant"),
       },
-      { id: "moderator", name: i18n("resenha.room_info.members.moderator") },
     ];
+
+    if (this.room.room_type === "stage") {
+      options.push({
+        id: "speaker",
+        name: i18n("resenha.room_info.members.speaker"),
+      });
+    }
+
+    options.push({
+      id: "moderator",
+      name: i18n("resenha.room_info.members.moderator"),
+    });
+
+    return options;
   }
 
   async loadMemberships() {
