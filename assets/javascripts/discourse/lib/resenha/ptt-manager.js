@@ -24,7 +24,12 @@ export default class PttManager {
   #onReleaseDebounced;
   #isConnected;
 
-  constructor({ onPress, onReleaseImmediate, onReleaseDebounced, isConnected }) {
+  constructor({
+    onPress,
+    onReleaseImmediate,
+    onReleaseDebounced,
+    isConnected,
+  }) {
     this.#onPress = onPress;
     this.#onReleaseImmediate = onReleaseImmediate;
     this.#onReleaseDebounced = onReleaseDebounced;

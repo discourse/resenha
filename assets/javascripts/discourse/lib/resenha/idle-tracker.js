@@ -12,12 +12,7 @@ export default class IdleTracker {
   #onDisconnect;
   #getThresholds;
 
-  constructor({
-    onIdleStateChange,
-    onAutoMute,
-    onDisconnect,
-    getThresholds,
-  }) {
+  constructor({ onIdleStateChange, onAutoMute, onDisconnect, getThresholds }) {
     this.#onIdleStateChange = onIdleStateChange;
     this.#onAutoMute = onAutoMute;
     this.#onDisconnect = onDisconnect;
