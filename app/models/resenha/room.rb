@@ -85,6 +85,7 @@ end
 #  max_participants   :integer
 #  name               :string           not null
 #  public             :boolean          default(FALSE), not null
+#  room_type          :integer          default(0), not null
 #  slug               :string           not null
 #  created_at         :datetime         not null
 #  updated_at         :datetime         not null
