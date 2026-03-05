@@ -303,16 +303,25 @@ export default class ResenhaWebrtcService extends Service {
       playDisconnectedSound();
     }
     this.#removeLocalParticipant(room.id);
-    this.#audioMonitor.teardown(room.id, this.currentUser?.id);
     this.#stopHeartbeat(room.id);
-    this.#teardownRoom(room.id);
 
     if (this.#activeRoomIds.size === 0) {
       this.#idleTracker.stop();
     }
 
-    if (!keepLocalStream && this.#activeRoomIds.size === 0) {
-      this.#stopLocalStream();
+    const teardown = () => {
+      this.#audioMonitor.teardown(room.id, this.currentUser?.id);
+      this.#teardownRoom(room.id);
+
+      if (!keepLocalStream && this.#activeRoomIds.size === 0) {
+        this.#stopLocalStream();
+      }
+    };
+
+    if (wasConnected && !keepLocalStream) {
+      setTimeout(teardown, 500);
+    } else {
+      teardown();
     }
   }
 
