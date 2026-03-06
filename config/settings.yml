@@ -52,6 +52,8 @@ plugins:
   resenha_auto_status_enabled:
     default: true
     client: true
+  resenha_badges_enabled:
+    default: false
   resenha_analytics_enabled:
     default: true
   resenha_session_retention_days:

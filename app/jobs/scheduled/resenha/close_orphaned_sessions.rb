@@ -19,6 +19,10 @@ module Jobs
 
           fallback_time = session.updated_at || session.joined_at
           session.close!(at: fallback_time)
+
+          user = User.find_by(id: session.user_id)
+          room = ::Resenha::Room.find_by(id: session.room_id)
+          ::Resenha::BadgeGranterHooks.on_leave(user, session, room: room) if user && room
         end
       end
     end

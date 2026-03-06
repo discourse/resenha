@@ -6,6 +6,7 @@ en:
     resenha_max_rooms_per_user: "Maximum number of voice rooms a single user can own."
     resenha_participant_ttl_seconds: "Seconds to keep active speaker presence in Redis before automatic cleanup. Client heartbeat refreshes every 10 seconds."
     resenha_auto_status_enabled: "Automatically set user status when they join a voice room (e.g. '🎙️ In Watercooler'). Requires the 'enable user status' site setting."
+    resenha_badges_enabled: "Enable voice chat badges. Grants badges for voice room milestones like time spent, rooms visited, and connections made."
     resenha_noise_suppression: "Enable DTLN-based noise suppression for voice rooms. When enabled, users can toggle noise suppression to filter background noise from their microphone audio."
     resenha_idle_threshold_minutes: "Minutes of inactivity before a voice room participant is marked as idle. Set to 0 to disable."
     resenha_afk_auto_mute_threshold_minutes: "Minutes of inactivity before a voice room participant is automatically muted. Set to 0 to disable."
@@ -21,3 +22,100 @@ en:
       cannot_kick_self: "You cannot kick yourself from the room."
       cannot_kick_creator: "You cannot kick the room creator."
       listeners_cannot_unmute: "Listeners cannot unmute in a Stage room."
+  badges:
+    mic_check:
+      name: "Mic Check"
+      description: "Completed your first voice chat session."
+      long_description: "Awarded after spending at least 30 seconds in a voice room with another person."
+    rookie:
+      name: "Rookie"
+      description: "Spent 1 hour in voice chat."
+      long_description: "Awarded for accumulating 1 hour of total voice time."
+    chatterbox:
+      name: "Chatterbox"
+      description: "Spent 10 hours in voice chat."
+      long_description: "Awarded for accumulating 10 hours of total voice time."
+    silver_tongue:
+      name: "Silver Tongue"
+      description: "Spent 100 hours in voice chat."
+      long_description: "Awarded for accumulating 100 hours of total voice time."
+    icebreaker:
+      name: "Icebreaker"
+      description: "Joined a room full of strangers."
+      long_description: "Awarded for joining a voice room where you had no prior co-presence history with anyone."
+    social_butterfly:
+      name: "Social Butterfly"
+      description: "Chatted with 10 different people."
+      long_description: "Awarded for achieving co-presence with 10 or more distinct users."
+    life_of_the_party:
+      name: "Life of the Party"
+      description: "Chatted with 50 different people."
+      long_description: "Awarded for achieving co-presence with 50 or more distinct users."
+    familiar_face:
+      name: "Familiar Face"
+      description: "Spent 2 hours chatting with the same person."
+      long_description: "Awarded for achieving co-presence with one specific user for 2 or more hours total."
+    inner_circle:
+      name: "Inner Circle"
+      description: "Spent 10 hours chatting with the same person."
+      long_description: "Awarded for achieving co-presence with one specific user for 10 or more hours total."
+    partners_in_crime:
+      name: "Partners in Crime"
+      description: "Spent 50 hours chatting with the same person."
+      long_description: "Awarded for achieving co-presence with one specific user for 50 or more hours total."
+    explorer:
+      name: "Explorer"
+      description: "Joined 5 different voice rooms."
+      long_description: "Awarded for joining 5 different voice rooms."
+    nomad:
+      name: "Nomad"
+      description: "Joined 20 different voice rooms."
+      long_description: "Awarded for joining 20 different voice rooms."
+    omnipresent:
+      name: "Omnipresent"
+      description: "Joined 50 different voice rooms."
+      long_description: "Awarded for joining 50 different voice rooms."
+    patron:
+      name: "Patron"
+      description: "Visited the same room on 10 different days."
+      long_description: "Awarded for joining the same voice room on 10 distinct days."
+    barfly:
+      name: "Barfly"
+      description: "Visited the same room on 30 different days."
+      long_description: "Awarded for joining the same voice room on 30 distinct days."
+    the_mayor:
+      name: "The Mayor"
+      description: "Visited the same room on 100 different days."
+      long_description: "Awarded for joining the same voice room on 100 distinct days."
+    host:
+      name: "Host"
+      description: "Created your first voice room."
+      long_description: "Awarded for creating your first voice room."
+    crowd_puller:
+      name: "Crowd Puller"
+      description: "A room you created reached 50 total joins."
+      long_description: "Awarded when a voice room you created accumulates 50 or more total joins."
+    master_of_ceremonies:
+      name: "Master of Ceremonies"
+      description: "A room you created reached 500 total joins."
+      long_description: "Awarded when a voice room you created accumulates 500 or more total joins."
+    night_owl:
+      name: "Night Owl"
+      description: "Chatted between midnight and 5 AM."
+      long_description: "Awarded for participating in a voice session between midnight and 5 AM in your local timezone."
+    early_bird:
+      name: "Early Bird"
+      description: "Chatted between 5 AM and 9 AM."
+      long_description: "Awarded for participating in a voice session between 5 AM and 9 AM in your local timezone."
+    packed_house:
+      name: "Packed House"
+      description: "Was in a room when it hit max capacity."
+      long_description: "Awarded for being in a voice room at the exact moment it reaches maximum capacity."
+    weekend_warrior:
+      name: "Weekend Warrior"
+      description: "Spent 5 hours chatting on weekends."
+      long_description: "Awarded for accumulating 5 or more hours of voice chat on weekends."
+    marathoner:
+      name: "Marathoner"
+      description: "Stayed in a single voice session for 4 hours."
+      long_description: "Awarded for staying in a single continuous voice session for 4 or more hours."

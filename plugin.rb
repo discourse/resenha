@@ -20,6 +20,20 @@ register_svg_icon "walkie-talkie"
 register_svg_icon "keyboard"
 register_svg_icon "phone-slash"
 register_svg_icon "podcast"
+register_svg_icon "handshake"
+register_svg_icon "users"
+register_svg_icon "user-group"
+register_svg_icon "compass"
+register_svg_icon "calendar"
+register_svg_icon "house"
+register_svg_icon "bullhorn"
+register_svg_icon "star"
+register_svg_icon "moon"
+register_svg_icon "sun"
+register_svg_icon "people-group"
+register_svg_icon "calendar-week"
+register_svg_icon "trophy"
+register_svg_icon "clock"
 register_asset "stylesheets/common/resenha.scss"
 register_asset "stylesheets/common/resenha-admin.scss", :admin
 
@@ -38,16 +52,19 @@ after_initialize do
 
   on(:site_setting_changed) do |name, _old_value, new_value|
     if name.to_sym == :resenha_enabled
+      Resenha::DefaultRoomSeeder.ensure! if new_value
+      clear_all_resenha_statuses unless new_value
+    end
+
+    if name.to_sym == :resenha_badges_enabled
       if new_value
-        Resenha::DefaultRoomSeeder.ensure!
+        Resenha::BadgeGranterHooks.enable_all!
       else
-        clear_all_resenha_statuses
+        Resenha::BadgeGranterHooks.disable_all!
       end
     end
 
-    if name.to_sym == :resenha_auto_status_enabled && !new_value
-      clear_all_resenha_statuses
-    end
+    clear_all_resenha_statuses if name.to_sym == :resenha_auto_status_enabled && !new_value
   end
 
   def self.clear_all_resenha_statuses

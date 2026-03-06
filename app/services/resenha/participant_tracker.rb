@@ -8,8 +8,10 @@ module Resenha
       def add(room_id, user_id)
         return if user_id.to_i <= 0
 
+        ttl = SiteSetting.resenha_participant_ttl_seconds
         redis.sadd(key(room_id), user_id)
-        redis.expire(key(room_id), SiteSetting.resenha_participant_ttl_seconds)
+        redis.expire(key(room_id), ttl)
+        redis.expire(metadata_key(room_id), ttl)
       end
 
       def remove(room_id, user_id)

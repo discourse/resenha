@@ -48,6 +48,7 @@ module Resenha
 
       if room.save
         Resenha::DirectoryBroadcaster.broadcast(action: :created, room: room)
+        Resenha::BadgeGranterHooks.on_room_create(current_user)
         render_serialized room, Resenha::RoomSerializer, root: :room
       else
         render_json_error room
@@ -92,6 +93,9 @@ module Resenha
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
       Resenha::RoomBroadcaster.publish_participants(@room)
 
+      participants = Resenha::ParticipantTracker.list(@room.id)
+      Resenha::BadgeGranterHooks.on_join(current_user, @room, participants)
+
       if params[:skip_status].blank?
         Resenha::UserStatusManager.set_voice_status(current_user, @room)
       end
@@ -109,10 +113,11 @@ module Resenha
 
     def leave
       guardian.ensure_can_join_resenha_room!(@room)
-      close_session_for(@room.id, current_user.id)
+      session = close_session_for(@room.id, current_user.id)
       Resenha::ParticipantTracker.remove(@room.id, current_user.id)
       Resenha::UserStatusManager.clear_voice_status(current_user)
       Resenha::RoomBroadcaster.publish_participants(@room)
+      Resenha::BadgeGranterHooks.on_leave(current_user, session, room: @room)
       head :no_content
     end
 
@@ -191,12 +196,13 @@ module Resenha
         raise Discourse::InvalidParameters.new(I18n.t("resenha.errors.cannot_kick_creator"))
       end
 
-      close_session_for(@room.id, user_id)
+      session = close_session_for(@room.id, user_id)
       Resenha::ParticipantTracker.remove(@room.id, user_id)
 
       kicked_user = User.find_by(id: user_id)
       Resenha::UserStatusManager.clear_voice_status(kicked_user) if kicked_user
 
+      Resenha::BadgeGranterHooks.on_leave(kicked_user, session, room: @room) if kicked_user
       Resenha::RoomBroadcaster.publish_kick(@room, user_id)
       Resenha::RoomBroadcaster.publish_participants(@room)
 
@@ -274,7 +280,11 @@ module Resenha
 
     def close_session_for(room_id, user_id)
       metadata = Resenha::ParticipantTracker.get_metadata(room_id, user_id)
-      Resenha::Session.find_by(id: metadata[:session_id])&.close! if metadata[:session_id]
+      return unless metadata[:session_id]
+
+      session = Resenha::Session.find_by(id: metadata[:session_id])
+      session&.close!
+      session
     end
 
     def room_params
