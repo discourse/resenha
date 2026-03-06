@@ -5,6 +5,7 @@ en:
     resenha_create_room_allowed_groups: "Groups that can create new voice rooms."
     resenha_max_rooms_per_user: "Maximum number of voice rooms a single user can own."
     resenha_participant_ttl_seconds: "Seconds to keep active speaker presence in Redis before automatic cleanup. Client heartbeat refreshes every 10 seconds."
+    resenha_auto_status_enabled: "Automatically set user status when they join a voice room (e.g. '🎙️ In Watercooler'). Requires the 'enable user status' site setting."
     resenha_noise_suppression: "Enable DTLN-based noise suppression for voice rooms. When enabled, users can toggle noise suppression to filter background noise from their microphone audio."
     resenha_idle_threshold_minutes: "Minutes of inactivity before a voice room participant is marked as idle. Set to 0 to disable."
     resenha_afk_auto_mute_threshold_minutes: "Minutes of inactivity before a voice room participant is automatically muted. Set to 0 to disable."

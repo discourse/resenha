@@ -37,9 +37,22 @@ after_initialize do
   Resenha::DefaultRoomSeeder.ensure! if SiteSetting.resenha_enabled?
 
   on(:site_setting_changed) do |name, _old_value, new_value|
-    next if name.to_sym != :resenha_enabled
-    next if !new_value
+    if name.to_sym == :resenha_enabled
+      if new_value
+        Resenha::DefaultRoomSeeder.ensure!
+      else
+        clear_all_resenha_statuses
+      end
+    end
 
-    Resenha::DefaultRoomSeeder.ensure!
+    if name.to_sym == :resenha_auto_status_enabled && !new_value
+      clear_all_resenha_statuses
+    end
+  end
+
+  def self.clear_all_resenha_statuses
+    UserStatus
+      .where(emoji: [Resenha::UserStatusManager::EMOJI, Resenha::UserStatusManager::AFK_EMOJI])
+      .find_each { |status| User.find_by(id: status.user_id)&.clear_status! }
   end
 end

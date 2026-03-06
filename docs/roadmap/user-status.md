@@ -13,14 +13,15 @@ Example status while in a room:
 
 ## User-facing behavior
 
-- **On join:** Status is set to `🎙️ In <room name>`.
-- **On leave / kick / disconnect:** Status is restored to whatever it was
-  before joining (or cleared if there was no prior status).
-- **While connected:** If the user manually changes their status via Discourse
-  UI, respect their choice — stop overwriting it until the next join.
+- **On join:** If the user has no existing status, set it to
+  `🎙️ In <room name>`. If they already have a status, leave it alone.
+- **On leave / kick / disconnect:** If the current status was set by Resenha,
+  clear it. If the user changed their status manually while in the room, leave
+  it alone.
 - **AFK integration:** When the user transitions to idle/AFK (from
   `afk-idle-detection.md`), status updates to `💤 AFK in <room name>`.
-  Returning to active reverts to `🎙️ In <room name>`.
+  Returning to active reverts to `🎙️ In <room name>`. Only applies if
+  Resenha owns the current status.
 
 ### Opt-out
 
@@ -46,16 +47,40 @@ require patching every place Discourse renders users. The native status system
 gives us universal visibility for free. A dedicated indicator could be added
 later as a complement, not a replacement.
 
-### Preserving the user's original status
+### Skip users who already have a status
 
-The user may already have a status set ("🏖️ On vacation", "🔨 Heads down").
-Resenha must preserve this and restore it on leave. If we just overwrite and
-then clear, we destroy their status.
+Instead of snapshotting the user's existing status to Redis, restoring it on
+leave, and handling all the edge cases around expiring statuses and
+reconnections — we simply skip users who already have a status set.
 
-Strategy:
-- Before setting voice status, snapshot the current status to Redis.
-- On leave, restore from the snapshot.
-- If the snapshot is empty, clear status.
+This eliminates:
+- Redis snapshot keys and their TTL management
+- Restore-on-leave logic and stale snapshot edge cases
+- Race conditions around reconnections overwriting snapshots
+- The entire "user had an expiring status" edge case
+
+The trade-off is that users with an existing status won't get voice presence
+shown. This is acceptable because:
+- The user explicitly chose their current status; overwriting it is rude.
+- Most users don't have a status set most of the time.
+- Users who want voice presence can clear their status before joining.
+
+### Detecting Resenha-owned status
+
+On leave/disconnect, we only clear the status if Resenha set it. We detect
+this by checking if the emoji is `studio_microphone` or `zzz` (our two
+emojis). This is simple and reliable.
+
+### Self-expiring status via heartbeat
+
+Status is set with a 2-minute expiry (`ends_at: 2.minutes.from_now`). Each
+heartbeat refreshes the expiry. If the user closes their browser or loses
+connection, the status automatically expires within 2 minutes — no cleanup
+job needed.
+
+This is self-healing and has no dependency on analytics being enabled or any
+scheduled job running. Discourse natively handles expired statuses (they
+simply stop rendering).
 
 ## Implementation plan
 
@@ -68,93 +93,49 @@ module Resenha
   class UserStatusManager
     EMOJI = "studio_microphone"
     AFK_EMOJI = "zzz"
-    REDIS_KEY_PREFIX = "resenha:user_status_snapshot"
+
+    STATUS_EXPIRY = 2.minutes
 
     def self.set_voice_status(user, room)
       return unless SiteSetting.enable_user_status
       return unless SiteSetting.resenha_auto_status_enabled
-
-      snapshot_current_status(user)
+      return if user_has_non_resenha_status?(user)
 
       user.set_status!(
         "In #{room.name}",
         EMOJI,
-        nil # no expiry — cleared on leave
+        STATUS_EXPIRY.from_now
       )
     end
 
     def self.set_afk_status(user, room)
       return unless SiteSetting.enable_user_status
-
-      # Only update if current status is a Resenha status
       return unless resenha_status_active?(user)
 
       user.set_status!(
         "AFK in #{room.name}",
         AFK_EMOJI,
-        nil
+        STATUS_EXPIRY.from_now
       )
     end
 
-    def self.restore_status(user)
+    def self.clear_voice_status(user)
       return unless SiteSetting.enable_user_status
+      return unless resenha_status_active?(user)
 
-      snapshot = retrieve_snapshot(user)
-
-      if snapshot
-        user.set_status!(
-          snapshot["description"],
-          snapshot["emoji"],
-          snapshot["ends_at"]
-        )
-      else
-        user.clear_status!
-      end
-
-      delete_snapshot(user)
-    end
-
-    private
-
-    def self.snapshot_current_status(user)
-      key = "#{REDIS_KEY_PREFIX}:#{user.id}"
-
-      # Don't overwrite an existing snapshot (user may have reconnected
-      # to a different room without leaving cleanly)
-      return if Discourse.redis.exists?(key)
-
-      status = user.user_status
-      if status && !status.expired?
-        # Don't snapshot if current status is already a Resenha status
-        # (reconnection scenario)
-        return if resenha_emoji?(status.emoji)
-
-        Discourse.redis.setex(
-          key,
-          24.hours.to_i,
-          { description: status.description,
-            emoji: status.emoji,
-            ends_at: status.ends_at&.iso8601 }.to_json
-        )
-      else
-        # Store empty marker so restore knows to clear
-        Discourse.redis.setex(key, 24.hours.to_i, "null")
-      end
-    end
-
-    def self.retrieve_snapshot(user)
-      raw = Discourse.redis.get("#{REDIS_KEY_PREFIX}:#{user.id}")
-      return nil if raw.nil? || raw == "null"
-      JSON.parse(raw)
-    end
-
-    def self.delete_snapshot(user)
-      Discourse.redis.del("#{REDIS_KEY_PREFIX}:#{user.id}")
+      user.clear_status!
     end
 
     def self.resenha_status_active?(user)
       status = user.user_status
       status && !status.expired? && resenha_emoji?(status.emoji)
+    end
+
+    private
+
+    def self.user_has_non_resenha_status?(user)
+      status = user.user_status
+      status && !status.expired? && !resenha_emoji?(status.emoji)
     end
 
     def self.resenha_emoji?(emoji)
@@ -177,55 +158,40 @@ Resenha::UserStatusManager.set_voice_status(current_user, room)
 **On leave / kick:**
 
 ```ruby
-Resenha::UserStatusManager.restore_status(current_user)
+Resenha::UserStatusManager.clear_voice_status(current_user)
 ```
 
-**On AFK transition** (called from heartbeat when idle state changes):
+**On heartbeat (refresh expiry + handle AFK transitions):**
 
 ```ruby
-if idle_state == "afk"
-  Resenha::UserStatusManager.set_afk_status(current_user, room)
-elsif idle_state == "active"
-  Resenha::UserStatusManager.set_voice_status(current_user, room)
+# Always refresh the status expiry if Resenha owns it
+if Resenha::UserStatusManager.resenha_status_active?(current_user)
+  if idle_state == "afk"
+    Resenha::UserStatusManager.set_afk_status(current_user, room)
+  else
+    Resenha::UserStatusManager.set_voice_status(current_user, room)
+  end
 end
 ```
 
-### 3. Handle orphaned status on TTL expiry
+This serves double duty: it handles AFK transitions and keeps the 2-minute
+expiry refreshed. If the user disappears (browser crash, network loss), the
+heartbeat stops and the status self-expires within 2 minutes.
 
-When a user crashes or loses connection, the Redis participant TTL expires but
-the status remains set. The orphan cleanup job (from `analytics.md`) already
-detects stale participants. Extend it to restore status:
-
-**File:** `app/jobs/scheduled/resenha_close_orphaned_sessions.rb`
-
-```ruby
-# After closing the orphaned session:
-user = User.find_by(id: orphaned_user_id)
-Resenha::UserStatusManager.restore_status(user) if user
-```
-
-As a safety net, the snapshot Redis key has a 24h TTL — if cleanup never runs,
-the snapshot auto-expires and the user can set a new status manually.
+Note: `set_voice_status` during AFK→active transition is safe because if the
+user manually changed their status while in the room,
+`user_has_non_resenha_status?` will return true and we'll skip the update.
 
 ### 4. Handle manual status changes while in a room
 
 If the user opens the Discourse status picker and sets a custom status while
-in a voice room, Resenha should not overwrite it on the next heartbeat.
+in a voice room, Resenha detects this automatically:
 
-Detection: In `set_voice_status` and `set_afk_status`, before writing, check
-if the current status was set by Resenha (emoji is `studio_microphone` or
-`zzz`). If the emoji is something else, the user has manually overridden —
-skip the update and delete the snapshot (so restore on leave becomes a no-op).
+- `set_voice_status` checks `user_has_non_resenha_status?` → skips
+- `set_afk_status` checks `resenha_status_active?` → skips
+- `clear_voice_status` checks `resenha_status_active?` → skips
 
-This is already handled by the `resenha_status_active?` guard in
-`set_afk_status`. Add the same guard to the heartbeat-driven refresh:
-
-```ruby
-# In heartbeat, only refresh status if Resenha owns it
-if Resenha::UserStatusManager.resenha_status_active?(current_user)
-  # Safe to update (e.g., room name changed, AFK transition)
-end
-```
+No special handling needed. The user's manual status is always respected.
 
 ### 5. Frontend: opt-out toggle
 
@@ -239,14 +205,33 @@ Add to the self-user section of the context menu:
 
 Toggle reads/writes `localStorage` key `resenha_auto_status_enabled`.
 
-When disabled, the frontend sends an extra param on the join request:
-`skip_status: true`. The backend checks this param and skips
-`set_voice_status`.
+When disabled, the frontend sends `skip_status: true` on the join request.
+The backend checks this param and skips `set_voice_status`.
 
-Alternatively, send the preference on every heartbeat as metadata so the
-backend can stop updating mid-session if the user toggles it off.
+If toggled off mid-session, the frontend immediately calls the existing
+Discourse status clear endpoint to remove the Resenha status. The heartbeat
+then sees `resenha_status_active?` as false and stops refreshing. The toggle
+takes effect instantly without waiting for expiry.
 
-### 6. Site settings
+### 6. Handle `skip_status` in the controller
+
+In the `join` action, check the param before setting status:
+
+```ruby
+unless params[:skip_status]
+  Resenha::UserStatusManager.set_voice_status(current_user, room)
+end
+```
+
+Store `skip_status` in participant metadata so the heartbeat also respects it:
+
+```ruby
+# In heartbeat, skip refresh if user opted out
+metadata = ParticipantTracker.get_metadata(room.id, current_user.id)
+skip_status = metadata&.dig("skip_status")
+```
+
+### 7. Site settings
 
 **File:** `config/settings.yml`
 
@@ -260,7 +245,7 @@ resenha_auto_status_enabled:
 This is the global admin toggle. The per-user localStorage preference is a
 client-side opt-out within this global setting.
 
-### 7. Room name changes
+### 8. Room name changes
 
 If a room moderator renames a room while users are connected, the status text
 becomes stale ("In Old Name" instead of "In New Name").
@@ -268,13 +253,12 @@ becomes stale ("In Old Name" instead of "In New Name").
 On room update (in `RoomsController#update`), if the name changed:
 
 ```ruby
-# Refresh status for all active participants
-participant_ids = ParticipantTracker.list(room.id).map(&:id)
+participant_ids = ParticipantTracker.user_ids(room.id)
 participant_ids.each do |uid|
   user = User.find_by(id: uid)
   next unless user
   next unless Resenha::UserStatusManager.resenha_status_active?(user)
-  user.set_status!("In #{room.name}", Resenha::UserStatusManager::EMOJI, nil)
+  Resenha::UserStatusManager.set_voice_status(user, room)
 end
 ```
 
@@ -291,7 +275,7 @@ This is a rare operation so iterating participants is fine.
 | **Mentions** (`@user` hover) | 🎙️ In Watercooler |
 | **Who's online** (sidebar, if enabled) | 🎙️ In Watercooler |
 
-When AFK: `💤 AFK in Watercooler` everywhere.
+When AFK: 💤 AFK in Watercooler everywhere.
 
 All of this is automatic — Discourse's existing UI components already render
 `UserStatus` wherever they display users. No frontend patches needed.
@@ -301,29 +285,23 @@ All of this is automatic — Discourse's existing UI components already render
 - **User joins two rooms rapidly (race condition):** Not possible — the WebRTC
   service enforces one room at a time. Joining a new room leaves the current
   one first.
-- **User had an expiring status ("🏖️ On vacation" until Friday):** The
-  snapshot preserves `ends_at`. On restore, if `ends_at` is in the past, clear
-  status instead of restoring an expired one. Check in `restore_status`:
-  ```ruby
-  if snapshot["ends_at"] && Time.parse(snapshot["ends_at"]) < Time.now
-    user.clear_status!
-  else
-    user.set_status!(...)
-  end
-  ```
+- **User already has a status:** Resenha skips setting voice status entirely.
+  The user keeps their existing status. On leave, `clear_voice_status` checks
+  emoji and won't clear a non-Resenha status.
+- **Browser crash / abrupt disconnect:** The heartbeat stops, and the status
+  self-expires within 2 minutes. No cleanup job needed.
 - **Plugin disabled while users are in rooms:** On `plugin.rb`
   `on(:site_setting_changed)` for `resenha_enabled`, iterate all active
-  participants across all rooms and restore their statuses.
+  participants across all rooms and clear their Resenha statuses.
 - **`enable_user_status` is false:** All methods guard on this setting. Status
   is never touched. The feature degrades gracefully — voice chat works, just
   no status integration.
 - **User is silenced:** Discourse only shows silenced users' status to
   themselves and staff. Resenha sets the status normally — visibility is
   handled by Discourse's Guardian.
-- **Snapshot Redis key expires (24h) before user returns:** The user's status
-  will be cleared on leave instead of restored. This is acceptable — 24h
-  without a clean leave means something went very wrong, and the original
-  status was likely stale anyway.
+- **User clears Resenha status while in room:** The heartbeat and room rename
+  code both guard with `resenha_status_active?`, so they won't re-set it. The
+  status stays cleared until the user leaves and rejoins.
 
 ## Dependencies
 

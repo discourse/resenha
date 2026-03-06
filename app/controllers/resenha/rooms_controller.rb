@@ -57,8 +57,11 @@ module Resenha
     def update
       guardian.ensure_can_manage_resenha_room!(@room)
 
+      name_changed = room_params[:name].present? && room_params[:name] != @room.name
+
       if @room.update(room_params)
         Resenha::DirectoryBroadcaster.broadcast(action: :updated, room: @room)
+        refresh_participant_statuses(@room) if name_changed
         render_serialized @room, Resenha::RoomSerializer, root: :room
       else
         render_json_error @room
@@ -85,8 +88,13 @@ module Resenha
         metadata[:session_id] = session.id
       end
 
+      metadata[:skip_status] = true if params[:skip_status].present?
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
       Resenha::RoomBroadcaster.publish_participants(@room)
+
+      if params[:skip_status].blank?
+        Resenha::UserStatusManager.set_voice_status(current_user, @room)
+      end
 
       render json: {
                room:
@@ -103,6 +111,7 @@ module Resenha
       guardian.ensure_can_join_resenha_room!(@room)
       close_session_for(@room.id, current_user.id)
       Resenha::ParticipantTracker.remove(@room.id, current_user.id)
+      Resenha::UserStatusManager.clear_voice_status(current_user)
       Resenha::RoomBroadcaster.publish_participants(@room)
       head :no_content
     end
@@ -111,13 +120,22 @@ module Resenha
       guardian.ensure_can_join_resenha_room!(@room)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
 
+      metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
+
       if params.key?(:idle_state)
         idle_state = params[:idle_state].to_s
         if %w[active idle afk].include?(idle_state)
-          metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
           metadata[:idle_state] = idle_state
           Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
           Resenha::RoomBroadcaster.publish_participants(@room)
+        end
+      end
+
+      if !metadata[:skip_status] && Resenha::UserStatusManager.resenha_status_active?(current_user)
+        if metadata[:idle_state] == "afk"
+          Resenha::UserStatusManager.set_afk_status(current_user, @room)
+        else
+          Resenha::UserStatusManager.set_voice_status(current_user, @room)
         end
       end
 
@@ -175,6 +193,10 @@ module Resenha
 
       close_session_for(@room.id, user_id)
       Resenha::ParticipantTracker.remove(@room.id, user_id)
+
+      kicked_user = User.find_by(id: user_id)
+      Resenha::UserStatusManager.clear_voice_status(kicked_user) if kicked_user
+
       Resenha::RoomBroadcaster.publish_kick(@room, user_id)
       Resenha::RoomBroadcaster.publish_participants(@room)
 
@@ -238,6 +260,17 @@ module Resenha
     end
 
     private
+
+    def refresh_participant_statuses(room)
+      Resenha::ParticipantTracker
+        .user_ids(room.id)
+        .each do |uid|
+          user = User.find_by(id: uid)
+          next unless user
+          next unless Resenha::UserStatusManager.resenha_status_active?(user)
+          Resenha::UserStatusManager.set_voice_status(user, room)
+        end
+    end
 
     def close_session_for(room_id, user_id)
       metadata = Resenha::ParticipantTracker.get_metadata(room_id, user_id)

@@ -49,6 +49,9 @@ plugins:
     min: 0
     max: 240
     client: true
+  resenha_auto_status_enabled:
+    default: true
+    client: true
   resenha_analytics_enabled:
     default: true
   resenha_session_retention_days:

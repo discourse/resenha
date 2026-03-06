@@ -42,6 +42,9 @@ en:
         auto_muted: "You were auto-muted after being idle."
         click_to_unmute: "Click to unmute."
         disconnected: "You were disconnected from %{room} due to inactivity."
+      status:
+        auto_update_on: "Auto-update status"
+        auto_update_off: "Auto-update status"
       stage:
         promoted_to_speaker: "You've been made a speaker."
         demoted_to_listener: "You've been moved to listeners."

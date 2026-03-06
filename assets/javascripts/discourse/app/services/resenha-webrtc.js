@@ -37,6 +37,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked pttEnabled = false;
   @tracked pttKey = "Space";
   @tracked pttActive = false;
+  @tracked autoStatusEnabled = true;
 
   #connectingRoomIds = new Set();
   #roleChangeInProgress = new Set();
@@ -110,6 +111,13 @@ export default class ResenhaWebrtcService extends Service {
         this.localStream = stream;
       },
     });
+
+    try {
+      const stored = localStorage.getItem("resenha_auto_status_enabled");
+      this.autoStatusEnabled = stored !== "false";
+    } catch {
+      this.autoStatusEnabled = true;
+    }
   }
 
   willDestroy() {
@@ -241,8 +249,16 @@ export default class ResenhaWebrtcService extends Service {
     let response;
 
     try {
+      const joinData = {};
+      if (
+        !this.autoStatusEnabled ||
+        !this.siteSettings.resenha_auto_status_enabled
+      ) {
+        joinData.skip_status = true;
+      }
       response = await ajax(`/resenha/rooms/${room.id}/join`, {
         type: "POST",
+        data: joinData,
       });
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -579,6 +595,22 @@ export default class ResenhaWebrtcService extends Service {
     }
     this.pttKey = keyCode;
     return true;
+  }
+
+  toggleAutoStatus() {
+    this.autoStatusEnabled = !this.autoStatusEnabled;
+    try {
+      localStorage.setItem(
+        "resenha_auto_status_enabled",
+        this.autoStatusEnabled ? "true" : "false"
+      );
+    } catch {
+      // ignore storage errors
+    }
+
+    if (!this.autoStatusEnabled && this.#activeRoomIds.size > 0) {
+      ajax("/user-status.json", { type: "DELETE" }).catch(() => {});
+    }
   }
 
   // --- Private orchestration ---

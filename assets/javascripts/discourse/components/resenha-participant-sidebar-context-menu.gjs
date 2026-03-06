@@ -141,6 +141,16 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     return this.isCurrentUser && this.siteSettings.resenha_noise_suppression;
   }
 
+  get showAutoStatusToggle() {
+    return this.isCurrentUser && this.siteSettings.resenha_auto_status_enabled;
+  }
+
+  get autoStatusLabel() {
+    return this.resenhaWebrtc.autoStatusEnabled
+      ? i18n("resenha.status.auto_update_on")
+      : i18n("resenha.status.auto_update_off");
+  }
+
   get noiseSuppressionIcon() {
     return this.resenhaWebrtc.noiseSuppressionEnabled
       ? "ear-listen"
@@ -197,6 +207,11 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
   @action
   async toggleNoiseSuppression() {
     await this.resenhaWebrtc.toggleNoiseSuppression();
+  }
+
+  @action
+  toggleAutoStatus() {
+    this.resenhaWebrtc.toggleAutoStatus();
   }
 
   @action
@@ -324,6 +339,21 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
             </dropdown.item>
           {{/if}}
         {{/unless}}
+        {{#if this.showAutoStatusToggle}}
+          <dropdown.item>
+            <DButton
+              @action={{this.toggleAutoStatus}}
+              @icon={{if
+                this.resenhaWebrtc.autoStatusEnabled
+                "square-check"
+                "far-square"
+              }}
+              @translatedLabel={{this.autoStatusLabel}}
+              @translatedTitle={{this.autoStatusLabel}}
+              class="resenha-participant-sidebar-context-menu__auto-status-btn"
+            />
+          </dropdown.item>
+        {{/if}}
         {{#if this.isListenerInStage}}
           <dropdown.item>
             <span

@@ -54,6 +54,73 @@ RSpec.describe Resenha::RoomsController do
       json = response.parsed_body
       expect(json["room"]["active_participants"].map { |p| p["id"] }).to include(user.id)
     end
+
+    context "with user status integration" do
+      before do
+        SiteSetting.enable_user_status = true
+        SiteSetting.resenha_auto_status_enabled = true
+      end
+
+      it "sets user status on join" do
+        sign_in(user)
+
+        post "/resenha/rooms/#{room.id}/join.json"
+
+        user.reload
+        expect(user.user_status.emoji).to eq("studio_microphone")
+        expect(user.user_status.description).to eq("In #{room.name}")
+      end
+
+      it "skips status when user already has one" do
+        sign_in(user)
+        user.set_status!("Busy", "no_entry")
+
+        post "/resenha/rooms/#{room.id}/join.json"
+
+        user.reload
+        expect(user.user_status.emoji).to eq("no_entry")
+      end
+
+      it "skips status when skip_status param is sent" do
+        sign_in(user)
+
+        post "/resenha/rooms/#{room.id}/join.json", params: { skip_status: true }
+
+        user.reload
+        expect(user.user_status).to be_nil
+      end
+    end
+  end
+
+  describe "#leave" do
+    before do
+      SiteSetting.enable_user_status = true
+      SiteSetting.resenha_auto_status_enabled = true
+    end
+
+    it "clears Resenha status on leave" do
+      sign_in(user)
+      Resenha::ParticipantTracker.add(room.id, user.id)
+      user.set_status!("In #{room.name}", "studio_microphone", 2.minutes.from_now)
+
+      delete "/resenha/rooms/#{room.id}/leave.json"
+
+      expect(response.status).to eq(204)
+      user.reload
+      expect(user.user_status).to be_nil
+    end
+
+    it "preserves non-Resenha status on leave" do
+      sign_in(user)
+      Resenha::ParticipantTracker.add(room.id, user.id)
+      user.set_status!("On vacation", "palm_tree")
+
+      delete "/resenha/rooms/#{room.id}/leave.json"
+
+      expect(response.status).to eq(204)
+      user.reload
+      expect(user.user_status.emoji).to eq("palm_tree")
+    end
   end
 
   describe "#heartbeat" do
@@ -65,6 +132,58 @@ RSpec.describe Resenha::RoomsController do
 
       expect(response.status).to eq(204)
       expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+    end
+
+    context "with user status integration" do
+      before do
+        SiteSetting.enable_user_status = true
+        SiteSetting.resenha_auto_status_enabled = true
+        sign_in(user)
+        Resenha::ParticipantTracker.add(room.id, user.id)
+        Resenha::ParticipantTracker.update_metadata(room.id, user.id, { role: "participant" })
+        Resenha::UserStatusManager.set_voice_status(user, room)
+      end
+
+      it "refreshes status expiry on heartbeat" do
+        freeze_time do
+          post "/resenha/rooms/#{room.id}/heartbeat.json"
+
+          user.reload
+          expect(user.user_status.ends_at).to be_within(1.second).of(2.minutes.from_now)
+        end
+      end
+
+      it "transitions to AFK status" do
+        post "/resenha/rooms/#{room.id}/heartbeat.json", params: { idle_state: "afk" }
+
+        user.reload
+        expect(user.user_status.emoji).to eq("zzz")
+        expect(user.user_status.description).to eq("AFK in #{room.name}")
+      end
+
+      it "transitions back from AFK to active status" do
+        Resenha::UserStatusManager.set_afk_status(user, room)
+
+        post "/resenha/rooms/#{room.id}/heartbeat.json", params: { idle_state: "active" }
+
+        user.reload
+        expect(user.user_status.emoji).to eq("studio_microphone")
+        expect(user.user_status.description).to eq("In #{room.name}")
+      end
+
+      it "skips status refresh when skip_status metadata is set" do
+        Resenha::ParticipantTracker.update_metadata(
+          room.id,
+          user.id,
+          { role: "participant", skip_status: true },
+        )
+        user.clear_status!
+
+        post "/resenha/rooms/#{room.id}/heartbeat.json"
+
+        user.reload
+        expect(user.user_status).to be_nil
+      end
     end
   end
 
@@ -104,6 +223,19 @@ RSpec.describe Resenha::RoomsController do
       delete "/resenha/rooms/#{room.id}/kick.json", params: { user_id: staff.id }
 
       expect(response.status).to eq(400)
+    end
+
+    it "clears kicked user's Resenha status" do
+      SiteSetting.enable_user_status = true
+      SiteSetting.resenha_auto_status_enabled = true
+      sign_in(staff)
+      other_participant.set_status!("In #{room.name}", "studio_microphone", 2.minutes.from_now)
+
+      delete "/resenha/rooms/#{room.id}/kick.json", params: { user_id: other_participant.id }
+
+      expect(response.status).to eq(204)
+      other_participant.reload
+      expect(other_participant.user_status).to be_nil
     end
 
     it "prevents kicking the room creator" do
