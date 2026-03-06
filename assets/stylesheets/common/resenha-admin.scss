@@ -1,4 +1,6 @@
 .resenha-rooms-table {
+  margin-top: 1.5em;
+
   .resenha-rooms {
     .resenha-rooms__name {
       font-weight: 600;
@@ -9,5 +11,64 @@
       gap: 0.5em;
       justify-content: flex-end;
     }
+  }
+}
+
+.resenha-dashboard {
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1.5em;
+    margin-bottom: 1em;
+
+    h2 {
+      margin: 0;
+    }
+  }
+
+  &__stats-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1em;
+    margin-bottom: 1.5em;
+  }
+
+  &__card {
+    display: flex;
+    flex-direction: column;
+    padding: 1em;
+    background: var(--primary-very-low);
+    border: 1px solid var(--primary-low);
+    border-radius: var(--d-border-radius);
+  }
+
+  &__card-value {
+    font-size: var(--font-up-3);
+    font-weight: 700;
+    color: var(--primary);
+  }
+
+  &__card-label {
+    font-size: var(--font-down-1);
+    color: var(--primary-medium);
+    margin-top: 0.25em;
+  }
+
+  &__user-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+  }
+
+  &__empty {
+    padding: 2em;
+    text-align: center;
+    color: var(--primary-medium);
+  }
+
+  h3 {
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
   }
 }

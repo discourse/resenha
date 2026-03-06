@@ -15,6 +15,10 @@ export default {
       api.setAdminPluginIcon(PLUGIN_ID, "microphone-lines");
       api.addAdminPluginConfigurationNav(PLUGIN_ID, [
         {
+          label: "resenha.admin.dashboard_title",
+          route: "adminPlugins.show.resenha-dashboard",
+        },
+        {
           label: "resenha.admin.rooms_title",
           route: "adminPlugins.show.resenha-rooms",
         },

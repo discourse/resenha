@@ -4,6 +4,7 @@ export default {
   path: "/plugins",
 
   map() {
+    this.route("resenha-dashboard");
     this.route(
       "resenha-rooms",
 
