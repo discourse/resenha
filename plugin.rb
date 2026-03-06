@@ -42,6 +42,8 @@ add_admin_route "resenha.admin.title", "resenha", use_new_show_route: true
 require_relative "lib/resenha"
 
 after_initialize do
+  SeedFu.fixture_paths << Rails.root.join("plugins", "resenha", "db", "fixtures").to_s
+
   require_relative "lib/resenha/user_extension"
 
   Discourse::Application.routes.append { mount ::Resenha::Engine, at: "/resenha" }
