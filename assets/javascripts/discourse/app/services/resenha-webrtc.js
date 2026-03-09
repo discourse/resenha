@@ -42,6 +42,8 @@ export default class ResenhaWebrtcService extends Service {
   #connectingRoomIds = new Set();
   #roleChangeInProgress = new Set();
   #activeRoomIds = new Set();
+  #joinRevision = 0;
+  #messageQueue = new Map();
   #remoteStreams = new Map();
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
@@ -140,6 +142,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#heartbeatTimers.clear();
     this.#heartbeatInFlight.clear();
     this.#connectingRoomIds.clear();
+    this.#messageQueue.clear();
   }
 
   get iceServers() {
@@ -231,12 +234,25 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    // Bump the join revision so any in-flight join for a different room
+    // will detect it has been superseded and abort.
+    const revision = ++this.#joinRevision;
+
     this.#connectingRoomIds.add(room.id);
     this.#bumpConnectionRevision();
 
+    // Leave rooms that are already active.
     for (const activeRoomId of this.#activeRoomIds) {
       if (activeRoomId !== room.id) {
         this.leave({ id: activeRoomId }, { keepLocalStream: true });
+      }
+    }
+
+    // Abort any other in-progress joins (still in connecting state).
+    for (const connectingId of this.#connectingRoomIds) {
+      if (connectingId !== room.id) {
+        this.#connectingRoomIds.delete(connectingId);
+        this.#teardownRoom(connectingId);
       }
     }
 
@@ -266,6 +282,11 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    if (this.#joinRevision !== revision) {
+      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      return;
+    }
+
     // eslint-disable-next-line no-console
     console.log(
       `[resenha] join response, active_participants:`,
@@ -282,6 +303,11 @@ export default class ResenhaWebrtcService extends Service {
         this.#handleJoinFailure(room.id);
         return;
       }
+    }
+
+    if (this.#joinRevision !== revision) {
+      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      return;
     }
 
     if (this.localStream) {
@@ -688,9 +714,20 @@ export default class ResenhaWebrtcService extends Service {
     this.#audioMonitor.teardownRoom(roomId);
     this.#signaling.clearForRoom(roomId);
     this.#signaling.clearHttpQueue(roomId);
+    this.#messageQueue.delete(roomId);
   }
 
-  async #handleRoomMessage(roomId, payload) {
+  #handleRoomMessage(roomId, payload) {
+    // Serialize all message processing per room to prevent async
+    // handlers from interleaving (e.g. concurrent participant broadcasts,
+    // signals arriving mid-peer-setup, role changes overlapping signals).
+    const prev = this.#messageQueue.get(roomId) || Promise.resolve();
+    const next = prev.then(() => this.#processRoomMessage(roomId, payload));
+    next.catch(() => {});
+    this.#messageQueue.set(roomId, next);
+  }
+
+  async #processRoomMessage(roomId, payload) {
     // eslint-disable-next-line no-console
     console.log(
       `[resenha] 📨 MessageBus message: room=${roomId}, type=${payload.type}, active=${this.#activeRoomIds.has(roomId)}`
@@ -720,6 +757,10 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (remoteUserId === this.currentUser?.id) {
+      return;
+    }
+
+    if (this.#roleChangeInProgress.has(roomId)) {
       return;
     }
     // eslint-disable-next-line no-console
