@@ -244,7 +244,6 @@ export default class ResenhaWebrtcService extends Service {
     console.log(`[resenha] joining room ${room.id}`);
 
     this.#registerRoomHandler(room.id);
-    this.#activeRoomIds.add(room.id);
 
     let response;
 
@@ -298,6 +297,12 @@ export default class ResenhaWebrtcService extends Service {
         }
       }
     }
+
+    // Only mark the room as active after the microphone is ready.
+    // This prevents incoming MessageBus signals from creating peer
+    // connections before localStream is available (race condition that
+    // caused voice to fail on first join).
+    this.#activeRoomIds.add(room.id);
 
     this.#addLocalParticipant(room.id);
 
