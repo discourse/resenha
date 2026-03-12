@@ -51,7 +51,7 @@ module Resenha
 
     def message_bus_targets
       if public?
-        { group_ids: [Group::AUTO_GROUPS[:trust_level_0]] }
+        { group_ids: SiteSetting.resenha_allowed_groups_map }
       else
         { user_ids: member_ids }
       end

@@ -300,6 +300,7 @@ export default class ResenhaWebrtcService extends Service {
     if (!isStageListener && !this.localStream) {
       const acquired = await this.#acquireMicrophone();
       if (!acquired) {
+        ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
         this.#handleJoinFailure(room.id);
         return;
       }

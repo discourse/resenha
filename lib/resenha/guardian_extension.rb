@@ -49,6 +49,12 @@ module Resenha
       can_join_resenha_room?(room)
     end
 
+    def ensure_can_see_resenha_room!(room)
+      unless can_see_resenha_room?(room)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
+      end
+    end
+
     def can_speak_in_resenha_room?(room)
       return true if room.open?
       return true if user&.admin?

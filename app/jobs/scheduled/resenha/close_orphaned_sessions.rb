@@ -17,8 +17,7 @@ module Jobs
             )
           next if participant_ids.include?(session.user_id)
 
-          fallback_time = session.updated_at || session.joined_at
-          session.close!(at: fallback_time)
+          session.close!(at: Time.current)
 
           user = User.find_by(id: session.user_id)
           room = ::Resenha::Room.find_by(id: session.room_id)

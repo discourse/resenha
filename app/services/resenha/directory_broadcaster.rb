@@ -18,11 +18,20 @@ module Resenha
           type: action,
           room: Resenha::RoomSerializer.new(room, scope: Guardian.new(nil), root: false).as_json,
         },
+        **targets,
       )
     end
 
     private
 
     attr_reader :room, :action
+
+    def targets
+      if room.public?
+        { group_ids: SiteSetting.resenha_allowed_groups_map }
+      else
+        { user_ids: room.member_ids }
+      end
+    end
   end
 end

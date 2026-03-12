@@ -54,7 +54,17 @@ module Resenha
     def destroy
       guardian.ensure_can_manage_resenha_room!(@room)
       membership = @room.room_memberships.find(params[:id])
+      user_id = membership.user_id
       membership.destroy!
+
+      if Resenha::ParticipantTracker.user_ids(@room.id).include?(user_id)
+        metadata = Resenha::ParticipantTracker.get_metadata(@room.id, user_id)
+        metadata[:role] = "participant"
+        Resenha::ParticipantTracker.update_metadata(@room.id, user_id, metadata)
+        Resenha::RoomBroadcaster.publish_role_change(@room, user_id, "participant")
+        Resenha::RoomBroadcaster.publish_participants(@room)
+      end
+
       head :no_content
     end
 
