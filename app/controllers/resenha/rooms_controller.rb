@@ -82,7 +82,7 @@ module Resenha
 
       membership = @room.room_memberships.find_by(user_id: current_user.id)
       role = membership&.role_name || "participant"
-      metadata = { role: role }
+      metadata = { role: role, last_heartbeat_at: Time.now.to_f }
 
       if SiteSetting.resenha_analytics_enabled
         session = Resenha::Session.create!(user: current_user, room: @room, joined_at: Time.current)
@@ -126,15 +126,17 @@ module Resenha
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
 
       metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
+      metadata[:last_heartbeat_at] = Time.now.to_f
 
       if params.key?(:idle_state)
         idle_state = params[:idle_state].to_s
         if %w[active idle afk].include?(idle_state)
           metadata[:idle_state] = idle_state
-          Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
           Resenha::RoomBroadcaster.publish_participants(@room)
         end
       end
+
+      Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
 
       if !metadata[:skip_status] && Resenha::UserStatusManager.resenha_status_active?(current_user)
         if metadata[:idle_state] == "afk"
