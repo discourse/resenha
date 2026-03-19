@@ -29,9 +29,10 @@ RSpec.describe Jobs::PublishRoomParticipants do
     Resenha::ParticipantTracker.add(room.id, user1.id)
     Resenha::ParticipantTracker.add(room.id, user2.id)
 
-    # Manually remove user2 to simulate TTL expiration
-    Discourse.redis.srem(
+    # Set user2's heartbeat to a stale timestamp to simulate TTL expiration
+    Discourse.redis.zadd(
       "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
+      1.hour.ago.to_f,
       user2.id,
     )
 

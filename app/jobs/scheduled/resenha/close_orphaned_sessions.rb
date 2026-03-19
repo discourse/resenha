@@ -17,7 +17,12 @@ module Jobs
             )
           next if participant_ids.include?(session.user_id)
 
-          session.close!(at: Time.current)
+          left_at =
+            ::Resenha::ParticipantTracker.last_heartbeat_at(session.room_id, session.user_id) ||
+              Time.current
+
+          session.close!(at: left_at)
+          ::Resenha::ParticipantTracker.remove(session.room_id, session.user_id)
 
           user = User.find_by(id: session.user_id)
           room = ::Resenha::Room.find_by(id: session.room_id)
