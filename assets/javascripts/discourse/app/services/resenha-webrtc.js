@@ -771,11 +771,24 @@ export default class ResenhaWebrtcService extends Service {
     if (this.#roleChangeInProgress.has(roomId)) {
       return;
     }
+
+    const hadPeer = this.#peerManager.has(roomId, remoteUserId);
+    if (!hadPeer && !this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
+      // Ignore delayed targeted signals for participants that already left
+      // or no longer belong in the current room topology.
+      return;
+    }
+
     // eslint-disable-next-line no-console
     console.log(
       `[resenha] 📥 received ${data.type} from user ${remoteUserId} in room ${roomId}`
     );
     const pc = await this.#peerManager.create(roomId, remoteUserId);
+
+    if (!this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
+      this.#peerManager.destroy(roomId, remoteUserId);
+      return;
+    }
 
     if (data.type === "offer") {
       this.#peerManager.clearOfferRetry(roomId, remoteUserId);
