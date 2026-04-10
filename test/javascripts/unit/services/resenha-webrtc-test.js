@@ -96,16 +96,29 @@ class FakeRTCPeerConnection {
   iceGatheringState = "new";
   localDescription = null;
   remoteDescription = null;
+  senders = [];
 
   constructor() {
     FakeRTCPeerConnection.created++;
     FakeRTCPeerConnection.instances.push(this);
   }
 
-  addTrack() {}
+  addTrack(track) {
+    const sender = {
+      track,
+      replaceCalls: [],
+      async replaceTrack(newTrack) {
+        this.track = newTrack;
+        this.replaceCalls.push(newTrack);
+      },
+    };
+
+    this.senders.push(sender);
+    return sender;
+  }
 
   getSenders() {
-    return [];
+    return this.senders;
   }
 
   async createOffer() {
@@ -159,6 +172,134 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function createFakeTrack(id) {
+  return {
+    id,
+    kind: "audio",
+    enabled: true,
+    stop() {},
+  };
+}
+
+function createFakeStream(id, track) {
+  return {
+    id,
+    getTracks() {
+      return [track];
+    },
+    getAudioTracks() {
+      return [track];
+    },
+  };
+}
+
+function installFakeAudioEnvironment({ rawStream, processedStream }) {
+  const sourceStreams = [];
+  const originalAudioContext = globalThis.AudioContext;
+  const originalAudioWorkletNode = globalThis.AudioWorkletNode;
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const originalCancelAnimationFrame = window.cancelAnimationFrame;
+  const originalWindowAudioContext = window.AudioContext;
+  const originalWindowWebkitAudioContext = window.webkitAudioContext;
+  const originalGetUserMedia = navigator.mediaDevices?.getUserMedia;
+
+  class FakeAudioContext {
+    currentTime = 0;
+    destination = {};
+    audioWorklet = {
+      addModule: async () => {},
+    };
+
+    createMediaStreamSource(stream) {
+      sourceStreams.push(stream);
+
+      return {
+        connect(target) {
+          return target;
+        },
+        disconnect() {},
+      };
+    }
+
+    createAnalyser() {
+      return {
+        fftSize: 0,
+        frequencyBinCount: 32,
+        getByteTimeDomainData(array) {
+          array.fill(128);
+        },
+      };
+    }
+
+    createMediaStreamDestination() {
+      return { stream: processedStream };
+    }
+
+    createOscillator() {
+      return {
+        frequency: { value: 0 },
+        connect(target) {
+          return target;
+        },
+        start() {},
+        stop() {},
+      };
+    }
+
+    createGain() {
+      return {
+        gain: {
+          setValueAtTime() {},
+          exponentialRampToValueAtTime() {},
+        },
+        connect(target) {
+          return target;
+        },
+      };
+    }
+
+    close() {
+      return Promise.resolve();
+    }
+  }
+
+  class FakeAudioWorkletNode {
+    connect(target) {
+      return target;
+    }
+
+    disconnect() {}
+  }
+
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.AudioWorkletNode = FakeAudioWorkletNode;
+  window.AudioContext = FakeAudioContext;
+  window.webkitAudioContext = FakeAudioContext;
+  window.requestAnimationFrame = () => 1;
+  window.cancelAnimationFrame = () => {};
+
+  navigator.mediaDevices ||= {};
+  navigator.mediaDevices.getUserMedia = async () => rawStream;
+
+  return {
+    sourceStreams,
+    restore() {
+      globalThis.AudioContext = originalAudioContext;
+      globalThis.AudioWorkletNode = originalAudioWorkletNode;
+      window.AudioContext = originalWindowAudioContext;
+      window.webkitAudioContext = originalWindowWebkitAudioContext;
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      window.cancelAnimationFrame = originalCancelAnimationFrame;
+
+      if (originalGetUserMedia) {
+        navigator.mediaDevices.getUserMedia = originalGetUserMedia;
+      } else {
+        delete navigator.mediaDevices.getUserMedia;
+      }
+    },
+  };
+}
+
 module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
   setupTest(hooks);
 
@@ -194,6 +335,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       })
     );
     pretender.post("/resenha/rooms/1/signal", () => response({}));
+    pretender.post("/resenha/rooms/1/toggle_mute", () => response({}));
     pretender.delete("/resenha/rooms/1/leave", () => response({}));
 
     this.originalRTCPeerConnection = globalThis.RTCPeerConnection;
@@ -488,5 +630,127 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       1,
       "keeps the existing peer instead of recreating it after recovery signaling"
     );
+  });
+
+  test("enabling noise suppression preserves mute state across multiple peers", async function (assert) {
+    const rawTrack = createFakeTrack("raw-track");
+    const processedTrack = createFakeTrack("processed-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const processedStream = createFakeStream(
+      "processed-stream",
+      processedTrack
+    );
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream,
+    });
+
+    this.siteSettings.resenha_noise_suppression = true;
+    this.room.membership.role_name = "speaker";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "speaker" },
+      { id: 2, role: "speaker" },
+      { id: 30, role: "speaker" },
+    ];
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      this.subject.toggleMute();
+
+      await this.subject.toggleNoiseSuppression();
+
+      assert.true(
+        this.subject.noiseSuppressionEnabled,
+        "marks noise suppression as enabled"
+      );
+      assert.strictEqual(
+        this.subject.localStream,
+        processedStream,
+        "swaps to the processed stream"
+      );
+
+      FakeRTCPeerConnection.instances.forEach((pc, index) => {
+        const sender = pc.getSenders()[0];
+
+        assert.strictEqual(
+          sender.track,
+          processedTrack,
+          `peer ${index + 1} switches to the processed track`
+        );
+        assert.false(
+          sender.track.enabled,
+          `peer ${index + 1} keeps the muted state after the stream swap`
+        );
+      });
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("disabling noise suppression preserves mute state across multiple peers", async function (assert) {
+    const rawTrack = createFakeTrack("raw-track");
+    const processedTrack = createFakeTrack("processed-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const processedStream = createFakeStream(
+      "processed-stream",
+      processedTrack
+    );
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream,
+    });
+
+    this.siteSettings.resenha_noise_suppression = true;
+    this.room.membership.role_name = "speaker";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "speaker" },
+      { id: 2, role: "speaker" },
+      { id: 30, role: "speaker" },
+    ];
+
+    localStorage.setItem("resenha:noise-suppression", "1");
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      this.subject.toggleMute();
+      await this.subject.toggleNoiseSuppression();
+
+      assert.false(
+        this.subject.noiseSuppressionEnabled,
+        "marks noise suppression as disabled"
+      );
+      assert.strictEqual(
+        this.subject.localStream,
+        rawStream,
+        "restores the raw microphone stream"
+      );
+      assert.strictEqual(
+        audioEnvironment.sourceStreams.filter((stream) => stream === rawStream)
+          .length,
+        2,
+        "rebinds the local speaking monitor to the restored raw stream"
+      );
+
+      FakeRTCPeerConnection.instances.forEach((pc, index) => {
+        const sender = pc.getSenders()[0];
+
+        assert.strictEqual(
+          sender.track,
+          rawTrack,
+          `peer ${index + 1} switches back to the raw track`
+        );
+        assert.false(
+          sender.track.enabled,
+          `peer ${index + 1} keeps the muted state after restoring the raw stream`
+        );
+      });
+    } finally {
+      localStorage.removeItem("resenha:noise-suppression");
+      audioEnvironment.restore();
+    }
   });
 });

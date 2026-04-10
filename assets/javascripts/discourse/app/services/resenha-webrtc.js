@@ -116,6 +116,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#noiseSuppression = new NoiseSuppressionManager({
       onStreamReady: (stream) => {
         this.localStream = stream;
+        this.#syncLocalStreamState();
       },
     });
 
@@ -595,6 +596,7 @@ export default class ResenhaWebrtcService extends Service {
       this.#noiseSuppression.teardown();
       this.noiseSuppressionEnabled = false;
       this.localStream = this.#rawLocalStream;
+      this.#syncLocalStreamState();
       this.#noiseSuppression.setPreference(false);
       // eslint-disable-next-line no-console
       console.log("[resenha] noise suppression disabled");
@@ -609,6 +611,7 @@ export default class ResenhaWebrtcService extends Service {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to enable noise suppression", error);
         this.localStream = this.#rawLocalStream;
+        this.#syncLocalStreamState();
         return;
       }
     }
@@ -1399,6 +1402,35 @@ export default class ResenhaWebrtcService extends Service {
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => track.stop());
       this.localStream = null;
+    }
+
+    this.#syncLocalStreamState();
+  }
+
+  #syncLocalStreamState() {
+    this.#applyLocalTrackState(this.localStream);
+
+    if (!this.currentUser?.id) {
+      return;
+    }
+
+    for (const roomId of this.#activeRoomIds) {
+      if (this.localStream) {
+        this.#audioMonitor.ensure(
+          roomId,
+          this.currentUser.id,
+          this.localStream,
+          true
+        );
+      } else {
+        this.#audioMonitor.teardown(roomId, this.currentUser.id);
+      }
+    }
+  }
+
+  #applyLocalTrackState(stream) {
+    for (const track of stream?.getAudioTracks?.() || []) {
+      track.enabled = this.audioEnabled;
     }
   }
 
