@@ -45,6 +45,7 @@ export default class ResenhaWebrtcService extends Service {
   #activeRoomIds = new Set();
   #joinRevision = 0;
   #connectingParticipantSnapshots = new Map();
+  #connectingSignalQueue = new Map();
   #remoteStreams = new Map();
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
@@ -150,6 +151,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#heartbeatInFlight.clear();
     this.#connectingRoomIds.clear();
     this.#connectingParticipantSnapshots.clear();
+    this.#connectingSignalQueue.clear();
     this.#roomMessageQueue.clearAll();
   }
 
@@ -364,6 +366,13 @@ export default class ResenhaWebrtcService extends Service {
       });
     }
 
+    const queuedSignals = this.#connectingSignalQueue.get(room.id) || [];
+    this.#connectingSignalQueue.delete(room.id);
+
+    for (const payload of queuedSignals) {
+      await this.#handleSignal(room.id, payload);
+    }
+
     this.#connectingRoomIds.delete(room.id);
     this.#bumpConnectionRevision();
 
@@ -388,6 +397,7 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     this.#connectingParticipantSnapshots.delete(room.id);
+    this.#connectingSignalQueue.delete(room.id);
     this.#pttManager.resetActive();
     this.pttActive = false;
     ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
@@ -724,6 +734,7 @@ export default class ResenhaWebrtcService extends Service {
 
   #teardownRoom(roomId) {
     this.#connectingParticipantSnapshots.delete(roomId);
+    this.#connectingSignalQueue.delete(roomId);
 
     const callback = this.#roomHandlerCallbacks.get(roomId);
     if (callback) {
@@ -766,6 +777,13 @@ export default class ResenhaWebrtcService extends Service {
           roomId,
           payload.participants || []
         );
+      } else if (
+        payload.type === "signal" &&
+        this.#connectingRoomIds.has(roomId)
+      ) {
+        const queue = this.#connectingSignalQueue.get(roomId) || [];
+        queue.push(payload);
+        this.#connectingSignalQueue.set(roomId, queue);
       } else if (
         payload.type === "kicked" &&
         this.#connectingRoomIds.has(roomId)

@@ -411,4 +411,42 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       "does not create peers after a connect-time kick"
     );
   });
+
+  test("join replays queued connect-time signals for existing peers", async function (assert) {
+    assert.timeout(2000);
+
+    const joinResponse = deferred();
+    let signalRequests = 0;
+
+    pretender.post("/resenha/rooms/1/join", () =>
+      joinResponse.promise.then(() =>
+        response({
+          room: JSON.parse(JSON.stringify(this.room)),
+        })
+      )
+    );
+    pretender.post("/resenha/rooms/1/signal", () => {
+      signalRequests++;
+      return response({});
+    });
+
+    const join = this.subject.join(this.room);
+    await wait(10);
+
+    this.rooms.emit(1, {
+      type: "signal",
+      sender_id: 2,
+      data: { type: "offer", sdp: "queued-offer" },
+    });
+
+    joinResponse.resolve();
+    await join;
+    await wait(50);
+
+    assert.strictEqual(
+      signalRequests,
+      1,
+      "sends an answer immediately after join instead of waiting for the fallback retry"
+    );
+  });
 });
