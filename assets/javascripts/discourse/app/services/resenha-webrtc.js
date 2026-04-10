@@ -93,6 +93,8 @@ export default class ResenhaWebrtcService extends Service {
       clearSignalQueue: (roomId, uid) =>
         this.#signaling.clearForPeer(roomId, uid),
       onPeerDestroyed: (roomId, uid) => this.#removeRemoteStream(roomId, uid),
+      shouldRestartPeer: (roomId, uid) =>
+        this.#shouldMaintainPeerConnection(roomId, uid),
     });
 
     this.#audioMonitor = new AudioMonitor({
@@ -1075,6 +1077,35 @@ export default class ResenhaWebrtcService extends Service {
     } else {
       this.#peerManager.scheduleOfferRetry(roomId, remoteUserId);
     }
+  }
+
+  #shouldMaintainPeerConnection(roomId, remoteUserId) {
+    if (!this.#activeRoomIds.has(roomId)) {
+      return false;
+    }
+
+    const room = this.resenhaRooms?.roomById(roomId);
+    if (!room) {
+      return false;
+    }
+
+    const participant = (room.active_participants || []).find(
+      (entry) => Number(entry?.id) === Number(remoteUserId)
+    );
+
+    if (!participant) {
+      return false;
+    }
+
+    if (room.room_type !== "stage") {
+      return true;
+    }
+
+    const iCanSpeak = this.#canSpeakInRoom(room);
+    const theyCanSpeak =
+      participant.role === "moderator" || participant.role === "speaker";
+
+    return iCanSpeak || theyCanSpeak;
   }
 
   #reconnectAllPeers(roomId) {

@@ -22,6 +22,7 @@ export default class PeerManager {
   #onTrack;
   #clearSignalQueue;
   #onPeerDestroyed;
+  #shouldRestartPeer;
 
   constructor({
     getIceServers,
@@ -31,6 +32,7 @@ export default class PeerManager {
     onTrack,
     clearSignalQueue,
     onPeerDestroyed,
+    shouldRestartPeer = () => true,
   }) {
     this.#getIceServers = getIceServers;
     this.#getLocalStream = getLocalStream;
@@ -39,6 +41,7 @@ export default class PeerManager {
     this.#onTrack = onTrack;
     this.#clearSignalQueue = clearSignalQueue;
     this.#onPeerDestroyed = onPeerDestroyed;
+    this.#shouldRestartPeer = shouldRestartPeer;
   }
 
   has(roomId, userId) {
@@ -312,8 +315,20 @@ export default class PeerManager {
   }
 
   async restart(roomId, remoteUserId) {
+    if (!this.#shouldRestartPeer(roomId, remoteUserId)) {
+      this.#clearPeerRestart(roomId, remoteUserId);
+      return;
+    }
+
     this.destroy(roomId, remoteUserId, { resetRestartAttempts: false });
+
     await this.create(roomId, remoteUserId);
+
+    if (!this.#shouldRestartPeer(roomId, remoteUserId)) {
+      this.destroy(roomId, remoteUserId);
+      return;
+    }
+
     await this.initiateOffer(roomId, remoteUserId);
   }
 
