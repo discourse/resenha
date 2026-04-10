@@ -820,6 +820,8 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    this.#peerManager.clearPeerRestart(roomId, remoteUserId);
+
     const hadPeer = this.#peerManager.has(roomId, remoteUserId);
     if (!hadPeer && !this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
       // Ignore delayed targeted signals for participants that already left

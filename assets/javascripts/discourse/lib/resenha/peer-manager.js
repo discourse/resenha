@@ -276,6 +276,10 @@ export default class PeerManager {
     this.#clearOfferRetry(roomId, remoteUserId);
   }
 
+  clearPeerRestart(roomId, remoteUserId) {
+    this.#clearPeerRestart(roomId, remoteUserId);
+  }
+
   queuePendingCandidate(roomId, remoteUserId, candidate) {
     const key = PeerManager.peerKey(roomId, remoteUserId);
     const queue = this.#pendingCandidates.get(key) || [];

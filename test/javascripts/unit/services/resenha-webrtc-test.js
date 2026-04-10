@@ -88,6 +88,7 @@ class ToastsStub extends Service {
 
 class FakeRTCPeerConnection {
   static created = 0;
+  static instances = [];
 
   signalingState = "stable";
   connectionState = "new";
@@ -98,6 +99,7 @@ class FakeRTCPeerConnection {
 
   constructor() {
     FakeRTCPeerConnection.created++;
+    FakeRTCPeerConnection.instances.push(this);
   }
 
   addTrack() {}
@@ -199,6 +201,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     this.originalRTCSessionDescription = globalThis.RTCSessionDescription;
 
     FakeRTCPeerConnection.created = 0;
+    FakeRTCPeerConnection.instances = [];
     globalThis.RTCPeerConnection = FakeRTCPeerConnection;
     globalThis.RTCIceCandidate = class {
       constructor(candidate) {
@@ -447,6 +450,43 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       signalRequests,
       1,
       "sends an answer immediately after join instead of waiting for the fallback retry"
+    );
+  });
+
+  test("inbound recovery signals cancel a pending peer restart", async function (assert) {
+    assert.timeout(5000);
+
+    let signalRequests = 0;
+
+    pretender.post("/resenha/rooms/1/signal", () => {
+      signalRequests++;
+      return response({});
+    });
+
+    await this.subject.join(this.room);
+    await wait(50);
+
+    const pc = FakeRTCPeerConnection.instances[0];
+    pc.connectionState = "disconnected";
+    pc.onconnectionstatechange();
+
+    this.rooms.emit(1, {
+      type: "signal",
+      sender_id: 2,
+      data: { type: "offer", sdp: "recovery-offer" },
+    });
+    await wait(50);
+    await wait(1600);
+
+    assert.strictEqual(
+      signalRequests,
+      1,
+      "sends only the recovery answer and does not fire a stale restart offer"
+    );
+    assert.strictEqual(
+      FakeRTCPeerConnection.created,
+      1,
+      "keeps the existing peer instead of recreating it after recovery signaling"
     );
   });
 });
