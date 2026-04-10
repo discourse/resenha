@@ -1,3 +1,5 @@
+const SAMPLE_INTERVAL_MS = 100;
+
 export default class AudioMonitor {
   static peerKey(roomId, userId) {
     return `${roomId}:${userId}`;
@@ -44,7 +46,7 @@ export default class AudioMonitor {
       source.connect(analyser);
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let rafId = null;
+      let sampleTimer = null;
       let speaking = false;
       let stopSpeakingTimer = null;
 
@@ -79,10 +81,7 @@ export default class AudioMonitor {
           }, 500);
         }
 
-        rafId =
-          typeof window !== "undefined"
-            ? window.requestAnimationFrame(sample)
-            : null;
+        sampleTimer = setTimeout(sample, SAMPLE_INTERVAL_MS);
       };
 
       sample();
@@ -90,8 +89,9 @@ export default class AudioMonitor {
       this.#monitors.set(key, {
         stream,
         stop() {
-          if (rafId && typeof window !== "undefined") {
-            window.cancelAnimationFrame(rafId);
+          if (sampleTimer) {
+            clearTimeout(sampleTimer);
+            sampleTimer = null;
           }
 
           if (stopSpeakingTimer) {
