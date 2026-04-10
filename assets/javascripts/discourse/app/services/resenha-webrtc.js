@@ -8,6 +8,7 @@ import IdleTracker from "../../lib/resenha/idle-tracker";
 import NoiseSuppressionManager from "../../lib/resenha/noise-suppression";
 import PeerManager from "../../lib/resenha/peer-manager";
 import PttManager from "../../lib/resenha/ptt-manager";
+import RoomMessageQueue from "../../lib/resenha/room-message-queue";
 import SignalingManager from "../../lib/resenha/signaling";
 import {
   playConnectedSound,
@@ -43,7 +44,6 @@ export default class ResenhaWebrtcService extends Service {
   #roleChangeInProgress = new Set();
   #activeRoomIds = new Set();
   #joinRevision = 0;
-  #messageQueue = new Map();
   #remoteStreams = new Map();
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
@@ -61,6 +61,7 @@ export default class ResenhaWebrtcService extends Service {
   #idleTracker;
   #noiseSuppression;
   #pttManager;
+  #roomMessageQueue;
 
   constructor() {
     super(...arguments);
@@ -114,6 +115,8 @@ export default class ResenhaWebrtcService extends Service {
       },
     });
 
+    this.#roomMessageQueue = new RoomMessageQueue();
+
     try {
       const stored = localStorage.getItem("resenha_auto_status_enabled");
       this.autoStatusEnabled = stored !== "false";
@@ -142,7 +145,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#heartbeatTimers.clear();
     this.#heartbeatInFlight.clear();
     this.#connectingRoomIds.clear();
-    this.#messageQueue.clear();
+    this.#roomMessageQueue.clearAll();
   }
 
   get iceServers() {
@@ -715,17 +718,19 @@ export default class ResenhaWebrtcService extends Service {
     this.#audioMonitor.teardownRoom(roomId);
     this.#signaling.clearForRoom(roomId);
     this.#signaling.clearHttpQueue(roomId);
-    this.#messageQueue.delete(roomId);
+    this.#roomMessageQueue.clear(roomId);
   }
 
   #handleRoomMessage(roomId, payload) {
     // Serialize all message processing per room to prevent async
     // handlers from interleaving (e.g. concurrent participant broadcasts,
     // signals arriving mid-peer-setup, role changes overlapping signals).
-    const prev = this.#messageQueue.get(roomId) || Promise.resolve();
-    const next = prev.then(() => this.#processRoomMessage(roomId, payload));
-    next.catch(() => {});
-    this.#messageQueue.set(roomId, next);
+    this.#roomMessageQueue
+      .enqueue(roomId, () => this.#processRoomMessage(roomId, payload))
+      .catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to process room message", error);
+      });
   }
 
   async #processRoomMessage(roomId, payload) {
