@@ -44,6 +44,7 @@ export default class ResenhaWebrtcService extends Service {
   #roleChangeInProgress = new Set();
   #activeRoomIds = new Set();
   #joinRevision = 0;
+  #connectingParticipantSnapshots = new Map();
   #remoteStreams = new Map();
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
@@ -148,6 +149,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#heartbeatTimers.clear();
     this.#heartbeatInFlight.clear();
     this.#connectingRoomIds.clear();
+    this.#connectingParticipantSnapshots.clear();
     this.#roomMessageQueue.clearAll();
   }
 
@@ -352,8 +354,9 @@ export default class ResenhaWebrtcService extends Service {
     this.#idleTracker.start();
 
     const latestParticipants =
-      this.resenhaRooms?.roomById(room.id)?.active_participants ||
+      this.#connectingParticipantSnapshots.get(room.id) ??
       response?.room?.active_participants;
+    this.#connectingParticipantSnapshots.delete(room.id);
 
     if (latestParticipants) {
       await this.#handleParticipants(room.id, {
@@ -384,6 +387,7 @@ export default class ResenhaWebrtcService extends Service {
       this.#joinRevision++;
     }
 
+    this.#connectingParticipantSnapshots.delete(room.id);
     this.#pttManager.resetActive();
     this.pttActive = false;
     ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
@@ -719,6 +723,8 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #teardownRoom(roomId) {
+    this.#connectingParticipantSnapshots.delete(roomId);
+
     const callback = this.#roomHandlerCallbacks.get(roomId);
     if (callback) {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
@@ -752,6 +758,15 @@ export default class ResenhaWebrtcService extends Service {
     );
 
     if (!this.#activeRoomIds.has(roomId)) {
+      if (
+        payload.type === "participants" &&
+        this.#connectingRoomIds.has(roomId)
+      ) {
+        this.#connectingParticipantSnapshots.set(
+          roomId,
+          payload.participants || []
+        );
+      }
       return;
     }
 

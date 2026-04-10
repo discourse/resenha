@@ -344,4 +344,30 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       "creates peers for participants that joined while the room was still connecting"
     );
   });
+
+  test("join still uses the join response when no newer participant broadcast arrived", async function (assert) {
+    const responseRoom = {
+      ...this.room,
+      active_participants: [
+        { id: this.currentUser.id, role: "listener" },
+        { id: 2, role: "speaker" },
+        { id: 30, role: "speaker" },
+      ],
+    };
+
+    pretender.post("/resenha/rooms/1/join", () =>
+      response({
+        room: JSON.parse(JSON.stringify(responseRoom)),
+      })
+    );
+
+    await this.subject.join(this.room);
+    await wait(10);
+
+    assert.strictEqual(
+      FakeRTCPeerConnection.created,
+      2,
+      "creates peers for participants only present in the fresher join response"
+    );
+  });
 });
