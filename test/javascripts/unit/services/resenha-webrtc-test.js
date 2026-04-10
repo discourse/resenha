@@ -304,4 +304,44 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       "does not create peers for a canceled join"
     );
   });
+
+  test("join uses the latest participant list when more users join during connect", async function (assert) {
+    assert.timeout(2000);
+
+    const joinResponse = deferred();
+    const staleRoom = {
+      ...this.room,
+      active_participants: [{ id: this.currentUser.id, role: "listener" }],
+    };
+
+    pretender.post("/resenha/rooms/1/join", () =>
+      joinResponse.promise.then(() =>
+        response({
+          room: JSON.parse(JSON.stringify(staleRoom)),
+        })
+      )
+    );
+
+    const join = this.subject.join(this.room);
+    await wait(10);
+
+    this.rooms.emit(1, {
+      type: "participants",
+      participants: [
+        { id: this.currentUser.id, role: "listener" },
+        { id: 2, role: "speaker" },
+        { id: 30, role: "speaker" },
+      ],
+    });
+
+    joinResponse.resolve();
+    await join;
+    await wait(10);
+
+    assert.strictEqual(
+      FakeRTCPeerConnection.created,
+      2,
+      "creates peers for participants that joined while the room was still connecting"
+    );
+  });
 });

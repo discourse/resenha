@@ -351,9 +351,13 @@ export default class ResenhaWebrtcService extends Service {
     this.#startHeartbeat(room.id);
     this.#idleTracker.start();
 
-    if (response?.room?.active_participants) {
+    const latestParticipants =
+      this.resenhaRooms?.roomById(room.id)?.active_participants ||
+      response?.room?.active_participants;
+
+    if (latestParticipants) {
       await this.#handleParticipants(room.id, {
-        participants: response.room.active_participants,
+        participants: latestParticipants,
       });
     }
 
