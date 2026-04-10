@@ -41,10 +41,20 @@ export default class SignalingManager {
 
   #isActiveRoom;
   #hasPeer;
+  #requestSignals;
 
-  constructor({ isActiveRoom, hasPeer }) {
+  constructor({
+    isActiveRoom,
+    hasPeer,
+    requestSignals = (roomId, payload) =>
+      ajax(`/resenha/rooms/${roomId}/signal`, {
+        type: "POST",
+        data: { payload },
+      }),
+  }) {
     this.#isActiveRoom = isActiveRoom;
     this.#hasPeer = hasPeer;
+    this.#requestSignals = requestSignals;
   }
 
   async send(roomId, recipientId, payload) {
@@ -66,6 +76,11 @@ export default class SignalingManager {
     }
 
     await this.flushQueued(roomId, recipientId);
+
+    if (!this.#isActiveRoom(roomId) || !this.#hasPeer(roomId, recipientId)) {
+      return;
+    }
+
     await this.#postSignals(roomId, recipientId, [payload]);
   }
 
@@ -115,6 +130,10 @@ export default class SignalingManager {
       this.#signalFlushTimers.delete(key);
     }
 
+    if (!this.#isActiveRoom(roomId) || !this.#hasPeer(roomId, recipientId)) {
+      return;
+    }
+
     await this.#postSignals(roomId, recipientId, queue);
   }
 
@@ -152,7 +171,7 @@ export default class SignalingManager {
     }
 
     const promise = new Promise((resolve, reject) => {
-      entry.pending.push({ resolve, reject });
+      entry.pending.push({ recipientId, resolve, reject });
     });
 
     this.#scheduleHttpFlush(roomId);
@@ -184,21 +203,29 @@ export default class SignalingManager {
 
     if (!this.#isActiveRoom(roomId)) {
       entry.recipients?.clear?.();
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
+      this.#settlePending(entry.pending.splice(0), "resolve");
       this.#httpSignalQueues.delete(roomId);
       return;
     }
 
     const roomQueue = entry.recipients;
+    const pending = entry.pending;
+    entry.recipients = new Map();
+    entry.pending = [];
+
     if (!roomQueue?.size) {
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
+      this.#settlePending(pending, "resolve");
+      if (!entry.recipients.size && !entry.pending.length) {
+        this.#httpSignalQueues.delete(roomId);
+      }
       return;
     }
 
     const messages = [];
+    const activeRecipientIds = new Set();
 
     roomQueue.forEach((events, recipientId) => {
-      if (!events?.length) {
+      if (!events?.length || !this.#hasPeer(roomId, recipientId)) {
         return;
       }
 
@@ -206,12 +233,20 @@ export default class SignalingManager {
         recipient_id: recipientId,
         events,
       });
+      activeRecipientIds.add(recipientId);
     });
 
-    roomQueue.clear();
+    const [batchPending, droppedPending] = this.#partitionPending(
+      pending,
+      activeRecipientIds
+    );
+    this.#settlePending(droppedPending, "resolve");
 
     if (!messages.length) {
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
+      this.#settlePending(batchPending, "resolve");
+      if (!entry.recipients.size && !entry.pending.length) {
+        this.#httpSignalQueues.delete(roomId);
+      }
       return;
     }
 
@@ -223,15 +258,16 @@ export default class SignalingManager {
     );
 
     try {
-      await ajax(`/resenha/rooms/${roomId}/signal`, {
-        type: "POST",
-        data: { payload },
-      });
+      await this.#requestSignals(roomId, payload);
 
-      entry.pending.splice(0).forEach((pending) => pending.resolve?.());
+      this.#settlePending(batchPending, "resolve");
     } catch (error) {
-      entry.pending.splice(0).forEach((pending) => pending.reject?.(error));
+      this.#settlePending(batchPending, "reject", error);
       throw error;
+    } finally {
+      if (!entry.recipients.size && !entry.pending.length) {
+        this.#httpSignalQueues.delete(roomId);
+      }
     }
   }
 
@@ -245,6 +281,26 @@ export default class SignalingManager {
     }
 
     this.#signalQueues.delete(key);
+
+    const entry = this.#httpSignalQueues.get(roomId);
+    if (!entry) {
+      return;
+    }
+
+    entry.recipients?.delete?.(recipientId);
+
+    const [clearedPending, retainedPending] = this.#partitionPending(
+      entry.pending,
+      new Set(),
+      recipientId
+    );
+
+    entry.pending = retainedPending;
+    this.#settlePending(clearedPending, "resolve");
+
+    if (!entry.recipients.size && !entry.pending.length) {
+      this.#httpSignalQueues.delete(roomId);
+    }
   }
 
   clearForRoom(roomId) {
@@ -279,7 +335,7 @@ export default class SignalingManager {
     }
 
     entry.recipients?.clear?.();
-    entry.pending?.forEach((pending) => pending.resolve?.());
+    this.#settlePending(entry.pending || [], "resolve");
     entry.pending = [];
     this.#httpSignalQueues.delete(roomId);
   }
@@ -290,9 +346,39 @@ export default class SignalingManager {
     this.#httpSignalFlushTimers.forEach((timer) => clearTimeout(timer));
     this.#httpSignalFlushTimers.clear();
     this.#httpSignalQueues.forEach((entry) => {
-      entry?.pending?.forEach((pending) => pending.resolve?.());
+      this.#settlePending(entry?.pending || [], "resolve");
     });
     this.#httpSignalQueues.clear();
     this.#signalQueues.clear();
+  }
+
+  #partitionPending(pending, allowedRecipientIds, clearedRecipientId = null) {
+    const batchPending = [];
+    const retainedPending = [];
+
+    for (const entry of pending || []) {
+      if (clearedRecipientId !== null) {
+        if (entry.recipientId === clearedRecipientId) {
+          batchPending.push(entry);
+        } else {
+          retainedPending.push(entry);
+        }
+        continue;
+      }
+
+      if (allowedRecipientIds.has(entry.recipientId)) {
+        batchPending.push(entry);
+      } else {
+        retainedPending.push(entry);
+      }
+    }
+
+    return [batchPending, retainedPending];
+  }
+
+  #settlePending(pending, action, error = null) {
+    for (const entry of pending || []) {
+      entry?.[action]?.(error);
+    }
   }
 }
