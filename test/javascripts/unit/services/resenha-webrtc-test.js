@@ -370,4 +370,45 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       "creates peers for participants only present in the fresher join response"
     );
   });
+
+  test("kicked while connecting cancels the pending join", async function (assert) {
+    assert.timeout(2000);
+
+    const joinResponse = deferred();
+
+    pretender.post("/resenha/rooms/1/join", () =>
+      joinResponse.promise.then(() =>
+        response({
+          room: JSON.parse(JSON.stringify(this.room)),
+        })
+      )
+    );
+
+    const join = this.subject.join(this.room);
+    await wait(10);
+
+    this.rooms.emit(1, { type: "kicked" });
+    await wait(10);
+
+    assert.strictEqual(
+      this.subject.connectionStateFor(1),
+      "idle",
+      "drops back to idle immediately after the kick"
+    );
+
+    joinResponse.resolve();
+    await join;
+    await wait(10);
+
+    assert.strictEqual(
+      this.subject.connectionStateFor(1),
+      "idle",
+      "stays idle after the late join response arrives"
+    );
+    assert.strictEqual(
+      FakeRTCPeerConnection.created,
+      0,
+      "does not create peers after a connect-time kick"
+    );
+  });
 });

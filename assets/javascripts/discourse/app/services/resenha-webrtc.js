@@ -766,6 +766,11 @@ export default class ResenhaWebrtcService extends Service {
           roomId,
           payload.participants || []
         );
+      } else if (
+        payload.type === "kicked" &&
+        this.#connectingRoomIds.has(roomId)
+      ) {
+        this.#handleKicked(roomId);
       }
       return;
     }
