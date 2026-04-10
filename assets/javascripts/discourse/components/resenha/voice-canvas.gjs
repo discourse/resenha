@@ -1,6 +1,7 @@
 import Component from "@glimmer/component";
 import { fn } from "@ember/helper";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
+import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { service } from "@ember/service";
 
 export default class ResenhaVoiceCanvas extends Component {
@@ -19,6 +20,10 @@ export default class ResenhaVoiceCanvas extends Component {
       {{#if this.localStream}}
         <audio
           {{didInsert (fn this.resenhaWebrtc.attachStream this.localStream)}}
+          {{didUpdate
+            (fn this.resenhaWebrtc.attachStream this.localStream)
+            this.localStream
+          }}
           autoplay
           muted
           playsinline
@@ -28,6 +33,7 @@ export default class ResenhaVoiceCanvas extends Component {
       {{#each this.remoteStreams key="id" as |stream|}}
         <audio
           {{didInsert (fn this.resenhaWebrtc.attachStream stream)}}
+          {{didUpdate (fn this.resenhaWebrtc.attachStream stream) stream}}
           autoplay
           playsinline
         />
