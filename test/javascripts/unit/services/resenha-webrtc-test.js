@@ -145,6 +145,18 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, resolve, reject };
+}
+
 module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
   setupTest(hooks);
 
@@ -244,6 +256,52 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       FakeRTCPeerConnection.created,
       1,
       "does not recreate a peer from a delayed signal after the participant left"
+    );
+  });
+
+  test("leave cancels a pending join before the late response can activate the room", async function (assert) {
+    assert.timeout(2000);
+
+    const joinResponse = deferred();
+
+    pretender.post("/resenha/rooms/1/join", () =>
+      joinResponse.promise.then(() =>
+        response({
+          room: JSON.parse(JSON.stringify(this.room)),
+        })
+      )
+    );
+
+    const join = this.subject.join(this.room);
+    await wait(10);
+
+    assert.strictEqual(
+      this.subject.connectionStateFor(1),
+      "connecting",
+      "marks the room as connecting while the join is pending"
+    );
+
+    this.subject.leave({ id: 1 }, { keepLocalStream: true });
+
+    assert.strictEqual(
+      this.subject.connectionStateFor(1),
+      "idle",
+      "returns to idle immediately after leaving"
+    );
+
+    joinResponse.resolve();
+    await join;
+    await wait(10);
+
+    assert.strictEqual(
+      this.subject.connectionStateFor(1),
+      "idle",
+      "keeps the room idle after the late join response arrives"
+    );
+    assert.strictEqual(
+      FakeRTCPeerConnection.created,
+      0,
+      "does not create peers for a canceled join"
     );
   });
 });

@@ -130,6 +130,7 @@ export default class ResenhaWebrtcService extends Service {
   willDestroy() {
     super.willDestroy(...arguments);
 
+    this.#joinRevision++;
     this.#pttManager.destroy();
     this.#idleTracker.stop();
     this.#audioMonitor.destroyAll();
@@ -372,7 +373,12 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     const keepLocalStream = options.keepLocalStream === true;
+    const wasConnecting = this.#connectingRoomIds.has(room.id);
     const wasConnected = this.#activeRoomIds.has(room.id);
+
+    if (wasConnecting) {
+      this.#joinRevision++;
+    }
 
     this.#pttManager.resetActive();
     this.pttActive = false;
