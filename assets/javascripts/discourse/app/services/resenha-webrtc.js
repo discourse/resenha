@@ -844,8 +844,6 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (data.type === "offer") {
-      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
-
       if (pc.signalingState === "have-local-offer") {
         if (this.currentUser?.id < remoteUserId) {
           // eslint-disable-next-line no-console
@@ -883,8 +881,6 @@ export default class ResenhaWebrtcService extends Service {
         );
       }
     } else if (data.type === "answer") {
-      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
-
       if (pc.signalingState !== "have-local-offer") {
         // eslint-disable-next-line no-console
         console.warn(
@@ -908,8 +904,6 @@ export default class ResenhaWebrtcService extends Service {
         );
       }
     } else if (data.type === "candidate") {
-      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
-
       if (!pc.remoteDescription) {
         this.#peerManager.queuePendingCandidate(
           roomId,
