@@ -1138,11 +1138,7 @@ export default class ResenhaWebrtcService extends Service {
 
   async #createAndOfferPeer(roomId, remoteUserId) {
     await this.#peerManager.create(roomId, remoteUserId);
-    if (this.currentUser?.id <= remoteUserId) {
-      await this.#peerManager.initiateOffer(roomId, remoteUserId);
-    } else {
-      this.#peerManager.scheduleOfferRetry(roomId, remoteUserId);
-    }
+    await this.#peerManager.initiateOffer(roomId, remoteUserId);
   }
 
   #shouldMaintainPeerConnection(roomId, remoteUserId) {
