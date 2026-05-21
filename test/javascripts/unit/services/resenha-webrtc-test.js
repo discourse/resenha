@@ -134,7 +134,10 @@ class FakeRTCPeerConnection {
 
     if (description?.type === "offer") {
       this.signalingState = "have-local-offer";
-    } else if (description?.type === "rollback") {
+    } else if (
+      description?.type === "answer" ||
+      description?.type === "rollback"
+    ) {
       this.signalingState = "stable";
     }
   }
@@ -158,6 +161,27 @@ class FakeRTCPeerConnection {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitUntil(callback, timeout = 500) {
+  const startedAt = Date.now();
+
+  while (!callback()) {
+    if (Date.now() - startedAt > timeout) {
+      throw new Error("Timed out waiting for condition");
+    }
+    await wait(10);
+  }
+}
+
+function signalPayloadFrom(request) {
+  const params = new URLSearchParams(request.requestBody);
+
+  return {
+    recipientId: Number(params.get("payload[recipient_id]")),
+    type: params.get("payload[type]"),
+    sdp: params.get("payload[sdp]"),
+  };
 }
 
 function deferred() {
@@ -593,6 +617,111 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       1,
       "sends an answer immediately after join instead of waiting for the fallback retry"
     );
+  });
+
+  test("join sends an immediate offer to lower-id peers instead of waiting for retry fallback", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+
+    this.currentUser.id = 50;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(signalPayloadFrom(request));
+      return response({});
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await waitUntil(() => signalRequests.length === 1);
+
+      assert.deepEqual(
+        signalRequests[0],
+        { recipientId: 2, type: "offer", sdp: "fake-offer" },
+        "sends an offer immediately even when the current user id is higher than the peer id"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("simultaneous join offers resolve glare by rolling back the lower user id side", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+
+    this.currentUser.id = 2;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 50, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(signalPayloadFrom(request));
+      return response({});
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await waitUntil(() => signalRequests.length === 1);
+
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 50,
+        data: { type: "offer", sdp: "simultaneous-offer" },
+      });
+      await waitUntil(() => signalRequests.length === 2);
+
+      const pc = FakeRTCPeerConnection.instances[0];
+      assert.deepEqual(
+        signalRequests[0],
+        { recipientId: 50, type: "offer", sdp: "fake-offer" },
+        "sends the initial offer before receiving the competing offer"
+      );
+      assert.deepEqual(
+        signalRequests[1],
+        { recipientId: 50, type: "answer", sdp: "fake-answer" },
+        "answers the competing offer after rollback"
+      );
+      assert.strictEqual(
+        pc.remoteDescription.sdp,
+        "simultaneous-offer",
+        "accepts the competing offer after rolling back local offer"
+      );
+      assert.strictEqual(
+        pc.localDescription.type,
+        "answer",
+        "finishes glare resolution with an answer"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
   });
 
   test("inbound recovery signals cancel a pending peer restart", async function (assert) {

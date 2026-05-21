@@ -1,6 +1,5 @@
 export default class PeerManager {
   static #maxRestartAttempts = 5;
-  static #maxOfferRetries = 3;
   static #connectionTimeoutMs = 30000;
 
   static peerKey(roomId, userId) {
@@ -8,8 +7,6 @@ export default class PeerManager {
   }
 
   #peerConnections = new Map();
-  #offerRetryTimers = new Map();
-  #offerRetryAttempts = new Map();
   #peerReconnectTimers = new Map();
   #restartAttempts = new Map();
   #connectionTimeouts = new Map();
@@ -133,14 +130,12 @@ export default class PeerManager {
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected") {
-        this.#clearOfferRetry(roomId, remoteUserId);
         this.#clearPeerRestart(roomId, remoteUserId);
         this.#clearConnectionTimeout(roomId, remoteUserId);
         return;
       }
 
       if (pc.connectionState === "failed") {
-        this.#clearOfferRetry(roomId, remoteUserId);
         this.#clearConnectionTimeout(roomId, remoteUserId);
         this.#schedulePeerRestart(roomId, remoteUserId, { immediate: true });
         return;
@@ -196,7 +191,6 @@ export default class PeerManager {
       peers.delete(remoteUserId);
     }
 
-    this.#clearOfferRetry(roomId, remoteUserId);
     if (resetRestartAttempts) {
       this.#clearPeerRestart(roomId, remoteUserId);
     } else {
@@ -222,7 +216,18 @@ export default class PeerManager {
     const peers = this.#peerConnections.get(roomId);
     const pc = peers?.get(remoteUserId);
 
-    if (!pc || pc.signalingState !== "stable") {
+    if (!pc) {
+      return;
+    }
+
+    if (pc.signalingState !== "stable") {
+      // An inbound offer/answer is already mid-flight on this peer; the
+      // inbound handler will drive negotiation. The connection timeout in
+      // #startConnectionTimeout is the safety net if it stalls.
+      // eslint-disable-next-line no-console
+      console.log(
+        `[resenha] skipping offer for user ${remoteUserId}: signalingState=${pc.signalingState}`
+      );
       return;
     }
 
@@ -237,43 +242,6 @@ export default class PeerManager {
       // eslint-disable-next-line no-console
       console.warn("[resenha] failed to create offer", error);
     }
-  }
-
-  scheduleOfferRetry(roomId, remoteUserId, delay = 2000) {
-    const key = PeerManager.peerKey(roomId, remoteUserId);
-
-    if (this.#offerRetryTimers.has(key)) {
-      return;
-    }
-
-    const attempts = this.#offerRetryAttempts.get(key) || 0;
-
-    if (attempts >= PeerManager.#maxOfferRetries) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[resenha] max offer retries (${PeerManager.#maxOfferRetries}) reached for user ${remoteUserId}`
-      );
-      return;
-    }
-
-    const actualDelay = delay * Math.pow(2, attempts);
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] scheduling offer retry for user ${remoteUserId} (attempt ${attempts + 1}/${PeerManager.#maxOfferRetries}, delay ${actualDelay}ms)`
-    );
-
-    const timer = setTimeout(async () => {
-      this.#offerRetryTimers.delete(key);
-      this.#offerRetryAttempts.set(key, attempts + 1);
-      await this.initiateOffer(roomId, remoteUserId);
-    }, actualDelay);
-
-    this.#offerRetryTimers.set(key, timer);
-  }
-
-  clearOfferRetry(roomId, remoteUserId) {
-    this.#clearOfferRetry(roomId, remoteUserId);
   }
 
   clearPeerRestart(roomId, remoteUserId) {
@@ -346,9 +314,6 @@ export default class PeerManager {
 
     this.#peerReconnectTimers.forEach((timer) => clearTimeout(timer));
     this.#peerReconnectTimers.clear();
-    this.#offerRetryTimers.forEach((timer) => clearTimeout(timer));
-    this.#offerRetryTimers.clear();
-    this.#offerRetryAttempts.clear();
     this.#restartAttempts.clear();
     this.#connectionTimeouts.forEach((timer) => clearTimeout(timer));
     this.#connectionTimeouts.clear();
@@ -390,18 +355,6 @@ export default class PeerManager {
       clearTimeout(timer);
       this.#connectionTimeouts.delete(key);
     }
-  }
-
-  #clearOfferRetry(roomId, remoteUserId) {
-    const key = PeerManager.peerKey(roomId, remoteUserId);
-    const timer = this.#offerRetryTimers.get(key);
-
-    if (timer) {
-      clearTimeout(timer);
-      this.#offerRetryTimers.delete(key);
-    }
-
-    this.#offerRetryAttempts.delete(key);
   }
 
   #schedulePeerRestart(roomId, remoteUserId, options = {}) {
