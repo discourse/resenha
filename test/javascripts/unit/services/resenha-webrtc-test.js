@@ -184,6 +184,48 @@ function signalPayloadFrom(request) {
   };
 }
 
+// Flattens a signal POST into individual { recipientId, type, sdp } entries,
+// tolerating the three payload shapes the signaling layer emits: a single
+// event, a single recipient with multiple coalesced events, and multiple
+// recipients. Use when signals to the same peer may land in one HTTP batch.
+function signalsFrom(request) {
+  const params = new URLSearchParams(request.requestBody);
+  const get = (key) => params.get(key);
+
+  if (get("payload[messages][0][recipient_id]")) {
+    const signals = [];
+    for (let m = 0; get(`payload[messages][${m}][recipient_id]`); m++) {
+      const recipientId = Number(get(`payload[messages][${m}][recipient_id]`));
+      for (let e = 0; get(`payload[messages][${m}][events][${e}][type]`); e++) {
+        signals.push({
+          recipientId,
+          type: get(`payload[messages][${m}][events][${e}][type]`),
+          sdp: get(`payload[messages][${m}][events][${e}][sdp]`),
+        });
+      }
+    }
+    return signals;
+  }
+
+  const recipientId = Number(get("payload[recipient_id]"));
+
+  if (get("payload[events][0][type]")) {
+    const signals = [];
+    for (let e = 0; get(`payload[events][${e}][type]`); e++) {
+      signals.push({
+        recipientId,
+        type: get(`payload[events][${e}][type]`),
+        sdp: get(`payload[events][${e}][sdp]`),
+      });
+    }
+    return signals;
+  }
+
+  return [
+    { recipientId, type: get("payload[type]"), sdp: get("payload[sdp]") },
+  ];
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -619,7 +661,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     );
   });
 
-  test("join sends an immediate offer to lower-id peers instead of waiting for retry fallback", async function (assert) {
+  test("join offers deterministically based on user id to avoid glare", async function (assert) {
     assert.timeout(2000);
 
     const rawTrack = createFakeTrack("raw-track");
@@ -633,6 +675,10 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     });
     const signalRequests = [];
 
+    // Current user id is higher than the existing peer's, so it must NOT
+    // offer immediately (that is what caused glare); the lower-id peer owns
+    // the immediate offer. A short fallback offer fires only if the peer
+    // never offers.
     this.currentUser.id = 50;
     this.room.room_type = "open";
     this.room.membership.role_name = "participant";
@@ -648,12 +694,20 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
     try {
       await this.subject.join(this.room);
-      await waitUntil(() => signalRequests.length === 1);
+      await wait(50);
+
+      assert.strictEqual(
+        signalRequests.length,
+        0,
+        "does not send an immediate offer when the current user id is higher than the peer id"
+      );
+
+      await waitUntil(() => signalRequests.length === 1, 1500);
 
       assert.deepEqual(
         signalRequests[0],
         { recipientId: 2, type: "offer", sdp: "fake-offer" },
-        "sends an offer immediately even when the current user id is higher than the peer id"
+        "sends a fallback offer to the lower-id peer after the short retry delay"
       );
     } finally {
       audioEnvironment.restore();
@@ -718,6 +772,318 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
         pc.localDescription.type,
         "answer",
         "finishes glare resolution with an answer"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("higher-id peer joining a populated room connects to the lower-id peer without glare", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+
+    // The reported regression: a new participant whose id is higher than an
+    // already-connected peer's joins the room. With the deterministic
+    // offerer the joiner does not offer; it answers the lower-id peer and
+    // ends up connected with that peer's audio, without waiting for the 30s
+    // connection timeout.
+    this.currentUser.id = 50;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(signalPayloadFrom(request));
+      return response({});
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      assert.strictEqual(
+        signalRequests.length,
+        0,
+        "does not send a competing offer that would collide with the peer's"
+      );
+
+      const pc = FakeRTCPeerConnection.instances[0];
+
+      // The lower-id peer owns the immediate offer.
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 2,
+        data: { type: "offer", sdp: "peer-offer" },
+      });
+      await waitUntil(() => signalRequests.length === 1, 1500);
+
+      assert.deepEqual(
+        signalRequests[0],
+        { recipientId: 2, type: "answer", sdp: "fake-answer" },
+        "answers the lower-id peer's offer instead of racing it with its own"
+      );
+      assert.strictEqual(
+        pc.signalingState,
+        "stable",
+        "negotiation completes without leaving a dangling local offer"
+      );
+
+      // The peer's audio track arrives and is exposed to the room.
+      const remoteTrack = createFakeTrack("peer-2-track");
+      const remoteStream = createFakeStream("peer-2-stream", remoteTrack);
+      pc.ontrack({ streams: [remoteStream], track: remoteTrack });
+      await wait(10);
+
+      assert.true(
+        this.subject
+          .remoteStreamsFor(1)
+          .some((stream) => stream.id === "peer-2-stream"),
+        "exposes the peer's audio stream after negotiation completes"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("slow mic, lower-id local user: offer queued during the permission prompt connects via rollback", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+    const micGranted = deferred();
+    navigator.mediaDevices.getUserMedia = () =>
+      micGranted.promise.then(() => rawStream);
+
+    // Local user is the designated (lower-id) offerer, but is slow to grant
+    // mic access. The higher-id peer's fallback offer arrives while the
+    // permission prompt is still open. The immediate offer and the rollback
+    // answer to the same peer can land in one HTTP batch, so flatten them.
+    this.currentUser.id = 2;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 50, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(...signalsFrom(request));
+      return response({});
+    });
+
+    try {
+      const join = this.subject.join(this.room);
+      await wait(20);
+
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 50,
+        data: { type: "offer", sdp: "peer-offer" },
+      });
+      await wait(20);
+
+      assert.strictEqual(
+        FakeRTCPeerConnection.created,
+        0,
+        "does not create peers or signal before microphone permission is granted"
+      );
+      assert.strictEqual(
+        signalRequests.length,
+        0,
+        "queues the inbound offer instead of acting on it while connecting"
+      );
+
+      micGranted.resolve();
+      await join;
+      await waitUntil(() => signalRequests.length === 2, 1000);
+
+      const pc = FakeRTCPeerConnection.instances[0];
+      assert.deepEqual(
+        signalRequests,
+        [
+          { recipientId: 50, type: "offer", sdp: "fake-offer" },
+          { recipientId: 50, type: "answer", sdp: "fake-answer" },
+        ],
+        "offers immediately on grant, then rolls back and answers the queued offer"
+      );
+      assert.strictEqual(
+        pc.signalingState,
+        "stable",
+        "ends negotiation in a stable state, not stuck on a dangling offer"
+      );
+
+      const remoteTrack = createFakeTrack("peer-50-track");
+      const remoteStream = createFakeStream("peer-50-stream", remoteTrack);
+      pc.ontrack({ streams: [remoteStream], track: remoteTrack });
+      await wait(10);
+
+      assert.true(
+        this.subject
+          .remoteStreamsFor(1)
+          .some((stream) => stream.id === "peer-50-stream"),
+        "exposes the peer's audio after a slow-permission join"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("slow mic, higher-id local user: queued offer is answered on grant without a competing offer", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+    const micGranted = deferred();
+    navigator.mediaDevices.getUserMedia = () =>
+      micGranted.promise.then(() => rawStream);
+
+    // Local user is higher-id, so the lower-id peer owns the offer. That
+    // offer lands while the mic prompt is open; on grant the local user
+    // must answer it rather than racing it with a fallback offer.
+    this.currentUser.id = 50;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(signalPayloadFrom(request));
+      return response({});
+    });
+
+    try {
+      const join = this.subject.join(this.room);
+      await wait(20);
+
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 2,
+        data: { type: "offer", sdp: "peer-offer" },
+      });
+      await wait(20);
+
+      micGranted.resolve();
+      await join;
+      await waitUntil(() => signalRequests.length === 1, 1000);
+      // Wait past the fallback delay to prove no late competing offer fires.
+      await wait(500);
+
+      const pc = FakeRTCPeerConnection.instances[0];
+      assert.deepEqual(
+        signalRequests,
+        [{ recipientId: 2, type: "answer", sdp: "fake-answer" }],
+        "answers the queued offer and never sends a competing fallback offer"
+      );
+      assert.strictEqual(
+        pc.signalingState,
+        "stable",
+        "ends negotiation in a stable state"
+      );
+
+      const remoteTrack = createFakeTrack("peer-2-track");
+      const remoteStream = createFakeStream("peer-2-stream", remoteTrack);
+      pc.ontrack({ streams: [remoteStream], track: remoteTrack });
+      await wait(10);
+
+      assert.true(
+        this.subject
+          .remoteStreamsFor(1)
+          .some((stream) => stream.id === "peer-2-stream"),
+        "exposes the peer's audio after a slow-permission join"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("join with both a lower- and higher-id peer only offers to the higher-id one", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+
+    // Local id sits between the two peers: it owns the offer to the
+    // higher-id peer (99) and waits for the lower-id peer (2) to offer.
+    this.currentUser.id = 10;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant" },
+      { id: 99, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(signalPayloadFrom(request));
+      return response({});
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await waitUntil(() => signalRequests.length === 1, 1000);
+
+      assert.deepEqual(
+        signalRequests,
+        [{ recipientId: 99, type: "offer", sdp: "fake-offer" }],
+        "offers immediately only to the higher-id peer, not the lower-id one"
+      );
+
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 2,
+        data: { type: "offer", sdp: "peer-offer" },
+      });
+      await waitUntil(() => signalRequests.length === 2, 1000);
+
+      assert.deepEqual(
+        signalRequests[1],
+        { recipientId: 2, type: "answer", sdp: "fake-answer" },
+        "answers the lower-id peer when its offer arrives"
+      );
+      assert.false(
+        signalRequests.some(
+          (request) => request.recipientId === 2 && request.type === "offer"
+        ),
+        "never sends a competing offer to the lower-id peer"
       );
     } finally {
       audioEnvironment.restore();
