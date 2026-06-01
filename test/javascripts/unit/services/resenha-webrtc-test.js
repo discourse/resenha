@@ -100,7 +100,7 @@ class FakeRTCPeerConnection {
 
   addedCandidates = [];
 
-constructor() {
+  constructor() {
     FakeRTCPeerConnection.created++;
     FakeRTCPeerConnection.instances.push(this);
   }
@@ -153,8 +153,6 @@ constructor() {
       this.signalingState = "stable";
     }
   }
-
-
 
   async addIceCandidate(candidate) {
     this.addedCandidates.push(candidate);
@@ -1229,6 +1227,71 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
         pc.addedCandidates[0].candidate,
         candidate.candidate,
         "applies the candidate that arrived before the offer"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("recreates the peer when the remote restarts ICE after a rejoin", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+
+    // Local user is higher-id, so it answers the peer rather than offering.
+    this.currentUser.id = 50;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", () => response({}));
+
+    const offer = (ufrag) => ({
+      type: "offer",
+      sdp: `v=0\r\na=ice-ufrag:${ufrag}\r\na=ice-pwd:secret\r\n`,
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await wait(20);
+
+      this.rooms.emit(1, { type: "signal", sender_id: 2, data: offer("AAAA") });
+      await wait(20);
+      assert.strictEqual(
+        FakeRTCPeerConnection.created,
+        1,
+        "creates a single peer for the initial offer"
+      );
+
+      // A resent offer with the same ICE ufrag is not a restart; keep the peer.
+      this.rooms.emit(1, { type: "signal", sender_id: 2, data: offer("AAAA") });
+      await wait(20);
+      assert.strictEqual(
+        FakeRTCPeerConnection.created,
+        1,
+        "does not recreate the peer when the ICE ufrag is unchanged"
+      );
+
+      // A fresh offer with a NEW ufrag means the peer left and rejoined; the
+      // stale transport can't recover, so the peer must be rebuilt.
+      this.rooms.emit(1, { type: "signal", sender_id: 2, data: offer("BBBB") });
+      await waitUntil(() => FakeRTCPeerConnection.created === 2, 1000);
+
+      const freshPc = FakeRTCPeerConnection.instances.at(-1);
+      assert.true(
+        freshPc.remoteDescription.sdp.includes("ice-ufrag:BBBB"),
+        "applies the restarted offer on the freshly created peer"
       );
     } finally {
       audioEnvironment.restore();

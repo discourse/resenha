@@ -846,7 +846,7 @@ export default class ResenhaWebrtcService extends Service {
     console.log(
       `[resenha] 📥 received ${data.type} from user ${remoteUserId} in room ${roomId}`
     );
-    const pc = await this.#peerManager.create(roomId, remoteUserId);
+    let pc = await this.#peerManager.create(roomId, remoteUserId);
 
     if (!this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
       this.#peerManager.destroy(roomId, remoteUserId);
@@ -855,6 +855,26 @@ export default class ResenhaWebrtcService extends Service {
 
     if (data.type === "offer") {
       this.#peerManager.clearOfferRetry(roomId, remoteUserId);
+
+      // If the remote restarted its ICE session — it left and rejoined, so its
+      // offer carries fresh ICE credentials — renegotiating on the old, dead
+      // transport won't recover. Tear the stale peer down and rebuild it so ICE
+      // starts clean. Detected by a changed ice-ufrag vs our current remote
+      // description; a merely resent offer keeps the same ufrag and is left
+      // alone. Skip while mid-glare (have-local-offer), which the block below
+      // already resolves.
+      if (pc.signalingState !== "have-local-offer") {
+        const priorUfrag = this.#iceUfrag(pc.remoteDescription?.sdp);
+        const incomingUfrag = this.#iceUfrag(data.sdp);
+        if (priorUfrag && incomingUfrag && priorUfrag !== incomingUfrag) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[resenha] remote ICE restart from user ${remoteUserId}; recreating peer`
+          );
+          this.#peerManager.destroy(roomId, remoteUserId);
+          pc = await this.#peerManager.create(roomId, remoteUserId);
+        }
+      }
 
       if (pc.signalingState === "have-local-offer") {
         if (this.currentUser?.id < remoteUserId) {
@@ -1208,6 +1228,14 @@ export default class ResenhaWebrtcService extends Service {
       return true;
     }
     return signalType === "offer" && this.#canEngageEarlyOffer(roomId);
+  }
+
+  // Extract the ICE username fragment from an SDP. A new value vs the prior
+  // remote description signals the peer restarted its ICE session (e.g. left
+  // and rejoined), which needs a fresh peer rather than a renegotiation.
+  #iceUfrag(sdp) {
+    const match = sdp?.match(/^a=ice-ufrag:(\S+)/m);
+    return match ? match[1] : null;
   }
 
   #reconnectAllPeers(roomId) {

@@ -133,6 +133,10 @@ export default class PeerManager {
     };
 
     pc.onconnectionstatechange = () => {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[resenha] connectionState ${pc.connectionState} for user ${remoteUserId}`
+      );
       if (pc.connectionState === "connected") {
         this.#clearOfferRetry(roomId, remoteUserId);
         this.#clearPeerRestart(roomId, remoteUserId);
@@ -158,6 +162,10 @@ export default class PeerManager {
     };
 
     pc.oniceconnectionstatechange = () => {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[resenha] iceConnectionState ${pc.iceConnectionState} for user ${remoteUserId}`
+      );
       if (pc.iceConnectionState === "failed") {
         this.#schedulePeerRestart(roomId, remoteUserId, { immediate: true });
       } else if (pc.iceConnectionState === "disconnected") {
