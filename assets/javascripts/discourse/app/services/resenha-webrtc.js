@@ -826,9 +826,19 @@ export default class ResenhaWebrtcService extends Service {
     this.#peerManager.clearPeerRestart(roomId, remoteUserId);
 
     const hadPeer = this.#peerManager.has(roomId, remoteUserId);
-    if (!hadPeer && !this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
-      // Ignore delayed targeted signals for participants that already left
-      // or no longer belong in the current room topology.
+    if (!hadPeer && !this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
+      // A candidate can arrive a beat ahead of its offer (the sender gathered
+      // and trickled it before our presence view caught up). Stash it so the
+      // offer can flush it once the peer exists, rather than dropping it.
+      // Anything else is a delayed signal for a participant that already left
+      // or no longer belongs in the current room topology.
+      if (data?.type === "candidate" && this.#canEngageEarlyOffer(roomId)) {
+        this.#peerManager.queuePendingCandidate(
+          roomId,
+          remoteUserId,
+          data.candidate
+        );
+      }
       return;
     }
 
@@ -838,7 +848,7 @@ export default class ResenhaWebrtcService extends Service {
     );
     const pc = await this.#peerManager.create(roomId, remoteUserId);
 
-    if (!this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
+    if (!this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
       this.#peerManager.destroy(roomId, remoteUserId);
       return;
     }
@@ -1172,6 +1182,32 @@ export default class ResenhaWebrtcService extends Service {
       participant.role === "moderator" || participant.role === "speaker";
 
     return iCanSpeak || theyCanSpeak;
+  }
+
+  // A targeted offer is implicit proof the sender shares this room with us:
+  // presence (active_participants) lags behind WebRTC signaling when two peers
+  // join near-simultaneously, so #shouldMaintainPeerConnection can still be
+  // false at the instant the offer arrives. Gating offers on presence silently
+  // drops that legitimate first offer and strands the media connection (the
+  // sender finishes gathering before we ever engage, so its candidates are
+  // never re-sent). Honor early offers in non-stage rooms, where peering does
+  // not depend on the sender's presence-derived speaker role. Stage rooms keep
+  // strict gating for exactly that reason.
+  #canEngageEarlyOffer(roomId) {
+    if (!this.#activeRoomIds.has(roomId)) {
+      return false;
+    }
+    const room = this.resenhaRooms?.roomById(roomId);
+    return !!room && room.room_type !== "stage";
+  }
+
+  // Whether we should set up / keep a peer for a signal of the given type.
+  // Falls back to the implicit-presence rule above for offers.
+  #shouldEngagePeer(roomId, remoteUserId, signalType) {
+    if (this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
+      return true;
+    }
+    return signalType === "offer" && this.#canEngageEarlyOffer(roomId);
   }
 
   #reconnectAllPeers(roomId) {

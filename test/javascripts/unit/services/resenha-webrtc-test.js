@@ -98,7 +98,9 @@ class FakeRTCPeerConnection {
   remoteDescription = null;
   senders = [];
 
-  constructor() {
+  addedCandidates = [];
+
+constructor() {
     FakeRTCPeerConnection.created++;
     FakeRTCPeerConnection.instances.push(this);
   }
@@ -152,7 +154,11 @@ class FakeRTCPeerConnection {
     }
   }
 
-  async addIceCandidate() {}
+
+
+  async addIceCandidate(candidate) {
+    this.addedCandidates.push(candidate);
+  }
 
   close() {
     this.connectionState = "closed";
@@ -1084,6 +1090,145 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
           (request) => request.recipientId === 2 && request.type === "offer"
         ),
         "never sends a competing offer to the lower-id peer"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("honors an early offer from a participant whose presence has not propagated yet", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+
+    // The regression: two peers join near-simultaneously. The other peer
+    // gathers and offers before our presence broadcast lists it, so
+    // active_participants still only contains us when its offer arrives.
+    // Gating on presence used to silently drop that offer and strand the
+    // connection; a targeted offer is implicit proof the sender shares the
+    // room, so we must answer it.
+    this.currentUser.id = 50;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(signalPayloadFrom(request));
+      return response({});
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      assert.strictEqual(
+        signalRequests.length,
+        0,
+        "is alone in the room per presence, so sends nothing on its own"
+      );
+
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 2,
+        data: { type: "offer", sdp: "early-offer" },
+      });
+      await waitUntil(() => signalRequests.length === 1, 1500);
+
+      assert.deepEqual(
+        signalRequests[0],
+        { recipientId: 2, type: "answer", sdp: "fake-answer" },
+        "answers the early offer despite the sender being absent from presence"
+      );
+
+      const pc = FakeRTCPeerConnection.instances[0];
+      assert.strictEqual(
+        pc.remoteDescription.sdp,
+        "early-offer",
+        "applies the early offer as the remote description"
+      );
+      assert.strictEqual(
+        pc.signalingState,
+        "stable",
+        "completes negotiation rather than dropping the offer"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("queues an early ICE candidate that arrives before its offer and applies it once engaged", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+
+    this.currentUser.id = 50;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", () => response({}));
+
+    const candidate = {
+      candidate: "candidate:1 1 UDP 2122252543 127.0.0.1 3478 typ host",
+      sdpMid: "0",
+      sdpMLineIndex: 0,
+    };
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      // A candidate can land a beat ahead of its offer; with no peer yet it
+      // must be stashed, not dropped.
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 2,
+        data: { type: "candidate", candidate },
+      });
+      await wait(20);
+
+      assert.strictEqual(
+        FakeRTCPeerConnection.created,
+        0,
+        "does not create a peer from a lone candidate"
+      );
+
+      // The offer then engages the peer, which flushes the queued candidate.
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 2,
+        data: { type: "offer", sdp: "early-offer" },
+      });
+      await waitUntil(() => FakeRTCPeerConnection.instances.length === 1, 1500);
+
+      const pc = FakeRTCPeerConnection.instances[0];
+      await waitUntil(() => pc.addedCandidates.length === 1, 1000);
+
+      assert.strictEqual(
+        pc.addedCandidates[0].candidate,
+        candidate.candidate,
+        "applies the candidate that arrived before the offer"
       );
     } finally {
       audioEnvironment.restore();
