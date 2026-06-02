@@ -50,6 +50,10 @@ after_initialize do
 
   Guardian.prepend Resenha::GuardianExtension
 
+  # Lets the client decide whether to render the rooms sidebar for anonymous
+  # visitors without exposing the configured group ids.
+  add_to_serializer(:site, :resenha_public_access) { scope.resenha_public_access? }
+
   Resenha::DefaultRoomSeeder.ensure! if SiteSetting.resenha_enabled?
 
   on(:site_setting_changed) do |name, _old_value, new_value|

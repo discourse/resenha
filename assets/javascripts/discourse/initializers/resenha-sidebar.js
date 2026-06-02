@@ -17,8 +17,15 @@ export default {
     withPluginApi((api) => {
       const currentUser = api.getCurrentUser();
       const siteSettings = owner.lookup("service:site-settings");
+      const site = owner.lookup("service:site");
 
-      if (!currentUser || !siteSettings.resenha_enabled) {
+      if (!siteSettings.resenha_enabled) {
+        return;
+      }
+
+      // Anonymous visitors only see the sidebar when Resenha is open to
+      // everyone. They can browse public rooms but are sent to log in on click.
+      if (!currentUser && !site.resenha_public_access) {
         return;
       }
 
@@ -43,7 +50,10 @@ export default {
           }
 
           get hoverValue() {
-            return capabilities.isIpadOS ? null : "ellipsis-vertical";
+            if (!this.currentUser || capabilities.isIpadOS) {
+              return null;
+            }
+            return "ellipsis-vertical";
           }
 
           get hoverTitle() {
@@ -51,7 +61,7 @@ export default {
           }
 
           get hoverAction() {
-            if (capabilities.isIpadOS) {
+            if (!this.currentUser || capabilities.isIpadOS) {
               return noop;
             }
 
@@ -206,7 +216,7 @@ export default {
           }
 
           get #showMenu() {
-            return !capabilities.isIpadOS;
+            return !capabilities.isIpadOS && !!this.currentUser;
           }
 
           get hoverType() {
@@ -497,15 +507,26 @@ export default {
           ".sidebar-section-link[data-link-name^='resenha-participant-']"
         );
 
+        const roomAnchor = findAnchor(
+          ".sidebar-section-link[data-link-name^='resenha-room-']"
+        );
+
+        // Anonymous visitors can browse public rooms but must authenticate to
+        // join, mirroring how replies, likes, etc. prompt for login.
+        if (!currentUser) {
+          if (participantAnchor || roomAnchor) {
+            event.preventDefault();
+            event.stopPropagation();
+            owner.lookup("route:application").send("showLogin");
+          }
+          return;
+        }
+
         if (participantAnchor) {
           event.preventDefault();
           event.stopPropagation();
           return;
         }
-
-        const roomAnchor = findAnchor(
-          ".sidebar-section-link[data-link-name^='resenha-room-']"
-        );
 
         if (!roomAnchor) {
           return;
@@ -551,6 +572,11 @@ export default {
       }
 
       sidebarContextMenuHandler = (event) => {
+        // No management context menus for anonymous visitors.
+        if (!currentUser) {
+          return;
+        }
+
         const findAnchor = (selector) =>
           event
             .composedPath?.()

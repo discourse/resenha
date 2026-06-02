@@ -7,6 +7,7 @@ export default class ResenhaRoomsService extends Service {
   @service currentUser;
   @service messageBus;
   @service siteSettings;
+  @service site;
 
   @tracked rooms = [];
   @tracked canCreateRoom = false;
@@ -18,7 +19,13 @@ export default class ResenhaRoomsService extends Service {
 
   constructor() {
     super(...arguments);
-    if (!this.currentUser || !this.siteSettings.resenha_enabled) {
+    if (!this.siteSettings.resenha_enabled) {
+      return;
+    }
+
+    // Anonymous visitors only bootstrap when Resenha is open to everyone; the
+    // server then returns just the public rooms.
+    if (!this.currentUser && !this.site.resenha_public_access) {
       return;
     }
 

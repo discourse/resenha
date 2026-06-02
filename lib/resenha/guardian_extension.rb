@@ -7,6 +7,14 @@ module Resenha
         user.in_any_groups?(SiteSetting.resenha_allowed_groups_map)
     end
 
+    # Whether Resenha is open to everyone, including anonymous visitors. This is
+    # the case when `resenha_allowed_groups` includes the "everyone" group, and
+    # it lets logged-out users browse (but not join) public rooms.
+    def resenha_public_access?
+      SiteSetting.resenha_enabled? &&
+        SiteSetting.resenha_allowed_groups_map.include?(Group::AUTO_GROUPS[:everyone])
+    end
+
     def can_manage_resenha_rooms?
       return false unless can_access_resenha?
       user.in_any_groups?(SiteSetting.resenha_create_room_allowed_groups_map)
@@ -46,7 +54,12 @@ module Resenha
     end
 
     def can_see_resenha_room?(room)
-      can_join_resenha_room?(room)
+      return false unless room
+      return true if can_join_resenha_room?(room)
+
+      # Anonymous and not-yet-authorized visitors may browse public rooms when
+      # access is open to everyone. Joining still requires authentication.
+      resenha_public_access? && room.public?
     end
 
     def ensure_can_see_resenha_room!(room)

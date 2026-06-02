@@ -2,6 +2,10 @@
 
 module Resenha
   class RoomsController < ApplicationController
+    # Anonymous visitors may browse the directory; the guardian still limits the
+    # listing to public rooms, and only when access is open to everyone.
+    skip_before_action :ensure_logged_in, only: :index
+
     before_action :load_room,
                   only: %i[
                     show

@@ -31,6 +31,29 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(200)
       expect(response.parsed_body["rooms"]).to be_present
     end
+
+    context "when anonymous" do
+      fab!(:private_room) { Fabricate(:resenha_room, creator: staff, public: false) }
+
+      it "returns only public rooms when access is open to everyone" do
+        get "/resenha/rooms.json"
+
+        expect(response.status).to eq(200)
+        room_ids = response.parsed_body["rooms"].map { |r| r["id"] }
+        expect(room_ids).to include(room.id)
+        expect(room_ids).not_to include(private_room.id)
+        expect(response.parsed_body["can_create_room"]).to eq(false)
+      end
+
+      it "returns no rooms when access is restricted to a group" do
+        SiteSetting.resenha_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
+
+        get "/resenha/rooms.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["rooms"]).to be_empty
+      end
+    end
   end
 
   describe "#create" do
