@@ -656,7 +656,10 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
     joinResponse.resolve();
     await join;
-    await wait(50);
+    // Wait past the signaling HTTP batch window (200ms) but below the
+    // ~400ms offer fallback retry, so a single request proves the answer was
+    // sent via the immediate replay rather than the fallback.
+    await wait(300);
 
     assert.strictEqual(
       signalRequests,

@@ -26,6 +26,7 @@ module("Resenha | Unit | Lib | signaling", function () {
     const manager = new SignalingManager({
       isActiveRoom: () => true,
       hasPeer: () => true,
+      httpBatchDelayMs: 5,
       requestSignals: async () => {
         requests++;
       },
@@ -57,6 +58,7 @@ module("Resenha | Unit | Lib | signaling", function () {
     const manager = new SignalingManager({
       isActiveRoom: () => true,
       hasPeer: () => true,
+      httpBatchDelayMs: 5,
       requestSignals: () => {
         const request = deferred();
         requests.push(request);

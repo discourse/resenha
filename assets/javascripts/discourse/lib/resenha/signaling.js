@@ -1,15 +1,15 @@
 import { ajax } from "discourse/lib/ajax";
 
 export default class SignalingManager {
-  static #candidateBatchDelayMs = 75;
-  static #candidateBatchSize = 5;
-  static #httpBatchDelayMs = 25;
+  static #defaultCandidateBatchDelayMs = 75;
+  static #defaultCandidateBatchSize = 5;
+  static #defaultHttpBatchDelayMs = 200;
 
   static peerKey(roomId, userId) {
     return `${roomId}:${userId}`;
   }
 
-  static #buildPayload(messages) {
+static #buildPayload(messages) {
     if (messages.length === 1) {
       const [message] = messages;
 
@@ -34,6 +34,14 @@ export default class SignalingManager {
     };
   }
 
+#candidateBatchDelayMs;
+  #candidateBatchSize;
+  #httpBatchDelayMs;
+
+
+
+
+
   #signalQueues = new Map();
   #signalFlushTimers = new Map();
   #httpSignalQueues = new Map();
@@ -51,10 +59,16 @@ export default class SignalingManager {
         type: "POST",
         data: { payload },
       }),
+    candidateBatchDelayMs = SignalingManager.#defaultCandidateBatchDelayMs,
+    candidateBatchSize = SignalingManager.#defaultCandidateBatchSize,
+    httpBatchDelayMs = SignalingManager.#defaultHttpBatchDelayMs,
   }) {
     this.#isActiveRoom = isActiveRoom;
     this.#hasPeer = hasPeer;
     this.#requestSignals = requestSignals;
+    this.#candidateBatchDelayMs = candidateBatchDelayMs;
+    this.#candidateBatchSize = candidateBatchSize;
+    this.#httpBatchDelayMs = httpBatchDelayMs;
   }
 
   async send(roomId, recipientId, payload) {
@@ -90,7 +104,7 @@ export default class SignalingManager {
     queue.push(payload);
     this.#signalQueues.set(key, queue);
 
-    if (queue.length >= SignalingManager.#candidateBatchSize) {
+    if (queue.length >= this.#candidateBatchSize) {
       this.flushQueued(roomId, recipientId).catch((error) => {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to flush signal queue", error);
@@ -109,7 +123,7 @@ export default class SignalingManager {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to flush signal queue", error);
       });
-    }, SignalingManager.#candidateBatchDelayMs);
+    }, this.#candidateBatchDelayMs);
 
     this.#signalFlushTimers.set(key, timer);
   }
@@ -190,7 +204,7 @@ export default class SignalingManager {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to flush HTTP signal queue", error);
       });
-    }, SignalingManager.#httpBatchDelayMs);
+    }, this.#httpBatchDelayMs);
 
     this.#httpSignalFlushTimers.set(roomId, timer);
   }
