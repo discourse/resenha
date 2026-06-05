@@ -403,13 +403,19 @@ export default class PeerManager {
     const timer = setTimeout(() => {
       this.#connectionTimeouts.delete(key);
 
-      if (
-        pc.connectionState !== "connected" &&
-        pc.connectionState !== "closed"
-      ) {
+      // Only rescue a peer that never started ICE (still "new" — e.g. a
+      // relay-only transport whose relay allocation produced no candidate).
+      // A peer in "connecting"/"checking" is mid-negotiation and may simply
+      // need more time (relay-to-relay checks can take >10s); restarting it
+      // here throws away progress and re-floods signaling, which can trip
+      // rate limits and turn a slow connect into an endless restart storm.
+      // ICE's own failure detection (oniceconnectionstatechange -> "failed")
+      // and the disconnected/failed handlers restart those if checks truly
+      // fail, so they are covered without an app-level teardown.
+      if (pc.connectionState === "new") {
         // eslint-disable-next-line no-console
         console.warn(
-          `[resenha] connection timeout (${PeerManager.#connectionTimeoutMs}ms) for user ${remoteUserId}, state: ${pc.connectionState}`
+          `[resenha] connection stuck in "new" (${PeerManager.#connectionTimeoutMs}ms) for user ${remoteUserId}; restarting`
         );
         this.#schedulePeerRestart(roomId, remoteUserId, { immediate: true });
       }
