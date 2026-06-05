@@ -2,7 +2,14 @@ export default class PeerManager {
   static #maxRestartAttempts = 5;
   static #maxOfferRetries = 8;
   static #maxOfferRetryDelayMs = 5000;
-  static #connectionTimeoutMs = 30000;
+  // A healthy connect completes in ~1s (sub-second once ICE checks start). With
+  // a relay-only transport there are no host/srflx fallback candidates, so an
+  // initial negotiation race or a slow/failed relay allocation can leave the
+  // peer stuck in "new" with nothing to fall back to — this timeout is the only
+  // thing that rescues it via a restart. Keep it short so a stall recovers in
+  // seconds rather than tens of seconds; the generous headroom over a real
+  // connect avoids tearing down a peer that is merely still connecting.
+  static #connectionTimeoutMs = 8000;
 
   static peerKey(roomId, userId) {
     return `${roomId}:${userId}`;
