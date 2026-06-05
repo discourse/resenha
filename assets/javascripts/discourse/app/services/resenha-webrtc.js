@@ -46,6 +46,8 @@ export default class ResenhaWebrtcService extends Service {
   #joinRevision = 0;
   #connectingParticipantSnapshots = new Map();
   #connectingSignalQueue = new Map();
+  #presencePendingPeerKeys = new Set();
+  #presencePendingPeerTimers = new Map();
   #remoteStreams = new Map();
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
@@ -154,6 +156,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingRoomIds.clear();
     this.#connectingParticipantSnapshots.clear();
     this.#connectingSignalQueue.clear();
+    this.#clearPresencePendingPeers();
     this.#roomMessageQueue.clearAll();
   }
 
@@ -751,6 +754,7 @@ export default class ResenhaWebrtcService extends Service {
   #teardownRoom(roomId) {
     this.#connectingParticipantSnapshots.delete(roomId);
     this.#connectingSignalQueue.delete(roomId);
+    this.#clearPresencePendingPeers(roomId);
 
     const callback = this.#roomHandlerCallbacks.get(roomId);
     if (callback) {
@@ -839,19 +843,18 @@ export default class ResenhaWebrtcService extends Service {
     this.#peerManager.clearPeerRestart(roomId, remoteUserId);
 
     const hadPeer = this.#peerManager.has(roomId, remoteUserId);
-    if (!hadPeer && !this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
-      // A candidate can arrive a beat ahead of its offer (the sender gathered
-      // and trickled it before our presence view caught up). Stash it so the
-      // offer can flush it once the peer exists, rather than dropping it.
-      // Anything else is a delayed signal for a participant that already left
-      // or no longer belongs in the current room topology.
-      if (data?.type === "candidate" && this.#canEngageEarlyOffer(roomId)) {
+    if (!hadPeer && data?.type === "candidate") {
+      if (this.#canEngageEarlyOffer(roomId)) {
         this.#peerManager.queuePendingCandidate(
           roomId,
           remoteUserId,
           data.candidate
         );
       }
+      return;
+    }
+
+    if (!hadPeer && !this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
       return;
     }
 
@@ -868,6 +871,9 @@ export default class ResenhaWebrtcService extends Service {
 
     if (data.type === "offer") {
       this.#peerManager.clearOfferRetry(roomId, remoteUserId);
+      if (!this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
+        this.#markPresencePendingPeer(roomId, remoteUserId);
+      }
 
       // If the remote restarted its ICE session — it left and rejoined, so its
       // offer carries fresh ICE credentials — renegotiating on the old, dead
@@ -1000,6 +1006,9 @@ export default class ResenhaWebrtcService extends Service {
 
     peers?.forEach((pc, remoteUserId) => {
       if (!participantIds.has(remoteUserId)) {
+        if (this.#isPresencePendingPeer(roomId, remoteUserId)) {
+          return;
+        }
         hasPeerLeft = true;
         this.#peerManager.destroy(roomId, remoteUserId);
       }
@@ -1039,6 +1048,8 @@ export default class ResenhaWebrtcService extends Service {
         );
 
         await this.#createAndOfferPeer(roomId, participantId);
+      } else {
+        this.#clearPresencePendingPeer(roomId, participantId);
       }
     }
 
@@ -1240,7 +1251,10 @@ export default class ResenhaWebrtcService extends Service {
     if (this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
       return true;
     }
-    return signalType === "offer" && this.#canEngageEarlyOffer(roomId);
+    return (
+      (signalType === "offer" || signalType === "candidate") &&
+      this.#canEngageEarlyOffer(roomId)
+    );
   }
 
   // Extract the ICE username fragment from an SDP. A new value vs the prior
@@ -1316,6 +1330,58 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     this.resenhaRooms?.removeParticipant(roomId, this.currentUser.id);
+  }
+
+  #presencePendingPeerKey(roomId, userId) {
+    return `${roomId}:${userId}`;
+  }
+
+  #markPresencePendingPeer(roomId, userId) {
+    const key = this.#presencePendingPeerKey(roomId, userId);
+    if (this.#presencePendingPeerKeys.has(key)) {
+      return;
+    }
+
+    this.#presencePendingPeerKeys.add(key);
+
+    const timer = setTimeout(() => {
+      this.#presencePendingPeerTimers.delete(key);
+      this.#presencePendingPeerKeys.delete(key);
+
+      if (!this.#shouldMaintainPeerConnection(roomId, userId)) {
+        this.#peerManager.destroy(roomId, userId);
+      }
+    }, 15000);
+
+    this.#presencePendingPeerTimers.set(key, timer);
+  }
+
+  #clearPresencePendingPeer(roomId, userId) {
+    const key = this.#presencePendingPeerKey(roomId, userId);
+    const timer = this.#presencePendingPeerTimers.get(key);
+
+    if (timer) {
+      clearTimeout(timer);
+      this.#presencePendingPeerTimers.delete(key);
+    }
+
+    this.#presencePendingPeerKeys.delete(key);
+  }
+
+  #isPresencePendingPeer(roomId, userId) {
+    return this.#presencePendingPeerKeys.has(
+      this.#presencePendingPeerKey(roomId, userId)
+    );
+  }
+
+  #clearPresencePendingPeers(roomId = null) {
+    for (const [key, timer] of this.#presencePendingPeerTimers) {
+      if (roomId === null || key.startsWith(`${roomId}:`)) {
+        clearTimeout(timer);
+        this.#presencePendingPeerTimers.delete(key);
+        this.#presencePendingPeerKeys.delete(key);
+      }
+    }
   }
 
   #removeAllRemoteStreams(roomId) {
