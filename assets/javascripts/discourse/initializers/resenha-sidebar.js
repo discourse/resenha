@@ -30,6 +30,40 @@ export default {
       }
 
       const roomsService = owner.lookup("service:resenha-rooms");
+
+      if (!currentUser) {
+        if (sidebarClickHandler) {
+          document.removeEventListener("click", sidebarClickHandler);
+        }
+
+        sidebarClickHandler = (event) => {
+          const anchor =
+            event
+              .composedPath?.()
+              ?.find?.(
+                (node) =>
+                  node instanceof HTMLElement &&
+                  node.matches?.(
+                    ".sidebar-section-link[data-link-name^='resenha-']"
+                  )
+              ) ||
+            event.target?.closest?.(
+              ".sidebar-section-link[data-link-name^='resenha-']"
+            );
+
+          if (!anchor) {
+            return;
+          }
+
+          event.preventDefault();
+          event.stopPropagation();
+          owner.lookup("route:application").send("showLogin");
+        };
+
+        document.addEventListener("click", sidebarClickHandler);
+        return;
+      }
+
       const resenhaWebrtc = owner.lookup("service:resenha-webrtc");
       const menuService = owner.lookup("service:menu");
       const modalService = owner.lookup("service:modal");
@@ -511,17 +545,6 @@ export default {
           ".sidebar-section-link[data-link-name^='resenha-room-']"
         );
 
-        // Anonymous visitors can browse public rooms but must authenticate to
-        // join, mirroring how replies, likes, etc. prompt for login.
-        if (!currentUser) {
-          if (participantAnchor || roomAnchor) {
-            event.preventDefault();
-            event.stopPropagation();
-            owner.lookup("route:application").send("showLogin");
-          }
-          return;
-        }
-
         if (participantAnchor) {
           event.preventDefault();
           event.stopPropagation();
@@ -572,11 +595,6 @@ export default {
       }
 
       sidebarContextMenuHandler = (event) => {
-        // No management context menus for anonymous visitors.
-        if (!currentUser) {
-          return;
-        }
-
         const findAnchor = (selector) =>
           event
             .composedPath?.()
