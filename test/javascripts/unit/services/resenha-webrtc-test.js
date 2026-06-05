@@ -437,6 +437,34 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     globalThis.RTCSessionDescription = this.originalRTCSessionDescription;
   });
 
+  test("iceTransportPolicy forces relay when only TURN servers are configured", function (assert) {
+    this.siteSettings.resenha_stun_servers = "";
+    this.siteSettings.resenha_turn_servers = "turn:turn.example.com:3478";
+
+    assert.strictEqual(this.subject.iceTransportPolicy, "relay");
+  });
+
+  test("iceTransportPolicy stays 'all' when STUN servers are present", function (assert) {
+    this.siteSettings.resenha_stun_servers = "stun:stun.example.com:3478";
+    this.siteSettings.resenha_turn_servers = "turn:turn.example.com:3478";
+
+    assert.strictEqual(this.subject.iceTransportPolicy, "all");
+  });
+
+  test("iceTransportPolicy stays 'all' when only STUN servers are configured", function (assert) {
+    this.siteSettings.resenha_stun_servers = "stun:stun.example.com:3478";
+    this.siteSettings.resenha_turn_servers = "";
+
+    assert.strictEqual(this.subject.iceTransportPolicy, "all");
+  });
+
+  test("iceTransportPolicy ignores blank/whitespace STUN entries", function (assert) {
+    this.siteSettings.resenha_stun_servers = "  |  ";
+    this.siteSettings.resenha_turn_servers = "turn:turn.example.com:3478";
+
+    assert.strictEqual(this.subject.iceTransportPolicy, "relay");
+  });
+
   test("ignores stale signals after a participant has left the room", async function (assert) {
     await this.subject.join(this.room);
     await wait(50);

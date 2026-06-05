@@ -85,6 +85,7 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#peerManager = new PeerManager({
       getIceServers: () => this.iceServers,
+      getIceTransportPolicy: () => this.iceTransportPolicy,
       getLocalStream: () => this.localStream,
       sendSignal: (roomId, uid, payload) =>
         this.#signaling.send(roomId, uid, payload),
@@ -156,42 +157,54 @@ export default class ResenhaWebrtcService extends Service {
     this.#roomMessageQueue.clearAll();
   }
 
+  #parseServerList(setting) {
+    return (setting || "")
+      .split("|")
+      .map((url) => url.trim())
+      .filter(Boolean);
+  }
+
   get iceServers() {
     const servers = [];
 
-    const stunServers = this.siteSettings.resenha_stun_servers;
-    if (stunServers) {
-      stunServers
-        .split("|")
-        .map((url) => url.trim())
-        .filter(Boolean)
-        .forEach((url) => {
-          servers.push({ urls: url });
-        });
-    }
+    this.#parseServerList(this.siteSettings.resenha_stun_servers).forEach(
+      (url) => {
+        servers.push({ urls: url });
+      }
+    );
 
-    const turnServers = this.siteSettings.resenha_turn_servers;
-    if (turnServers) {
+    const turnServers = this.#parseServerList(
+      this.siteSettings.resenha_turn_servers
+    );
+    if (turnServers.length) {
       const username = this.siteSettings.resenha_turn_username;
       const credential = this.siteSettings.resenha_turn_credential;
 
-      turnServers
-        .split("|")
-        .map((url) => url.trim())
-        .filter(Boolean)
-        .forEach((url) => {
-          const server = { urls: url };
-          if (username) {
-            server.username = username;
-          }
-          if (credential) {
-            server.credential = credential;
-          }
-          servers.push(server);
-        });
+      turnServers.forEach((url) => {
+        const server = { urls: url };
+        if (username) {
+          server.username = username;
+        }
+        if (credential) {
+          server.credential = credential;
+        }
+        servers.push(server);
+      });
     }
 
     return servers;
+  }
+
+  // When only TURN servers are configured (no STUN), force all traffic
+  // through the relay so peers don't waste time on host/srflx candidates
+  // that can never connect.
+  get iceTransportPolicy() {
+    const hasStun =
+      this.#parseServerList(this.siteSettings.resenha_stun_servers).length > 0;
+    const hasTurn =
+      this.#parseServerList(this.siteSettings.resenha_turn_servers).length > 0;
+
+    return !hasStun && hasTurn ? "relay" : "all";
   }
 
   get remoteStreams() {

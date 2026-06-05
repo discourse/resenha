@@ -17,6 +17,7 @@ export default class PeerManager {
   #pendingCandidates = new Map();
 
   #getIceServers;
+  #getIceTransportPolicy;
   #getLocalStream;
   #sendSignal;
   #flushQueuedSignals;
@@ -27,6 +28,7 @@ export default class PeerManager {
 
   constructor({
     getIceServers,
+    getIceTransportPolicy = () => "all",
     getLocalStream,
     sendSignal,
     flushQueuedSignals,
@@ -36,6 +38,7 @@ export default class PeerManager {
     shouldRestartPeer = () => true,
   }) {
     this.#getIceServers = getIceServers;
+    this.#getIceTransportPolicy = getIceTransportPolicy;
     this.#getLocalStream = getLocalStream;
     this.#sendSignal = sendSignal;
     this.#flushQueuedSignals = flushQueuedSignals;
@@ -73,7 +76,10 @@ export default class PeerManager {
       return roomPeers.get(remoteUserId);
     }
 
-    const pc = new RTCPeerConnection({ iceServers: this.#getIceServers() });
+    const pc = new RTCPeerConnection({
+      iceServers: this.#getIceServers(),
+      iceTransportPolicy: this.#getIceTransportPolicy(),
+    });
     roomPeers.set(remoteUserId, pc);
 
     const localStream = this.#getLocalStream();
