@@ -78,6 +78,7 @@ class ResenhaRoomsStub extends Service {
   setParticipantDeafened() {}
   setParticipantSpeaking() {}
   setParticipantIdleState() {}
+  setParticipantVideoState() {}
 }
 
 class ToastsStub extends Service {
@@ -1634,6 +1635,77 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       });
     } finally {
       localStorage.removeItem("resenha:noise-suppression");
+      audioEnvironment.restore();
+    }
+  });
+
+  test("leaving the room page stops an active camera publication", async function (assert) {
+    this.siteSettings.resenha_video_enabled = true;
+    this.siteSettings.resenha_video_max_publishers = 8;
+
+    this.room.room_type = "open";
+    this.room.video_enabled = true;
+    this.room.membership = { role_name: "participant" };
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant", watching_video: true },
+    ];
+
+    pretender.post("/resenha/rooms/1/state", () => response({}));
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: rawStream,
+    });
+
+    let cameraStopped = false;
+    const cameraTrack = {
+      id: "camera-track",
+      kind: "video",
+      enabled: true,
+      contentHint: "",
+      stop() {
+        cameraStopped = true;
+      },
+      addEventListener() {},
+    };
+    const cameraStream = {
+      id: "camera-stream",
+      getTracks: () => [cameraTrack],
+      getVideoTracks: () => [cameraTrack],
+    };
+
+    navigator.mediaDevices.getUserMedia = async (constraints) =>
+      constraints?.video ? cameraStream : rawStream;
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      this.subject.setWatching(1, true);
+      await this.subject.toggleCamera();
+
+      assert.strictEqual(
+        this.subject.localVideoKind,
+        "camera",
+        "camera publication starts from the room page"
+      );
+
+      this.subject.setWatching(1, false);
+      await wait(10);
+
+      assert.strictEqual(
+        this.subject.localVideoKind,
+        null,
+        "publication stops when the user leaves the room page"
+      );
+      assert.true(
+        cameraStopped,
+        "the camera track is stopped so the device light turns off"
+      );
+    } finally {
       audioEnvironment.restore();
     }
   });

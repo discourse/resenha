@@ -728,6 +728,16 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    // The room page holds the only controls that stop a camera or screen
+    // share, so leaving it must stop publishing too — otherwise capture
+    // silently continues with no visible way to end it.
+    if (!watching && this.localVideoKind) {
+      this.#stopLocalVideo().catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to stop video on page leave", error);
+      });
+    }
+
     this.resenhaRooms?.setParticipantVideoState(roomId, this.currentUser?.id, {
       watching_video: watching,
     });
