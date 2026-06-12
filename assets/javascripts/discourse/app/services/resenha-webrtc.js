@@ -787,6 +787,11 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   async #startLocalVideo(kind) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[resenha] starting ${kind} capture, userActivation active:`,
+      navigator.userActivation?.isActive
+    );
     const roomId = this.#firstActiveRoomId();
     if (!roomId) {
       return;
