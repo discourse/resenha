@@ -7,6 +7,7 @@ export default class ResenhaRoom extends RestModel {
       "description",
       "public",
       "max_participants",
+      "video_enabled",
     ]);
   }
 
@@ -16,6 +17,7 @@ export default class ResenhaRoom extends RestModel {
       "description",
       "public",
       "max_participants",
+      "video_enabled",
     ]);
   }
 }

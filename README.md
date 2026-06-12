@@ -11,6 +11,7 @@ Resenha is a Discourse plugin that adds Discord-style voice rooms powered by Web
 - **User room creation** — users in the allowed group see a "+" button to create rooms directly from the sidebar; room creators and managers can edit rooms in-app.
 - **Audio cues** — synthesized tones for connect/disconnect, user join/leave, and mute/deafen toggles.
 - **Noise suppression** — optional DTLN-based background noise filtering via WebAssembly. See [Noise Suppression](#noise-suppression).
+- **Video and screen sharing** — optional, off by default. Each room gets a full page at `/resenha/r/<slug>` with a tile grid; camera and screen share toggle without renegotiation, and senders only encode toward peers who are actually watching the page. Rooms can opt out individually. See [Video](#video).
 - **Pure browser WebRTC** — signaling through Discourse + MessageBus; media stays peer-to-peer, no SFU/MCU required.
 
 ## Installation
@@ -23,16 +24,37 @@ The plugin seeds a default "Watercooler" room on first enable.
 
 ## Configuration
 
-| Setting | Description |
-| --- | --- |
-| `resenha_enabled` | Master switch. |
-| `resenha_allowed_groups` | Groups that can access voice rooms (default: everyone). |
-| `resenha_create_room_allowed_groups` | Groups that can create new rooms (default: admins, moderators, TL2). |
-| `resenha_max_rooms_per_user` | Max rooms per creator (default 5). |
-| `resenha_participant_ttl_seconds` | Redis presence TTL in seconds (default 30). Client heartbeat refreshes every 10s. |
-| `resenha_noise_suppression` | Allow users to opt into DTLN noise suppression. |
-| `resenha_stun_servers` | STUN server addresses (pipe-separated). |
-| `resenha_turn_servers` | TURN server addresses for NAT traversal. |
+| Setting                              | Description                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------ |
+| `resenha_enabled`                    | Master switch.                                                                       |
+| `resenha_allowed_groups`             | Groups that can access voice rooms (default: everyone).                              |
+| `resenha_create_room_allowed_groups` | Groups that can create new rooms (default: admins, moderators, TL2).                 |
+| `resenha_max_rooms_per_user`         | Max rooms per creator (default 5).                                                   |
+| `resenha_participant_ttl_seconds`    | Redis presence TTL in seconds (default 30). Client heartbeat refreshes every 10s.    |
+| `resenha_noise_suppression`          | Allow users to opt into DTLN noise suppression.                                      |
+| `resenha_video_enabled`              | Allow camera video and screen sharing (default off). Rooms can opt out individually. |
+| `resenha_video_max_publishers`       | Max simultaneous video/screen publishers per room (default 8).                       |
+| `resenha_stun_servers`               | STUN server addresses (pipe-separated).                                              |
+| `resenha_turn_servers`               | TURN server addresses for NAT traversal.                                             |
+
+## Video
+
+When `resenha_video_enabled` is on (and the room's own video toggle is too), the room view at `/resenha/r/<slug>` shows a video grid alongside the usual controls. Audio joins stay sidebar-first and unchanged; video lives on the page.
+
+- Still pure mesh: a video m-line is pre-negotiated on every peer connection, so toggling the camera or a screen share is a `replaceTrack` with no renegotiation.
+- Senders attach video only toward participants currently on the room page (`watching_video` presence flag) — every skipped peer saves a full encoder session.
+- Encoding quality scales down with watcher count (720p ≤3 watchers, 480p ≤6, 360p beyond) and is capped by `resenha_video_max_publishers`.
+- Camera and screen share are mutually exclusive per user. Stage rooms do not support video yet.
+
+See `docs/roadmap/video-screenshare.md` for the full design.
+
+### Screen sharing troubleshooting
+
+Screen sharing has more environmental dependencies than the camera, and failures surface as a generic `NotAllowedError` in the browser console:
+
+- **Linux on Wayland**: capture goes through `xdg-desktop-portal` + PipeWire. If the picker never appears and the error is instant, check `systemctl --user is-active graphical-session.target xdg-desktop-portal` — a compositor session that isn't wired into systemd (common on minimal window manager setups) leaves the portal unable to start. The camera is unaffected, which makes this easy to misread as an application bug.
+- **macOS Firefox**: needs Screen Recording permission in System Settings, and only picks it up after a full browser restart.
+- **Insecure dev origins**: `getDisplayMedia` hard-requires a secure context. Firefox's `about:config` overrides that unlock `getUserMedia` on plain-http dev hosts do **not** extend to screen capture — use `https://` or a `localhost` origin.
 
 ## Noise Suppression
 
@@ -58,10 +80,12 @@ bin/lint plugins/resenha                # JS/SCSS/Ruby lint
 
 Key entry points:
 
-- `app/controllers/resenha/rooms_controller.rb` — room CRUD + signaling relay
+- `app/controllers/resenha/rooms_controller.rb` — room CRUD, signaling relay, participant state (mute/deafen/video/watching)
+- `app/controllers/resenha/page_controller.rb` — serves the full-page room view at `/resenha/r/:slug`
 - `lib/resenha/guardian_extension.rb` — authorization (group-based access and room creation permissions)
-- `assets/javascripts/discourse/app/services/resenha-webrtc.js` — WebRTC orchestration, audio controls, sound effects
+- `assets/javascripts/discourse/app/services/resenha-webrtc.js` — WebRTC orchestration, audio controls, video/screen-share publishing, sound effects
 - `assets/javascripts/discourse/initializers/resenha-sidebar.js` — sidebar section, click/context-menu handlers
+- `assets/javascripts/discourse/components/resenha/room-page.gjs` — room page: tile grid, call controls, watching lifecycle
 
 ## Known Limitations
 

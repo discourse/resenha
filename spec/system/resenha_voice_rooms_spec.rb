@@ -29,7 +29,16 @@ describe "Resenha voice rooms", type: :system do
 
   context "when plugin is enabled" do
     context "as anonymous user" do
-      it "does not show voice rooms section" do
+      it "shows public rooms when access is open to everyone" do
+        Fabricate(:resenha_room, name: "Test Room", creator: admin, public: true)
+
+        visit("/latest")
+
+        expect(resenha_sidebar).to be_visible
+      end
+
+      it "does not show voice rooms section when access is restricted to a group" do
+        SiteSetting.resenha_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
         Fabricate(:resenha_room, name: "Test Room", creator: admin, public: true)
 
         visit("/latest")

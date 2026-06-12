@@ -17,7 +17,9 @@ module Resenha
                :creator_id,
                :can_manage,
                :description_excerpt,
-               :visit_count
+               :visit_count,
+               :video_enabled,
+               :video_allowed
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
 
@@ -59,6 +61,10 @@ module Resenha
 
     def include_visit_count?
       scope.user.present? && @options[:include_visit_count]
+    end
+
+    def video_allowed
+      object.video_allowed?
     end
   end
 end

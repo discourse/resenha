@@ -9,6 +9,7 @@ Resenha::Engine.routes.draw do
       get :participants
       post :signal
       post :toggle_mute
+      post :state
       delete :kick
     end
 
@@ -16,6 +17,7 @@ Resenha::Engine.routes.draw do
   end
 
   get "contacts" => "contacts#index"
+  get "r/:slug" => "page#show", :format => false
 end
 
 Discourse::Application.routes.draw do

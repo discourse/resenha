@@ -1,650 +1,371 @@
 # Video & Screen Sharing
 
+> **Revision note (2026-06-12):** this doc supersedes the original draft. Two
+> core decisions changed after a deep read of the WebRTC layer:
+>
+> 1. **Media strategy** — the original plan relied on `addTrack()` +
+>    `onnegotiationneeded` renegotiation. The codebase has _no_ renegotiation
+>    path (no `onnegotiationneeded` handler; glare handling, the ufrag restart
+>    heuristic, and answer-state guards all assume one-shot negotiation at peer
+>    setup). The new design pre-allocates video transceivers at peer creation
+>    and toggles video with `replaceTrack()` — zero renegotiation, matching the
+>    pattern noise suppression already uses.
+> 2. **UI** — a dedicated full-page room view (sidebar stays) replaces the
+>    sliding video panel. Simpler, deep-linkable, and it doubles as the
+>    subscription signal for who should receive video at all.
+>
+> Also new: a **per-room `video_enabled` toggle** and **subscription-gated
+> sending**, which raises the practical mesh ceiling well above the original
+> 3–5 stream estimate.
+
 ## Overview
 
-Add optional video and screen sharing to voice rooms. P2P only, practical for
-up to ~3 video streams. The main challenge is UI — Resenha currently lives
-entirely in the sidebar with no dedicated page or panel. Video needs real
-estate.
+Add optional camera video and screen sharing to voice rooms, staying **pure
+full-mesh P2P** — no SFU, no media through the server. Joining a room remains
+audio-first; video is something you opt into by opening the room's dedicated
+page and turning on your camera.
 
-## Constraints
+Bandwidth is explicitly _not_ the constraint we design for (entry-level
+broadband upload is now in the hundreds of Mbps). The binding constraints are:
 
-- **5 participants default for video, up to 8** — the bottleneck is CPU and
-  browser peer connection overhead, not bandwidth. Full mesh P2P with video
-  at 720p works well up to 5 users on modern hardware. 6-8 is feasible but
-  may strain low-end laptops. Beyond 8, an SFU is needed regardless of
-  bandwidth.
-- **Screen share counts as a video stream** — a user sharing their screen
-  consumes one stream slot. A user can share camera OR screen, not both
-  simultaneously (keeps it simple).
-- **Audio-only users can coexist** — a room with 8 audio participants and 3
-  video participants is fine. Only video streams are limited.
-- **No video in Stage rooms (for now)** — Stage rooms have their own complexity.
-  Video is only available in Open rooms initially.
+- **CPU encoder sessions** — in a mesh, each `RTCPeerConnection` runs its own
+  independent video encoder. A participant sending video to 8 watchers runs 8
+  simultaneous encodes.
+- **Decode + render cost** on the receiving side, especially mobile.
 
-## UI approach: the Video Panel
+Both are attacked with the mesh topology's unique lever: every receiver has a
+dedicated sender, so we can decide **per peer** whether to send video at all,
+and at what resolution/bitrate. An SFU can't do better than simulcast here;
+mesh gets per-link adaptation natively.
 
-Video cannot live in the sidebar — there's no room. Instead, introduce a
-**Video Panel** that slides out from the sidebar as a resizable floating panel
-overlaying the Discourse content area.
+## Goals / non-goals
 
-### Layout modes
+**Goals**
 
-**Mode 1: Sidebar only (current, no video)**
+- Camera video and screen share in Open rooms, full mesh.
+- Dedicated room page with a video grid; Discourse sidebar (and the rooms
+  section in it) stays visible.
+- Audio experience is never degraded or destabilized by the video feature.
+- Per-room and site-wide opt-in.
 
-```
-┌──────────┬─────────────────────────────┐
-│ Sidebar  │                             │
-│          │                             │
-│ 🎙 Room  │      Discourse content      │
-│  👤 Alice│                             │
-│  👤 Bob  │                             │
-│  👤 You  │                             │
-│          │                             │
-└──────────┴─────────────────────────────┘
-```
+**Non-goals (for now)**
 
-No changes. Audio-only rooms work exactly as today.
+- SFU integration (future, separate effort).
+- Video in Stage rooms (speakers-only video is a follow-on).
+- Recording, virtual backgrounds, reactions overlay.
 
-**Mode 2: Video panel (someone enables video or screen share)**
+## Facts about the current architecture that shape the design
 
-```
-┌──────────┬──────────────┬──────────────┐
-│ Sidebar  │ Video Panel  │              │
-│          │              │              │
-│ 🎙 Room  │ ┌──────────┐ │  Discourse   │
-│  👤 Alice│ │  Alice 🎥 │ │  content     │
-│  👤 Bob  │ ├──────────┤ │  (narrower)  │
-│  👤 You  │ │  You  🎥  │ │              │
-│          │ └──────────┘ │              │
-│          │ [📷] [🖥️]   │              │
-└──────────┴──────────────┴──────────────┘
-```
+From `resenha-webrtc.js`, `peer-manager.js`, `signaling.js`:
 
-- Panel appears between sidebar and content.
-- Discourse content area shrinks to accommodate (CSS transition).
-- Panel width is resizable by dragging the right edge (min 280px, max 50vw).
-- Panel width persisted in localStorage.
-- Video tiles stack vertically in the panel.
+- **Negotiation is one-shot.** Offers/answers happen at peer setup. Glare is
+  resolved by user-ID ordering only during setup; answers in unexpected
+  signaling states are dropped; a changed ICE ufrag means "peer restarted —
+  tear down and rebuild" rather than "renegotiate".
+- **Mid-call media changes never renegotiate.** Noise suppression swaps the
+  outgoing audio track with `sender.replaceTrack()`
+  (`#replaceTrackOnAllPeers`); role changes rebuild peers wholesale
+  (`#reconnectAllPeers`).
+- **The signal relay is payload-opaque.** SDP with video m-lines flows through
+  `POST /resenha/rooms/:id/signal` unchanged. No server work needed for media.
+- **Presence metadata is a free-form per-participant hash** in Redis
+  (`ParticipantTracker`), already carrying `is_muted` / `is_deafened` /
+  `idle_state`, broadcast via `RoomBroadcaster.publish_participants`. Video
+  flags slot straight in.
+- **Call state lives in the `resenha-webrtc` service**, independent of routes —
+  which is why audio survives navigation today, and why a video _page_ can be
+  a pure view over service state.
 
-**Mode 3: Expanded / focused view**
+## Media plan: pre-allocated transceivers + `replaceTrack`
 
-Double-click a video tile or click an expand button to go full-width:
+### Peer setup
 
-```
-┌──────────┬─────────────────────────────┐
-│ Sidebar  │ ┌─────────────────────────┐ │
-│          │ │                         │ │
-│ 🎙 Room  │ │    Alice (focused)      │ │
-│  👤 Alice│ │                         │ │
-│  👤 Bob  │ ├────────┬────────────────┤ │
-│  👤 You  │ │ You 🎥 │   Bob 🎥      │ │
-│          │ └────────┴────────────────┘ │
-│          │ [📷] [🖥️]  [⊟ collapse]   │
-└──────────┴─────────────────────────────┘
+At `PeerManager.create()`, alongside the existing audio `addTrack` calls, both
+sides add a video transceiver:
+
+```javascript
+pc.addTransceiver("video", { direction: "sendrecv" });
 ```
 
-- One tile is "focused" (large), others are thumbnails below.
-- The active speaker auto-focuses (using existing speaking detection).
-- Clicking a thumbnail focuses that tile.
-- Discourse content is fully covered — user is in "video call mode."
-- A collapse button returns to Mode 2.
+The video m-line is negotiated **once**, in the same initial offer/answer that
+already works. An idle negotiated video sender transmits nothing, so
+audio-only rooms pay no bandwidth or CPU cost.
 
-**Mode 4: Popout window**
+**Answerer alignment (JSEP gotcha).** Applying a remote offer only reuses
+local transceivers created via `addTrack` — never ones from `addTransceiver`,
+which are reserved for the local side's next offer. Left alone, the answerer
+gets a fresh `recvonly` transceiver for the offered video m-line and its
+pre-allocated transceiver is orphaned, so the answerer can receive video but
+never send it (one-directional video, surfaced as "the offerer's camera works,
+the answerer's doesn't"). Between `setRemoteDescription(offer)` and
+`createAnswer()`, the answerer therefore flips the associated transceiver's
+direction to `sendrecv` (the answer then carries it — still no renegotiation)
+and migrates any camera track off the orphan. Audio is unaffected because
+audio tracks go through `addTrack` and are reused per spec.
 
-Click a popout button to detach the video panel into a separate browser
-window:
+### Camera on/off
+
+- **On:** acquire a _separate_ camera stream with its own
+  `getUserMedia({ video: ... })` call — never re-acquire or touch the mic
+  stream, so the noise-suppression chain is untouched — then
+  `transceiver.sender.replaceTrack(cameraTrack)` on each peer that should
+  receive video (see subscription gating below).
+- **Off:** `replaceTrack(null)` everywhere, stop the camera track (releases
+  the camera light), broadcast the state change.
+
+No renegotiation, no new signaling messages, no glare risk, ever.
+
+### Required fixes this surfaces
+
+1. **Per-user stream registry.** `#registerRemoteStream` keeps one stream per
+   user and _replaces_ it when a different stream arrives. With
+   `addTransceiver`, the incoming video track has no associated stream
+   (`event.streams` is empty), so the current `ontrack` fallback would create
+   a video-only `MediaStream` that clobbers the user's audio entry. Fix:
+   maintain one `MediaStream` per remote user and `addTrack()` incoming tracks
+   into it (or store `{ audioStream, videoStream }` per user).
+2. **Restart path must restore video.** `PeerManager.restart()` rebuilds the
+   peer from `getLocalStream()`. Centralize an "attach current local media"
+   step (audio tracks + video transceiver + current camera track if the peer
+   is a subscriber) used by both `create()` and restart.
+3. **UI must not key off `ontrack` for video.** The remote video track arrives
+   muted at initial negotiation, long before any camera turns on. Drive tile
+   visibility from the `is_video_on` presence flag (authoritative) plus the
+   track's `mute`/`unmute` events (frame-accurate).
+
+### Legacy peers
+
+Connections negotiated before this ships have audio-only SDPs with no video
+m-line. If a user enables camera against such a peer, fall back to the
+existing sledgehammer: the `#reconnectAllPeers`-style rebuild that role
+changes already use. Transitional code only.
+
+## Subscription-gated sending (the mesh superpower)
+
+Senders only attach the camera track toward peers who are **watching** — i.e.
+currently on the room's video page. Everyone else's sender keeps a null track.
+
+- Each non-watching peer skipped saves the sender an **entire encoder
+  session**, not just bandwidth.
+- The signal is free: entering/leaving the room page flips a `watching_video`
+  flag in presence metadata, which already broadcasts to the room.
+- Sidebar-only listeners (today's default UX) cost video senders nothing.
+
+This is what raises the practical ceiling from the old "3–5 video streams" to
+"~8 publishers, bounded by who is actually watching".
+
+## Quality budget
+
+Capture once at 720p; downscale per sender with
+`sender.setParameters({ encodings: [{ maxBitrate, scaleResolutionDownBy, maxFramerate }] })`,
+scaled by **watcher count**:
+
+| Watchers | Per-peer encoding | Upload @ 8 watchers | Encodes |
+| -------- | ----------------- | ------------------- | ------- |
+| ≤ 3      | 720p @ ~1.2 Mbps  | —                   | ≤ 3     |
+| 4–6      | 480p @ ~700 kbps  | ~3.5 Mbps           | 4–6     |
+| 7+       | 360p @ ~400 kbps  | ~2.8 Mbps           | 7+      |
+
+Plus:
+
+- `track.contentHint = "motion"` (camera) / `"detail"` (screen share);
+  `degradationPreference: "maintain-framerate"` for camera.
+- Frame-rate caps: 24 fps, 15 fps in large rooms; screen share 15 fps.
+- Mesh gives per-link adaptation for free: each `RTCPeerConnection`'s
+  bandwidth estimator adapts to _that_ peer's downlink independently — one
+  weak peer never degrades what others receive. (This is the mesh-native
+  equivalent of simulcast; simulcast itself is an SFU mechanism and does not
+  apply.)
+- A user-selectable quality profile (High/Medium/Low, persisted in
+  `localStorage`) remains useful as a manual override for weak _sending_
+  hardware, layered under the automatic count-based ladder.
+- `resenha_video_max_publishers` (default 8) as the honest backstop: camera
+  buttons disable past the cap, server rejects the flag. Audio mesh keeps
+  scaling beyond it.
+
+## UX: the room page
+
+### Navigation
+
+- Sidebar room rows gain an "open room" affordance (and/or clicking the room
+  name while connected navigates; click-to-join on the join button is
+  unchanged).
+- Route: **`/resenha/r/:slug`**. The engine already serves JSON at
+  `/resenha/rooms/:id`, so the page uses a distinct path. Server side: a route
+  that renders the Ember app shell (core chat's full-page route is the
+  reference pattern); client side: a plugin route map entry.
+- The Discourse sidebar — including the Resenha rooms section — persists
+  automatically: the page renders in the regular content outlet.
 
 ```
-Main window:                    Popout window:
-┌──────────┬───────────────┐   ┌─────────────────┐
-│ Sidebar  │               │   │ ┌─────────────┐ │
-│          │   Discourse   │   │ │  Alice 🎥    │ │
-│ 🎙 Room  │   content     │   │ ├─────────────┤ │
-│  👤 Alice│   (full width)│   │ │  You 🎥     │ │
-│  👤 Bob  │               │   │ └─────────────┘ │
-│  👤 You  │               │   │ [📷] [🖥️]      │
-└──────────┴───────────────┘   └─────────────────┘
+┌──────────┬─────────────────────────────────┐
+│ Sidebar  │  Room: Watercooler              │
+│          │ ┌─────────┐ ┌─────────┐         │
+│ 🎙 Rooms │ │ Alice 🎥 │ │  Bob 🎥 │        │
+│  Water.. │ ├─────────┤ ├─────────┤         │
+│  👤👤👤  │ │ Carol 👤 │ │ You 🎥  │        │
+│  Lounge  │ └─────────┘ └─────────┘         │
+│          │                                 │
+│ (rest of │ [🎤] [🎧] [📷] [🖥️] [☎ leave]  │
+│ sidebar) │                                 │
+└──────────┴─────────────────────────────────┘
 ```
 
-- Uses `window.open()` with the video panel content.
-- Main window regains full content width.
-- Communication between windows via `BroadcastChannel`.
-- If popout is closed, panel returns to inline Mode 2.
+- **The page works for every room, video-enabled or not.** Participants
+  without video render as avatar tiles with the existing speaking ring
+  (reusing `AudioMonitor` state). This makes the page a general "room view",
+  with video as an enhancement where allowed.
+- Being on the page = `watching_video: true` in presence; navigating away
+  flips it off and senders drop your video feed. Audio continues regardless
+  (service state is route-independent).
+- Layout: CSS grid, `auto-fit`/`minmax`, BEM classes
+  (`.resenha-room-page`, `.resenha-video-tile`, modifiers like `--speaking`,
+  `--screen-share`, `--self`).
+- Active-speaker spotlight and click-to-pin: follow-on, not v1.
 
-### Video tile anatomy
+### Video tile anatomy (unchanged from original draft)
 
-Each video tile contains:
-
-```
-┌─────────────────────────────┐
-│                             │
-│         Video feed          │
-│                             │
-│                             │
-├─────────────────────────────┤
-│ 👤 Alice  🔇 🎥            │
-└─────────────────────────────┘
-```
-
-- Video element filling the tile with `object-fit: cover`.
-- Bottom bar overlay (semi-transparent): username, mute icon, camera icon.
-- Speaking indicator: colored border glow (green) when speaking.
+- `<video>` with `object-fit: cover` (camera) / `contain` (screen share).
+- Bottom overlay: username, mute icon, camera/screen badge.
+- Speaking indicator: border glow driven by existing speaking detection.
+- Self view mirrored with `transform: scaleX(-1)` (camera only).
+- Camera-off: avatar centered on dark background.
 - Right-click: existing participant context menu (volume, mute, kick).
-
-**Self-view tile:**
-- Mirrored horizontally (CSS `transform: scaleX(-1)`) for camera (not for
-  screen share).
-- Small "preview" badge in the corner.
-
-**Camera-off tile:**
-- Show the user's avatar centered on a dark background.
-- Still shows the bottom bar with name and icons.
-
-**Screen share tile:**
-- Uses `object-fit: contain` instead of `cover` (don't crop screen content).
-- No horizontal mirror.
-- A "🖥️ Screen" badge in the corner.
-
-### Tile layout algorithm
-
-The panel must arrange 1-3 video tiles responsively:
-
-**1 tile:** Full panel width and height.
-
-**2 tiles:** Stacked vertically, each 50% height.
-
-**3 tiles:** One large (top, 60% height) + two small (bottom row, 50% width
-each, 40% height). Active speaker gets the large tile.
-
-In expanded mode (Mode 3), same logic but the focused tile takes ~70% of the
-space.
 
 ### Controls bar
 
-Fixed at the bottom of the video panel:
-
-```
-┌─────────────────────────────────────┐
-│  [🎤] [📷 Camera] [🖥️ Share] [⊞]  │
-└─────────────────────────────────────┘
-```
-
-- **Mic toggle** — existing mute, included here for convenience.
-- **Camera toggle** — start/stop camera. Grey when off, highlighted when on.
-- **Screen share** — start/stop screen sharing. Opens browser's native screen
-  picker.
-- **Layout toggle** — cycle: panel (Mode 2) → expanded (Mode 3) → panel.
-- **Popout button** — detach to separate window (small icon in the corner).
-
-## Implementation plan
-
-### 1. Video Panel component
-
-**New file:** `assets/javascripts/discourse/components/resenha-video-panel.gjs`
-
-A Glimmer component that:
-- Renders as a sibling of the sidebar, positioned via CSS grid/flexbox.
-- Contains `<video>` elements for each video stream.
-- Manages layout modes (panel, expanded, popout) as tracked state.
-- Renders the controls bar.
-- Handles resize dragging (pointer events on the right edge).
-
-**Mounting:** Registered via an initializer (like `resenha-voice-canvas`),
-rendered into the Discourse layout when any video stream is active.
-
-**Visibility:** The panel only appears when at least one participant (including
-self) has video or screen share active. When all video stops, the panel
-collapses back to sidebar-only with a CSS transition.
-
-### 2. Extend `resenha-webrtc` service for video tracks
-
-**File:** `assets/javascripts/discourse/app/services/resenha-webrtc.js`
-
-New tracked properties:
-- `localVideoStream` — camera `MediaStream` or `null`.
-- `localScreenStream` — screen share `MediaStream` or `null`.
-- `remoteVideoStreams` — `Map<userId, { stream, type: "camera"|"screen" }>`.
-
-New methods:
-
-```javascript
-async toggleCamera() {
-  if (this.localVideoStream) {
-    this.localVideoStream.getTracks().forEach(t => t.stop());
-    this.localVideoStream = null;
-    this._removeVideoTrackFromPeers();
-    this._broadcastVideoState({ camera: false });
-  } else {
-    this.localVideoStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 24 } }
-    });
-    this._addVideoTrackToPeers(this.localVideoStream);
-    this._broadcastVideoState({ camera: true });
-  }
-}
-
-async toggleScreenShare() {
-  if (this.localScreenStream) {
-    this.localScreenStream.getTracks().forEach(t => t.stop());
-    this.localScreenStream = null;
-    this._removeVideoTrackFromPeers();
-    this._broadcastVideoState({ screen: false });
-  } else {
-    this.localScreenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { max: 15 } },
-      audio: false
-    });
-    // Handle native "Stop sharing" button
-    this.localScreenStream.getVideoTracks()[0].onended = () => {
-      this.toggleScreenShare();
-    };
-    this._addVideoTrackToPeers(this.localScreenStream);
-    this._broadcastVideoState({ screen: true });
-  }
-}
-```
-
-**Camera vs. screen share exclusivity:** Starting screen share stops camera
-and vice versa. Only one video track per user at a time.
-
-### 3. WebRTC track management
-
-**Adding a video track to existing connections:**
-
-When the user enables camera or screen share, add the video track to every
-existing `RTCPeerConnection` via `addTrack()`, then renegotiate:
-
-```javascript
-_addVideoTrackToPeers(stream) {
-  const videoTrack = stream.getVideoTracks()[0];
-  for (const [peerId, pc] of this._peerConnections) {
-    pc.addTrack(videoTrack, stream);
-    // Renegotiation happens automatically via onnegotiationneeded
-  }
-}
-```
-
-`onnegotiationneeded` fires on the connection, triggering a new offer/answer
-exchange. The existing signaling infrastructure handles this — the signal
-endpoint already relays arbitrary SDP.
-
-**Removing a video track:**
-
-```javascript
-_removeVideoTrackFromPeers() {
-  for (const [peerId, pc] of this._peerConnections) {
-    const senders = pc.getSenders();
-    const videoSender = senders.find(s => s.track?.kind === "video");
-    if (videoSender) {
-      pc.removeTrack(videoSender);
-      // Triggers renegotiation
-    }
-  }
-}
-```
-
-**Receiving remote video:**
-
-The existing `ontrack` handler receives new tracks. Extend it to distinguish
-audio and video:
-
-```javascript
-pc.ontrack = (event) => {
-  const track = event.track;
-  if (track.kind === "audio") {
-    // Existing audio handling
-  } else if (track.kind === "video") {
-    this.remoteVideoStreams.set(peerId, {
-      stream: event.streams[0],
-      type: metadata.screen ? "screen" : "camera"
-    });
-    // Trigger panel re-render
-  }
-};
-```
-
-### 4. Video state metadata
-
-**File:** `app/services/resenha/participant_tracker.rb`
-
-Add `has_camera` and `has_screen` booleans to participant metadata. Broadcast
-via the existing participant metadata system so the sidebar and panel know
-who has video active without waiting for WebRTC negotiation.
-
-Frontend broadcasts video state changes:
-
-```javascript
-_broadcastVideoState(state) {
-  // POST to toggle_mute endpoint (or a new toggle_video endpoint)
-  // with { has_camera: bool, has_screen: bool }
-}
-```
-
-### 5. Backend: video toggle endpoint
-
-**File:** `app/controllers/resenha/rooms_controller.rb`
-
-New action (or extend `toggle_mute`):
-
-```ruby
-def toggle_video
-  participant = find_participant!
-  metadata = params.permit(:has_camera, :has_screen)
-  ParticipantTracker.update_metadata(room.id, current_user.id, metadata)
-  RoomBroadcaster.publish_participants(room)
-  head :ok
-end
-```
-
-**Route:** `POST /resenha/rooms/:id/toggle_video`
-
-### 6. Sidebar indicators
-
-**File:** Sidebar initializer
-
-When a participant has video active, show a small camera icon (📷) or screen
-icon (🖥️) next to their avatar in the sidebar, alongside the existing
-mute/speaking indicators.
-
-When any participant in a room has video, show a video badge on the room
-link itself (so users browsing rooms can see "there's a video call happening").
-
-### 7. Popout window
-
-**New file:** `assets/javascripts/discourse/components/resenha-video-popout.gjs`
-
-The popout uses `window.open()` to create a minimal page containing only the
-video panel. Communication with the main window:
-
-```javascript
-// Main window → popout: stream updates, participant changes
-const channel = new BroadcastChannel("resenha-video");
-channel.postMessage({ type: "streams-updated", streams: [...] });
-
-// Popout → main window: control actions (mute, camera toggle, etc.)
-channel.postMessage({ type: "toggle-camera" });
-```
-
-The popout window receives `MediaStream` objects — but `MediaStream` is not
-transferable via `BroadcastChannel`. Instead:
-
-**Approach:** The popout page loads the same Ember app and injects the
-`resenha-webrtc` service. Since the service holds the WebRTC connections, the
-video elements in the popout can attach to the same streams.
-
-**Simpler approach:** Don't share streams. The popout is a stripped-down page
-(`/resenha/popout`) that connects to the same MessageBus channels and renders
-video from stream data received via the WebRTC connections that live in the
-main window.
-
-**Simplest approach (recommended):** Use `window.open` with `about:blank`,
-then move the video DOM elements from the inline panel to the popout window
-using `popoutWindow.document.adoptNode(videoContainer)`. This moves the
-actual DOM nodes (including live `<video>` elements with `srcObject` intact)
-into the new window. On popout close, move them back. This avoids duplicating
-any WebRTC logic.
-
-```javascript
-openPopout() {
-  this.popout = window.open("", "resenha-video", "width=480,height=640");
-  this.popout.document.title = "Resenha Video";
-
-  // Inject stylesheet
-  const link = this.popout.document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = "/plugins/resenha/stylesheets/video-popout.css";
-  this.popout.document.head.appendChild(link);
-
-  // Move video container DOM node
-  const container = document.getElementById("resenha-video-container");
-  this.popout.document.body.appendChild(
-    this.popout.document.adoptNode(container)
-  );
-
-  this.popout.onbeforeunload = () => this.closePopout();
-}
-
-closePopout() {
-  const container = this.popout.document.getElementById("resenha-video-container");
-  document.getElementById("resenha-video-panel").appendChild(
-    document.adoptNode(container)
-  );
-  this.popout = null;
-}
-```
-
-### 8. Styles
-
-**File:** `assets/stylesheets/common/resenha-video.scss`
-
-```scss
-.resenha-video-panel {
-  display: flex;
-  flex-direction: column;
-  background: var(--secondary);
-  border-right: 1px solid var(--primary-low);
-  min-width: 280px;
-  max-width: 50vw;
-  transition: width 0.2s ease;
-  resize: horizontal;
-  overflow: hidden;
-
-  &.expanded {
-    flex: 1;
-    max-width: none;
-  }
-}
-
-.resenha-video-tile {
-  position: relative;
-  background: var(--primary-very-low);
-  border-radius: 8px;
-  overflow: hidden;
-
-  video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  &.screen-share video {
-    object-fit: contain;
-    background: #000;
-  }
-
-  &.self video {
-    transform: scaleX(-1);
-  }
-
-  &.self.screen-share video {
-    transform: none;
-  }
-
-  &.speaking {
-    box-shadow: 0 0 0 3px var(--success);
-    transition: box-shadow 0.2s ease;
-  }
-}
-
-.resenha-video-tile__overlay {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 4px 8px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
-  color: #fff;
-  font-size: var(--font-down-1);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.resenha-video-tile__avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  background: var(--primary-very-low);
-
-  img {
-    border-radius: 50%;
-    width: 64px;
-    height: 64px;
-  }
-}
-
-.resenha-video-controls {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  padding: 8px;
-  border-top: 1px solid var(--primary-low);
-
-  button {
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-
-    &.active {
-      background: var(--tertiary);
-      color: var(--secondary);
-    }
-
-    &.screen-share.active {
-      background: var(--success);
-    }
-  }
-}
-
-// Tile layouts
-.resenha-video-tiles {
-  flex: 1;
-  display: grid;
-  gap: 4px;
-  padding: 4px;
-
-  &[data-count="1"] {
-    grid-template: 1fr / 1fr;
-  }
-
-  &[data-count="2"] {
-    grid-template: 1fr 1fr / 1fr;
-  }
-
-  &[data-count="3"] {
-    grid-template: 3fr 2fr / 1fr 1fr;
-
-    .resenha-video-tile:first-child {
-      grid-column: 1 / -1;
-    }
-  }
-}
-```
-
-### 9. Quality profiles
-
-Bandwidth is not the constraint — even cheap broadband in developing countries
-exceeds 100 Mbps. The real limits are CPU (encoding/decoding multiple streams)
-and browser peer connection overhead. Quality profiles let users on weaker
-hardware opt down.
-
-**Profiles:**
-
-| Profile | Camera | Screen share | Use case |
-|---------|--------|-------------|----------|
-| **High** (default) | 1280×720, 30 fps, 1.5 Mbps | 1920×1080, 30 fps, 3 Mbps | Modern laptop/desktop |
-| **Medium** | 640×480, 24 fps, 800 kbps | 1280×720, 24 fps, 1.5 Mbps | Older hardware, many participants |
-| **Low** | 320×240, 15 fps, 300 kbps | 640×480, 15 fps, 500 kbps | Low-end devices |
-
-User selects via the video panel settings (gear icon in controls bar).
-Persisted in localStorage (`resenha_video_quality`). Default is High.
-
-Applied via `RTCRtpSender.setParameters()`:
-
-```javascript
-const sender = pc.getSenders().find(s => s.track?.kind === "video");
-const params = sender.getParameters();
-const profile = this._getQualityProfile();
-params.encodings[0].maxBitrate = isScreen ? profile.screenBitrate : profile.cameraBitrate;
-params.encodings[0].maxFramerate = profile.frameRate;
-await sender.setParameters(params);
-```
-
-And via `getUserMedia` constraints:
-
-```javascript
-const constraints = {
-  video: {
-    width: { ideal: profile.width },
-    height: { ideal: profile.height },
-    frameRate: { max: profile.frameRate },
-  }
-};
-```
-
-### 10. Site settings
-
-**File:** `config/settings.yml`
-
-```yaml
-resenha_video_enabled:
-  default: false
-  client: true
-  description: "Enable camera and screen sharing in voice rooms"
-
-resenha_video_max_participants:
-  default: 5
-  min: 2
-  max: 8
-  client: true
-  description: "Maximum number of participants who can share video simultaneously"
-```
-
-Video is off by default — admin opt-in. Separate from the core voice feature.
+Mic toggle, deafen, camera toggle, screen share, leave. Camera and screen
+share buttons render only when video is effectively enabled for the room
+(below) and disable with a tooltip when the publisher cap is reached.
+
+### Sidebar indicators
+
+- Camera icon next to participants with `is_video_on` in the room's expanded
+  participant rows.
+- A video badge on the room link itself when any participant is publishing,
+  so browsers of the sidebar can see "there's video happening here".
+
+## Per-room video toggle
+
+Video has a different social temperature than audio; room owners should
+control it.
+
+- **Schema:** `video_enabled` boolean on `resenha_rooms`, `null: false`,
+  `default: true`.
+- **Effective rule:**
+
+  ```
+  video allowed in room = SiteSetting.resenha_video_enabled &&
+                          room.video_enabled &&
+                          room.open?            # stage rooms excluded in v1
+  ```
+
+- **Editing:** checkbox in the room create/edit form (FormKit), editable by
+  whoever can manage the room (creator/managers — existing
+  `can_manage_resenha_room?` guardian); also exposed in the admin room UI.
+  Permitted in `rooms_controller#room_params` and serialized in
+  `RoomSerializer`.
+- **Enforcement:** server-side in the state endpoint (below) — reject
+  `is_video_on: true` / screen-share flags when video isn't allowed for the
+  room, mirroring how `toggle_mute` rejects listener unmutes in stage rooms.
+  Client hides the buttons; the server check is the real gate.
+- **Flipping it off live:** broadcast the room update (directory broadcaster
+  already pushes room CRUD); clients with active cameras stop sending
+  (`replaceTrack(null)`) and toast.
+
+## Server changes (small by design)
+
+1. **Migration:** add `video_enabled` to `resenha_rooms` (see above).
+2. **Presence metadata keys:** `is_video_on`, `is_screen_sharing`,
+   `watching_video` — same mechanism as `is_muted`/`is_deafened`.
+3. **Endpoint:** generalize `toggle_mute` into (or add alongside it)
+   `POST /resenha/rooms/:id/state` accepting the metadata booleans, with the
+   per-room enforcement above and the publisher-cap check
+   (count of participants with `is_video_on` ≥ `resenha_video_max_publishers`
+   → 422).
+4. **Site settings** (`config/settings.yml`):
+
+   ```yaml
+   resenha_video_enabled:
+     default: false
+     client: true
+   resenha_video_max_publishers:
+     default: 8
+     min: 2
+     max: 16
+     client: true
+   ```
+
+   Off by default — admin opt-in, independent of voice.
+
+5. **Page route** rendering the app shell at `/resenha/r/:slug`, guarded by
+   `ensure_can_join_resenha_room!`-equivalent visibility (the room must be
+   visible to the user; joining still requires the explicit join action).
+
+Nothing changes in the signal relay.
+
+## Screen sharing
+
+Nearly free once camera works — it's the same transceiver machinery:
+
+- `getDisplayMedia({ video: { frameRate: { max: 15 } } })`, then
+  `replaceTrack` on the _same_ video transceiver.
+- **Camera XOR screen** per user (one video track each way), as in the
+  original draft — keeps transceiver count and UI simple.
+- Handle the browser's native "Stop sharing" via `track.onended`.
+- Hide the button where `getDisplayMedia` is unavailable (iOS Safari, most
+  Android browsers).
+- Screen tiles: `object-fit: contain`, no mirror, "Screen" badge; a screen
+  share auto-pins as the spotlight tile once spotlight exists.
+
+## Phasing
+
+1. **Foundation (no UI to speak of).** Video transceivers at peer setup,
+   separate camera stream, `replaceTrack` camera toggle (temporary debug
+   button), per-user stream registry fix, restart-path media reattachment,
+   `is_video_on` presence flag, site settings. Behind
+   `resenha_video_enabled`; audio path untouched.
+2. **The page.** `/resenha/r/:slug` route, tile grid (avatar tiles for all
+   rooms, video tiles where allowed), controls bar, sidebar indicators,
+   per-room `video_enabled` toggle + form + enforcement.
+3. **Boundary pushing.** `watching_video` subscription gating, watcher-count
+   bitrate/resolution ladder, publisher cap enforcement, quality profile
+   override, mobile tile limits.
+4. **Screen share + spotlight.** `getDisplayMedia`, camera XOR screen,
+   active-speaker/pin spotlight layout.
 
 ## Edge cases
 
-- **User enables camera when video participant limit is reached:** The camera
-  button is disabled with a tooltip: "Maximum video participants reached."
-  Check the count before calling `getUserMedia`.
-- **Screen share ended by OS/browser (e.g., "Stop sharing" button):**
-  Handled by the `track.onended` event which calls `toggleScreenShare()`.
-- **Renegotiation storms:** Multiple users enabling video simultaneously
-  triggers multiple renegotiations. The existing ICE candidate batching
-  (75ms) helps. Add a renegotiation debounce: if `onnegotiationneeded` fires
-  within 200ms of the last negotiation, delay it.
-- **User joins mid-video:** New user joins, existing video participants'
-  `onnegotiationneeded` fires for the new peer connection, which includes
-  the video track. The new user receives video automatically.
-- **Mobile browsers:** `getDisplayMedia` is not supported on iOS Safari or
-  most Android browsers. Hide the screen share button when
-  `navigator.mediaDevices.getDisplayMedia` is undefined. Camera works on
-  mobile but the panel should be fullscreen (Mode 3) on small viewports
-  since Mode 2 is too narrow.
-- **Popout blocked by popup blocker:** `window.open` returns `null`. Show a
-  toast: "Popup blocked. Allow popups for this site to use the detached
-  video view."
-- **Panel resize vs. Discourse layout:** The panel width change must trigger
-  a reflow of the main content area. Use CSS `flex` so the content area
-  automatically fills remaining space. Avoid fixed widths on the content
-  area.
-- **Video + PTT:** Works fine — PTT controls audio, video is independent.
-- **Video + Stage rooms:** Disabled for now. The UI complexity of
-  speaker/listener sections + video tiles is too much for a first version.
+- **Camera enable at publisher cap:** button disabled with tooltip; server
+  422s as the real gate (client count can be stale).
+- **Two users enable camera simultaneously:** no interaction at all —
+  `replaceTrack` involves no signaling, so there is nothing to glare. (The
+  original draft's renegotiation-storm concern dissolves with this design.)
+- **User joins mid-video:** initial negotiation includes the video m-line;
+  watchers receive frames as soon as publishers' senders pick them up from
+  the `watching_video` broadcast. No renegotiation.
+- **Peer connection restart while camera on:** restart path reattaches the
+  camera track for subscribed peers (required fix #2).
+- **Room's `video_enabled` switched off mid-call:** publishers stop sending,
+  toast shown, tiles fall back to avatars.
+- **Mobile:** camera works; cap rendered tiles on small viewports (decode
+  cost), prefer the spotlight layout; backgrounding the browser stops the
+  camera — broadcast `is_video_on: false` on track end.
+- **PTT + video:** independent — PTT drives audio track `enabled`, video is a
+  separate track.
+- **Stage rooms:** excluded in v1 (`room.open?` in the effective rule).
+  Follow-on: speakers may publish, listeners are watch-only — falls out of
+  existing role logic since listeners already have no send path.
+- **Deafened users:** deafen is audio-only; they still see video. (Matches
+  Discord semantics.)
 
 ## Future enhancements (out of scope)
 
-- **Video in Stage rooms** — speakers can share camera, listeners are
-  view-only.
-- **SFU integration** — for rooms with more than 3-5 video participants.
-- **Virtual backgrounds** — WebGL/Canvas-based background blur or
-  replacement using a segmentation model (like TensorFlow BodyPix).
-- **Recording** — capture the composite video layout to a file.
-- **Reactions overlay** — floating emoji reactions on the video tiles.
-- **Picture-in-picture** — use the browser's native PiP API for a single
-  video tile that floats over other tabs.
-- **Simulcast** — send multiple quality layers so receivers can adapt to
-  their bandwidth. Requires SFU to be effective.
+- Video in Stage rooms (speakers publish, listeners watch).
+- SFU integration for rooms beyond mesh limits.
+- Picture-in-picture via the native PiP API (supersedes the original draft's
+  `window.open` popout idea — far less machinery for the same need).
+- Active-speaker auto-spotlight, click-to-pin (phase 4 starts this).
+- Virtual backgrounds (segmentation model, WebGL) — note the DTLN worklet
+  already establishes the WASM-in-media-pipeline pattern.
+- Recording, reactions overlay.

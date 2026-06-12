@@ -169,10 +169,18 @@ export default {
               : "microphone-lines";
           }
 
+          get #hasActiveVideo() {
+            return (this.room.active_participants || []).some(
+              (participant) =>
+                participant?.is_video_on || participant?.is_screen_sharing
+            );
+          }
+
           get suffixType() {
             if (
               this.resenhaWebrtc.connectionStateFor(this.room.id) ===
-              "connecting"
+                "connecting" ||
+              this.#hasActiveVideo
             ) {
               return "icon";
             }
@@ -185,6 +193,9 @@ export default {
               "connecting"
             ) {
               return "spinner";
+            }
+            if (this.#hasActiveVideo) {
+              return "video";
             }
             return null;
           }
@@ -345,13 +356,23 @@ export default {
           }
 
           get suffixType() {
-            if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
+            if (
+              this.participant.is_screen_sharing ||
+              this.participant.is_video_on ||
+              (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled)
+            ) {
               return "icon";
             }
             return null;
           }
 
           get suffixValue() {
+            if (this.participant.is_screen_sharing) {
+              return "display";
+            }
+            if (this.participant.is_video_on) {
+              return "video";
+            }
             if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
               return "walkie-talkie";
             }

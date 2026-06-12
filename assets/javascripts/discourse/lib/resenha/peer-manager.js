@@ -15,6 +15,56 @@ export default class PeerManager {
     return `${roomId}:${userId}`;
   }
 
+  // Prefer the transceiver associated with a negotiated m-line (mid set):
+  // on the answerer side the connection can briefly hold two video
+  // transceivers — the negotiated one and the unassociated pre-allocated one.
+  static videoTransceiverFor(pc) {
+    const videoTransceivers = pc
+      .getTransceivers()
+      .filter((transceiver) => transceiver.receiver?.track?.kind === "video");
+
+    return (
+      videoTransceivers.find((transceiver) => transceiver.mid !== null) ??
+      videoTransceivers[0]
+    );
+  }
+
+  // Per JSEP, applying a remote offer only reuses transceivers created via
+  // addTrack — never the pre-allocated addTransceiver one — so the answerer
+  // gets a fresh recvonly transceiver for the offered video m-line and could
+  // never send video back. Called between setRemoteDescription(offer) and
+  // createAnswer: flips the associated transceiver to sendrecv (the answer
+  // then carries it, no renegotiation) and migrates any track off the now
+  // orphaned pre-allocated transceiver.
+  static alignVideoTransceiverForAnswer(pc) {
+    const videoTransceivers = pc
+      .getTransceivers()
+      .filter((transceiver) => transceiver.receiver?.track?.kind === "video");
+
+    const associated = videoTransceivers.find(
+      (transceiver) => transceiver.mid !== null
+    );
+    if (!associated) {
+      return;
+    }
+
+    if (associated.direction !== "sendrecv") {
+      associated.direction = "sendrecv";
+    }
+
+    const orphan = videoTransceivers.find(
+      (transceiver) => transceiver !== associated && transceiver.mid === null
+    );
+    const orphanTrack = orphan?.sender?.track;
+    if (orphanTrack && !associated.sender.track) {
+      associated.sender.replaceTrack(orphanTrack).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to migrate video track", error);
+      });
+      orphan.sender.replaceTrack(null).catch(() => {});
+    }
+  }
+
   #peerConnections = new Map();
   #offerRetryTimers = new Map();
   #offerRetryAttempts = new Map();
@@ -26,6 +76,7 @@ export default class PeerManager {
   #getIceServers;
   #getIceTransportPolicy;
   #getLocalStream;
+  #getLocalVideoTrack;
   #sendSignal;
   #flushQueuedSignals;
   #onTrack;
@@ -37,6 +88,7 @@ export default class PeerManager {
     getIceServers,
     getIceTransportPolicy = () => "all",
     getLocalStream,
+    getLocalVideoTrack = () => null,
     sendSignal,
     flushQueuedSignals,
     onTrack,
@@ -47,6 +99,7 @@ export default class PeerManager {
     this.#getIceServers = getIceServers;
     this.#getIceTransportPolicy = getIceTransportPolicy;
     this.#getLocalStream = getLocalStream;
+    this.#getLocalVideoTrack = getLocalVideoTrack;
     this.#sendSignal = sendSignal;
     this.#flushQueuedSignals = flushQueuedSignals;
     this.#onTrack = onTrack;
@@ -96,9 +149,23 @@ export default class PeerManager {
       }
     }
 
+    // The video m-line is negotiated up-front so that turning a camera or
+    // screen share on later is a plain replaceTrack with no renegotiation —
+    // the signaling layer only supports one-shot negotiation at peer setup.
+    // An idle sender transmits nothing.
+    const videoTransceiver = pc.addTransceiver("video", {
+      direction: "sendrecv",
+    });
+    const videoTrack = this.#getLocalVideoTrack(roomId, remoteUserId);
+    if (videoTrack) {
+      videoTransceiver.sender.replaceTrack(videoTrack).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to attach video track", error);
+      });
+    }
+
     pc.ontrack = (event) => {
-      const stream = event.streams?.[0] || new MediaStream([event.track]);
-      this.#onTrack(roomId, remoteUserId, stream);
+      this.#onTrack(roomId, remoteUserId, event.track);
     };
 
     pc.onicecandidate = (event) => {

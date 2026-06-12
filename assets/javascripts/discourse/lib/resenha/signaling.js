@@ -9,7 +9,7 @@ export default class SignalingManager {
     return `${roomId}:${userId}`;
   }
 
-static #buildPayload(messages) {
+  static #buildPayload(messages) {
     if (messages.length === 1) {
       const [message] = messages;
 
@@ -34,13 +34,9 @@ static #buildPayload(messages) {
     };
   }
 
-#candidateBatchDelayMs;
+  #candidateBatchDelayMs;
   #candidateBatchSize;
   #httpBatchDelayMs;
-
-
-
-
 
   #signalQueues = new Map();
   #signalFlushTimers = new Map();

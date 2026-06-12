@@ -78,6 +78,7 @@ class ResenhaRoomsStub extends Service {
   setParticipantDeafened() {}
   setParticipantSpeaking() {}
   setParticipantIdleState() {}
+  setParticipantVideoState() {}
 }
 
 class ToastsStub extends Service {
@@ -97,6 +98,7 @@ class FakeRTCPeerConnection {
   localDescription = null;
   remoteDescription = null;
   senders = [];
+  transceivers = [];
 
   addedCandidates = [];
 
@@ -117,6 +119,35 @@ class FakeRTCPeerConnection {
 
     this.senders.push(sender);
     return sender;
+  }
+
+  addTransceiver(kind) {
+    const sender = {
+      track: null,
+      replaceCalls: [],
+      async replaceTrack(newTrack) {
+        this.track = newTrack;
+        this.replaceCalls.push(newTrack);
+      },
+      getParameters() {
+        return { encodings: [{}] };
+      },
+      async setParameters() {},
+    };
+
+    const transceiver = {
+      direction: "sendrecv",
+      sender,
+      receiver: { track: { kind } },
+    };
+
+    this.transceivers.push(transceiver);
+    this.senders.push(sender);
+    return transceiver;
+  }
+
+  getTransceivers() {
+    return this.transceivers;
   }
 
   getSenders() {
@@ -411,10 +442,39 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     this.originalRTCPeerConnection = globalThis.RTCPeerConnection;
     this.originalRTCIceCandidate = globalThis.RTCIceCandidate;
     this.originalRTCSessionDescription = globalThis.RTCSessionDescription;
+    this.originalMediaStream = globalThis.MediaStream;
 
     FakeRTCPeerConnection.created = 0;
     FakeRTCPeerConnection.instances = [];
     globalThis.RTCPeerConnection = FakeRTCPeerConnection;
+    globalThis.MediaStream = class {
+      static counter = 0;
+
+      constructor(tracks = []) {
+        this.id = `fake-media-stream-${++globalThis.MediaStream.counter}`;
+        this.tracks = [...tracks];
+      }
+
+      getTracks() {
+        return [...this.tracks];
+      }
+
+      getAudioTracks() {
+        return this.tracks.filter((track) => track.kind === "audio");
+      }
+
+      getVideoTracks() {
+        return this.tracks.filter((track) => track.kind === "video");
+      }
+
+      addTrack(track) {
+        this.tracks.push(track);
+      }
+
+      removeTrack(track) {
+        this.tracks = this.tracks.filter((existing) => existing !== track);
+      }
+    };
     globalThis.RTCIceCandidate = class {
       constructor(candidate) {
         Object.assign(this, candidate);
@@ -435,6 +495,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     globalThis.RTCPeerConnection = this.originalRTCPeerConnection;
     globalThis.RTCIceCandidate = this.originalRTCIceCandidate;
     globalThis.RTCSessionDescription = this.originalRTCSessionDescription;
+    globalThis.MediaStream = this.originalMediaStream;
   });
 
   test("iceTransportPolicy forces relay when only TURN servers are configured", function (assert) {
@@ -885,7 +946,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       assert.true(
         this.subject
           .remoteStreamsFor(1)
-          .some((stream) => stream.id === "peer-2-stream"),
+          .some((stream) =>
+            stream.getTracks().some((track) => track.id === "peer-2-track")
+          ),
         "exposes the peer's audio stream after negotiation completes"
       );
     } finally {
@@ -976,7 +1039,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       assert.true(
         this.subject
           .remoteStreamsFor(1)
-          .some((stream) => stream.id === "peer-50-stream"),
+          .some((stream) =>
+            stream.getTracks().some((track) => track.id === "peer-50-track")
+          ),
         "exposes the peer's audio after a slow-permission join"
       );
     } finally {
@@ -1054,7 +1119,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       assert.true(
         this.subject
           .remoteStreamsFor(1)
-          .some((stream) => stream.id === "peer-2-stream"),
+          .some((stream) =>
+            stream.getTracks().some((track) => track.id === "peer-2-track")
+          ),
         "exposes the peer's audio after a slow-permission join"
       );
     } finally {
@@ -1568,6 +1635,92 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       });
     } finally {
       localStorage.removeItem("resenha:noise-suppression");
+      audioEnvironment.restore();
+    }
+  });
+
+  test("leaving the room page stops an active camera publication", async function (assert) {
+    this.siteSettings.resenha_video_enabled = true;
+    this.siteSettings.resenha_video_max_publishers = 8;
+
+    this.room.room_type = "open";
+    this.room.video_enabled = true;
+    this.room.membership = { role_name: "participant" };
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant", watching_video: true },
+    ];
+
+    const stateRequests = [];
+    pretender.post("/resenha/rooms/1/state", (request) => {
+      stateRequests.push(
+        Object.fromEntries(new URLSearchParams(request.requestBody))
+      );
+      return response({});
+    });
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: rawStream,
+    });
+
+    let cameraStopped = false;
+    const cameraTrack = {
+      id: "camera-track",
+      kind: "video",
+      enabled: true,
+      contentHint: "",
+      stop() {
+        cameraStopped = true;
+      },
+      addEventListener() {},
+    };
+    const cameraStream = {
+      id: "camera-stream",
+      getTracks: () => [cameraTrack],
+      getVideoTracks: () => [cameraTrack],
+    };
+
+    navigator.mediaDevices.getUserMedia = async (constraints) =>
+      constraints?.video ? cameraStream : rawStream;
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      this.subject.setWatching(1, true);
+      await this.subject.toggleCamera();
+
+      assert.strictEqual(
+        this.subject.localVideoKind,
+        "camera",
+        "camera publication starts from the room page"
+      );
+
+      const requestsBeforeLeave = stateRequests.length;
+      this.subject.setWatching(1, false);
+      await wait(10);
+
+      assert.strictEqual(
+        this.subject.localVideoKind,
+        null,
+        "publication stops when the user leaves the room page"
+      );
+      assert.true(
+        cameraStopped,
+        "the camera track is stopped so the device light turns off"
+      );
+
+      const leaveRequests = stateRequests.slice(requestsBeforeLeave);
+      assert.deepEqual(
+        leaveRequests,
+        [{ watching: "false", video: "false", screen: "false" }],
+        "page leave sends one combined state request so concurrent " +
+          "read-modify-write updates cannot resurrect stale publisher flags"
+      );
+    } finally {
       audioEnvironment.restore();
     }
   });

@@ -18,6 +18,7 @@ module Resenha
                     kick
                     heartbeat
                     toggle_mute
+                    state
                   ]
 
     def index
@@ -169,7 +170,7 @@ module Resenha
              }
     end
 
-    def toggle_mute
+    def state
       guardian.ensure_can_join_resenha_room!(@room)
 
       bool = ActiveModel::Type::Boolean.new
@@ -179,15 +180,34 @@ module Resenha
         raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.listeners_cannot_unmute"))
       end
 
+      wants_camera = params.key?(:video) && bool.cast(params[:video])
+      wants_screen = params.key?(:screen) && bool.cast(params[:screen])
+
+      if wants_camera || wants_screen
+        unless @room.video_allowed?
+          raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.video_not_allowed"))
+        end
+
+        if video_publisher_count(@room, exclude_user_id: current_user.id) >=
+             SiteSetting.resenha_video_max_publishers
+          raise Discourse::InvalidParameters.new(I18n.t("resenha.errors.video_publisher_limit"))
+        end
+      end
+
       metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
       metadata[:is_muted] = bool.cast(params[:muted]) if params.key?(:muted)
       metadata[:is_deafened] = bool.cast(params[:deafened]) if params.key?(:deafened)
+      metadata[:is_video_on] = bool.cast(params[:video]) if params.key?(:video)
+      metadata[:is_screen_sharing] = bool.cast(params[:screen]) if params.key?(:screen)
+      metadata[:watching_video] = bool.cast(params[:watching]) if params.key?(:watching)
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
 
       Resenha::RoomBroadcaster.publish_participants(@room)
 
       head :no_content
     end
+
+    alias toggle_mute state
 
     def kick
       guardian.ensure_can_manage_resenha_room!(@room)
@@ -293,9 +313,27 @@ module Resenha
       session
     end
 
+    def video_publisher_count(room, exclude_user_id: nil)
+      active_ids = Resenha::ParticipantTracker.user_ids(room.id)
+      all_metadata = Resenha::ParticipantTracker.get_all_metadata(room.id)
+
+      active_ids.count do |user_id|
+        next false if user_id == exclude_user_id
+        metadata = all_metadata[user_id] || {}
+        metadata[:is_video_on] || metadata[:is_screen_sharing]
+      end
+    end
+
     def room_params
       permitted =
-        params.require(:room).permit(:name, :description, :public, :max_participants, :room_type)
+        params.require(:room).permit(
+          :name,
+          :description,
+          :public,
+          :max_participants,
+          :room_type,
+          :video_enabled,
+        )
       if permitted.key?(:room_type)
         permitted[:room_type] = Resenha::Room::ROOM_TYPES[permitted[:room_type].to_s] ||
           Resenha::Room::ROOM_TYPE_OPEN

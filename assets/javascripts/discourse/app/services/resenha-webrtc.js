@@ -2,6 +2,7 @@ import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
+import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
 import IdleTracker from "../../lib/resenha/idle-tracker";
@@ -29,6 +30,9 @@ export default class ResenhaWebrtcService extends Service {
   @service toasts;
 
   @tracked localStream;
+  @tracked localVideoStream;
+  @tracked localVideoKind = null;
+  @tracked watchingRoomId = null;
   @tracked audioEnabled = true;
   @tracked noiseSuppressionEnabled = false;
   @tracked deafened = false;
@@ -89,12 +93,14 @@ export default class ResenhaWebrtcService extends Service {
       getIceServers: () => this.iceServers,
       getIceTransportPolicy: () => this.iceTransportPolicy,
       getLocalStream: () => this.localStream,
+      getLocalVideoTrack: (roomId, uid) =>
+        this.#localVideoTrackFor(roomId, uid),
       sendSignal: (roomId, uid, payload) =>
         this.#signaling.send(roomId, uid, payload),
       flushQueuedSignals: (roomId, uid) =>
         this.#signaling.flushQueued(roomId, uid),
-      onTrack: (roomId, uid, stream) =>
-        this.#registerRemoteStream(roomId, uid, stream),
+      onTrack: (roomId, uid, track) =>
+        this.#registerRemoteTrack(roomId, uid, track),
       clearSignalQueue: (roomId, uid) =>
         this.#signaling.clearForPeer(roomId, uid),
       onPeerDestroyed: (roomId, uid) => this.#removeRemoteStream(roomId, uid),
@@ -143,6 +149,10 @@ export default class ResenhaWebrtcService extends Service {
     this.#peerManager.destroyAll();
     this.#signaling.destroy();
     this.#noiseSuppression.teardown();
+
+    this.localVideoStream?.getTracks().forEach((track) => track.stop());
+    this.localVideoStream = null;
+    this.localVideoKind = null;
 
     this.#stopLocalStream();
 
@@ -221,6 +231,13 @@ export default class ResenhaWebrtcService extends Service {
   remoteStreamsFor(roomId) {
     this.remoteStreamsRevision;
     return (this.#remoteStreams.get(roomId) || []).map((entry) => entry.stream);
+  }
+
+  remoteStreamFor(roomId, userId) {
+    this.remoteStreamsRevision;
+    return (this.#remoteStreams.get(roomId) || []).find(
+      (entry) => Number(entry?.userId) === Number(userId)
+    )?.stream;
   }
 
   connectionStateFor(roomId) {
@@ -397,6 +414,10 @@ export default class ResenhaWebrtcService extends Service {
       this.#pttManager.startListening();
     }
 
+    if (this.watchingRoomId === room.id) {
+      this.setWatching(room.id, true);
+    }
+
     playConnectedSound();
   }
 
@@ -408,6 +429,10 @@ export default class ResenhaWebrtcService extends Service {
     const keepLocalStream = options.keepLocalStream === true;
     const wasConnecting = this.#connectingRoomIds.has(room.id);
     const wasConnected = this.#activeRoomIds.has(room.id);
+
+    if (this.localVideoKind && (wasConnected || wasConnecting)) {
+      this.#stopLocalVideo({ broadcast: false }).catch(() => {});
+    }
 
     if (wasConnecting) {
       this.#joinRevision++;
@@ -635,6 +660,398 @@ export default class ResenhaWebrtcService extends Service {
     await this.#replaceTrackOnAllPeers();
   }
 
+  // --- Video & screen sharing ---
+
+  get screenShareSupported() {
+    return !!navigator.mediaDevices?.getDisplayMedia;
+  }
+
+  videoAllowedIn(room) {
+    return !!(
+      this.siteSettings.resenha_video_enabled &&
+      room?.video_enabled &&
+      room?.room_type !== "stage"
+    );
+  }
+
+  videoPublisherCount(roomId) {
+    const room = this.resenhaRooms?.roomById(roomId);
+    return (room?.active_participants || []).filter(
+      (participant) =>
+        participant?.is_video_on || participant?.is_screen_sharing
+    ).length;
+  }
+
+  canPublishVideo(roomId) {
+    const room = this.resenhaRooms?.roomById(roomId);
+    if (!room || !this.videoAllowedIn(room)) {
+      return false;
+    }
+    if (!this.#activeRoomIds.has(roomId)) {
+      return false;
+    }
+    if (this.localVideoKind) {
+      return true;
+    }
+    return (
+      this.videoPublisherCount(roomId) <
+      this.siteSettings.resenha_video_max_publishers
+    );
+  }
+
+  async toggleCamera() {
+    if (this.localVideoKind === "camera") {
+      await this.#stopLocalVideo();
+      return;
+    }
+
+    await this.#startLocalVideo("camera");
+  }
+
+  async toggleScreenShare() {
+    if (this.localVideoKind === "screen") {
+      await this.#stopLocalVideo();
+      return;
+    }
+
+    await this.#startLocalVideo("screen");
+  }
+
+  setWatching(roomId, watching) {
+    if (watching) {
+      this.watchingRoomId = roomId;
+    } else if (this.watchingRoomId === roomId) {
+      this.watchingRoomId = null;
+    }
+
+    if (!this.#activeRoomIds.has(roomId)) {
+      return;
+    }
+
+    // The room page holds the only controls that stop a camera or screen
+    // share, so leaving it must stop publishing too — otherwise capture
+    // silently continues with no visible way to end it. The cleared video
+    // flags ride along in the same state request as the watching flag: the
+    // server rewrites the whole metadata hash per request, so two concurrent
+    // requests could race and resurrect stale publisher flags.
+    const stoppingVideo = !watching && !!this.localVideoKind;
+    if (stoppingVideo) {
+      this.#stopLocalVideo({ broadcast: false }).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to stop video on page leave", error);
+      });
+    }
+
+    const localState = { watching_video: watching };
+    const data = { watching };
+    if (stoppingVideo) {
+      localState.is_video_on = false;
+      localState.is_screen_sharing = false;
+      data.video = false;
+      data.screen = false;
+    }
+
+    this.resenhaRooms?.setParticipantVideoState(
+      roomId,
+      this.currentUser?.id,
+      localState
+    );
+
+    ajax(`/resenha/rooms/${roomId}/state`, {
+      type: "POST",
+      data,
+    }).catch(() => {});
+  }
+
+  @action
+  attachVideoStream(stream, element) {
+    if (!element || !stream) {
+      return;
+    }
+
+    if (element.srcObject !== stream) {
+      element.srcObject = stream;
+    }
+
+    // Remote audio plays through the voice canvas sinks; video elements stay
+    // muted so the same stream never produces doubled audio.
+    element.muted = true;
+    element.autoplay = true;
+    element.playsInline = true;
+
+    try {
+      element.play?.()?.catch?.(() => {});
+    } catch {
+      // ignore playback errors; the element retries on user interaction
+    }
+  }
+
+  async #startLocalVideo(kind) {
+    const roomId = this.#firstActiveRoomId();
+    if (!roomId) {
+      return;
+    }
+
+    if (!this.canPublishVideo(roomId)) {
+      this.toasts.error({
+        duration: 5000,
+        data: { message: i18n("resenha.video.publisher_limit") },
+      });
+      return;
+    }
+
+    // Capture must be the first await: Firefox only allows getDisplayMedia
+    // while the click's transient activation is alive, and awaiting anything
+    // else first (e.g. stopping the current camera) consumes it. The old
+    // stream is torn down after the picker succeeds, which also keeps the
+    // camera running when the user cancels the picker.
+    let stream;
+    try {
+      if (kind === "screen") {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { max: 15 } },
+          audio: false,
+        });
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { max: 24 },
+          },
+        });
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(`[resenha] failed to obtain ${kind} stream`, error);
+      if (error?.name !== "NotAllowedError" && error?.name !== "AbortError") {
+        this.toasts.error({
+          duration: 5000,
+          data: { message: i18n("resenha.video.capture_failed") },
+        });
+      }
+      return;
+    }
+
+    if (this.localVideoKind) {
+      await this.#stopLocalVideo({ broadcast: false });
+    }
+
+    const track = stream.getVideoTracks()[0];
+    if (!track) {
+      stream.getTracks().forEach((streamTrack) => streamTrack.stop());
+      return;
+    }
+
+    track.contentHint = kind === "screen" ? "detail" : "motion";
+    track.addEventListener("ended", () => this.#handleLocalVideoEnded(), {
+      once: true,
+    });
+
+    this.localVideoStream = stream;
+    this.localVideoKind = kind;
+
+    try {
+      await this.#broadcastVideoState(roomId);
+    } catch (error) {
+      await this.#stopLocalVideo({ broadcast: false });
+      popupAjaxError(error);
+      return;
+    }
+
+    await this.#syncVideoSenders(roomId);
+  }
+
+  async #stopLocalVideo({ broadcast = true } = {}) {
+    const roomId = this.#firstActiveRoomId();
+    const stream = this.localVideoStream;
+
+    this.localVideoStream = null;
+    this.localVideoKind = null;
+
+    stream?.getTracks().forEach((track) => track.stop());
+
+    if (roomId) {
+      await this.#syncVideoSenders(roomId);
+      if (broadcast) {
+        this.#broadcastVideoState(roomId).catch(() => {});
+      }
+    }
+  }
+
+  #handleLocalVideoEnded() {
+    if (!this.localVideoKind) {
+      return;
+    }
+    this.#stopLocalVideo().catch((error) => {
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to stop local video", error);
+    });
+  }
+
+  #firstActiveRoomId() {
+    for (const roomId of this.#activeRoomIds) {
+      return roomId;
+    }
+    return null;
+  }
+
+  get localVideoTrack() {
+    return this.localVideoStream?.getVideoTracks()?.[0] || null;
+  }
+
+  #localVideoTrackFor(roomId, remoteUserId) {
+    const track = this.localVideoTrack;
+    if (!track) {
+      return null;
+    }
+
+    if (
+      !this.#activeRoomIds.has(roomId) &&
+      !this.#connectingRoomIds.has(roomId)
+    ) {
+      return null;
+    }
+
+    const room = this.resenhaRooms?.roomById(roomId);
+    const participant = (room?.active_participants || []).find(
+      (entry) => Number(entry?.id) === Number(remoteUserId)
+    );
+
+    return participant?.watching_video ? track : null;
+  }
+
+  // Each peer has a dedicated sender, so video is only attached toward peers
+  // currently watching the room page — every skipped peer saves an entire
+  // encoder session, not just bandwidth.
+  async #syncVideoSenders(roomId) {
+    const peers = this.#peerManager.getRoomPeers(roomId);
+    if (!peers) {
+      return;
+    }
+
+    for (const [remoteUserId, pc] of peers) {
+      const transceiver = PeerManager.videoTransceiverFor(pc);
+      if (!transceiver) {
+        continue;
+      }
+
+      const desired = this.#localVideoTrackFor(roomId, remoteUserId);
+      if (transceiver.sender.track === desired) {
+        continue;
+      }
+
+      try {
+        await transceiver.sender.replaceTrack(desired);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[resenha] failed to sync video sender for user ${remoteUserId}`,
+          error
+        );
+      }
+    }
+
+    await this.#applyVideoQuality(roomId);
+  }
+
+  // Mesh budget: every watcher costs the sender a full encode, so resolution
+  // and bitrate scale down as the watcher count grows. Each connection's
+  // bandwidth estimator still adapts per-link below these ceilings.
+  async #applyVideoQuality(roomId) {
+    const peers = this.#peerManager.getRoomPeers(roomId);
+    if (!peers || !this.localVideoKind) {
+      return;
+    }
+
+    const sendingSenders = [];
+    for (const [, pc] of peers) {
+      const sender = PeerManager.videoTransceiverFor(pc)?.sender;
+      if (sender?.track) {
+        sendingSenders.push(sender);
+      }
+    }
+
+    if (!sendingSenders.length) {
+      return;
+    }
+
+    let encoding;
+    if (this.localVideoKind === "screen") {
+      encoding = {
+        maxBitrate: 2_500_000,
+        scaleResolutionDownBy: 1,
+        maxFramerate: 15,
+      };
+    } else if (sendingSenders.length <= 3) {
+      encoding = {
+        maxBitrate: 1_200_000,
+        scaleResolutionDownBy: 1,
+        maxFramerate: 24,
+      };
+    } else if (sendingSenders.length <= 6) {
+      encoding = {
+        maxBitrate: 700_000,
+        scaleResolutionDownBy: 1.5,
+        maxFramerate: 24,
+      };
+    } else {
+      encoding = {
+        maxBitrate: 400_000,
+        scaleResolutionDownBy: 2,
+        maxFramerate: 15,
+      };
+    }
+
+    for (const sender of sendingSenders) {
+      try {
+        const parameters = sender.getParameters();
+        parameters.degradationPreference =
+          this.localVideoKind === "screen"
+            ? "maintain-resolution"
+            : "maintain-framerate";
+        if (!parameters.encodings?.length) {
+          parameters.encodings = [{}];
+        }
+        Object.assign(parameters.encodings[0], encoding);
+        await sender.setParameters(parameters);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to apply video quality", error);
+      }
+    }
+  }
+
+  #broadcastVideoState(roomId) {
+    const video = this.localVideoKind === "camera";
+    const screen = this.localVideoKind === "screen";
+
+    this.resenhaRooms?.setParticipantVideoState(roomId, this.currentUser?.id, {
+      is_video_on: video,
+      is_screen_sharing: screen,
+    });
+
+    return ajax(`/resenha/rooms/${roomId}/state`, {
+      type: "POST",
+      data: { video, screen },
+    });
+  }
+
+  #handleRoomUpdated(roomId) {
+    if (!this.localVideoKind) {
+      return;
+    }
+
+    const room = this.resenhaRooms?.roomById(roomId);
+    if (room && !this.videoAllowedIn(room)) {
+      this.#stopLocalVideo().catch(() => {});
+      this.toasts.default({
+        duration: 5000,
+        data: { message: i18n("resenha.video.room_disabled") },
+      });
+    }
+  }
+
   enablePtt() {
     this.#pttManager.enable();
     this.pttEnabled = true;
@@ -821,6 +1238,8 @@ export default class ResenhaWebrtcService extends Service {
       await this.#handleRoleChange(roomId, payload);
     } else if (payload.type === "kicked") {
       this.#handleKicked(roomId);
+    } else if (payload.type === "room_updated") {
+      this.#handleRoomUpdated(roomId);
     }
   }
 
@@ -913,6 +1332,7 @@ export default class ResenhaWebrtcService extends Service {
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
+        PeerManager.alignVideoTransceiverForAnswer(pc);
         await this.#peerManager.flushPendingCandidates(
           roomId,
           remoteUserId,
@@ -924,6 +1344,10 @@ export default class ResenhaWebrtcService extends Service {
           // eslint-disable-next-line no-console
           console.warn("[resenha] failed to send answer", error);
         });
+
+        if (this.localVideoKind) {
+          await this.#syncVideoSenders(roomId);
+        }
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn(
@@ -1059,6 +1483,10 @@ export default class ResenhaWebrtcService extends Service {
       } else if (hasPeerLeft) {
         playUserLeftSound();
       }
+    }
+
+    if (this.localVideoKind) {
+      await this.#syncVideoSenders(roomId);
     }
   }
 
@@ -1315,6 +1743,9 @@ export default class ResenhaWebrtcService extends Service {
 
     participant.is_muted = !this.audioEnabled;
     participant.is_deafened = this.deafened;
+    participant.is_video_on = this.localVideoKind === "camera";
+    participant.is_screen_sharing = this.localVideoKind === "screen";
+    participant.watching_video = this.watchingRoomId === roomId;
 
     const room = this.resenhaRooms?.roomById(roomId);
     if (room?.membership?.role_name) {
@@ -1400,8 +1831,13 @@ export default class ResenhaWebrtcService extends Service {
     this.#bumpRemoteStreamsRevision();
   }
 
-  #registerRemoteStream(roomId, remoteUserId, stream) {
-    if (!roomId || !remoteUserId || !stream) {
+  // Each remote user gets one service-owned MediaStream that incoming tracks
+  // are merged into. Audio arrives with the sender's stream attached, but the
+  // pre-negotiated video transceiver delivers a bare track (no stream), so
+  // keying the registry on incoming stream identity would make the video
+  // track clobber the user's audio entry.
+  #registerRemoteTrack(roomId, remoteUserId, track) {
+    if (!roomId || !remoteUserId || !track) {
       return;
     }
 
@@ -1410,21 +1846,33 @@ export default class ResenhaWebrtcService extends Service {
       (entry) => Number(entry?.userId) === Number(remoteUserId)
     );
 
-    if (existingIndex >= 0 && roomStreams[existingIndex]?.stream === stream) {
-      return;
-    }
-
+    let entry;
     const next = [...roomStreams];
     if (existingIndex >= 0) {
-      next[existingIndex] = { userId: remoteUserId, stream };
+      entry = next[existingIndex];
     } else {
-      next.push({ userId: remoteUserId, stream });
+      entry = { userId: remoteUserId, stream: new MediaStream() };
+      next.push(entry);
+    }
+
+    const existingTracks = entry.stream.getTracks();
+    if (!existingTracks.includes(track)) {
+      existingTracks
+        .filter((existing) => existing.kind === track.kind)
+        .forEach((existing) => entry.stream.removeTrack(existing));
+      entry.stream.addTrack(track);
     }
 
     this.#remoteStreams.set(roomId, next);
-    this.#streamToParticipant.set(stream, { roomId, userId: remoteUserId });
+    this.#streamToParticipant.set(entry.stream, {
+      roomId,
+      userId: remoteUserId,
+    });
     this.#bumpRemoteStreamsRevision();
-    this.#audioMonitor.ensure(roomId, remoteUserId, stream, false);
+
+    if (track.kind === "audio") {
+      this.#audioMonitor.ensure(roomId, remoteUserId, entry.stream, false);
+    }
   }
 
   #removeRemoteStream(roomId, remoteUserId) {

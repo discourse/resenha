@@ -11,6 +11,8 @@ en:
     resenha_idle_threshold_minutes: "Minutes of inactivity before a voice room participant is marked as idle. Set to 0 to disable."
     resenha_afk_auto_mute_threshold_minutes: "Minutes of inactivity before a voice room participant is automatically muted. Set to 0 to disable."
     resenha_afk_disconnect_threshold_minutes: "Minutes of inactivity before a voice room participant is automatically disconnected. Set to 0 to disable."
+    resenha_video_enabled: "Enable camera video and screen sharing in voice rooms. Rooms can individually opt out via their room settings."
+    resenha_video_max_publishers: "Maximum number of participants who can share video or their screen at the same time in a room. Media stays peer-to-peer, so higher values increase CPU and bandwidth load for everyone watching."
   resenha:
     defaults:
       watercooler_description: "Join for casual drop-in voice chats with other community members."
@@ -22,6 +24,8 @@ en:
       cannot_kick_self: "You cannot kick yourself from the room."
       cannot_kick_creator: "You cannot kick the room creator."
       listeners_cannot_unmute: "Listeners cannot unmute in a Stage room."
+      video_not_allowed: "Video is not enabled in this room."
+      video_publisher_limit: "The maximum number of simultaneous video streams for this room has been reached."
   badges:
     mic_check:
       name: "Mic Check"

@@ -8,6 +8,7 @@ import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 export default class ResenhaRoomSidebarContextMenu extends Component {
   @service modal;
   @service resenhaWebrtc;
+  @service router;
 
   get room() {
     return this.args.data.room;
@@ -15,6 +16,12 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
 
   get isConnected() {
     return this.resenhaWebrtc.connectionStateFor(this.room.id) === "connected";
+  }
+
+  @action
+  openRoomPage() {
+    this.router.transitionTo("resenha-room", this.room.slug);
+    this.args.close();
   }
 
   @action
@@ -39,6 +46,15 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
 
   <template>
     <DropdownMenu class="resenha-room-sidebar-context-menu" as |dropdown|>
+      <dropdown.item>
+        <DButton
+          @action={{this.openRoomPage}}
+          @icon="expand"
+          @label="resenha.room.open_page"
+          @title="resenha.room.open_page"
+          class="resenha-room-sidebar-context-menu__open-page"
+        />
+      </dropdown.item>
       <dropdown.item>
         <DButton
           @action={{this.openRoomInfo}}

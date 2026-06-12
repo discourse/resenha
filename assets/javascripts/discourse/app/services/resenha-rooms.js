@@ -3,6 +3,20 @@ import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
 import { bind } from "discourse/lib/decorators";
 
+// Participant broadcasts arrive in arbitrary database order, so every list
+// that reaches the UI is normalized to one canonical order — otherwise
+// sidebar rows and video tiles reshuffle on each broadcast.
+function sortParticipants(participants) {
+  return [...(participants || [])].sort((a, b) => {
+    const nameA = (a?.username || "").toLowerCase();
+    const nameB = (b?.username || "").toLowerCase();
+    if (nameA !== nameB) {
+      return nameA < nameB ? -1 : 1;
+    }
+    return Number(a?.id) - Number(b?.id);
+  });
+}
+
 export default class ResenhaRoomsService extends Service {
   @service currentUser;
   @service messageBus;
@@ -70,6 +84,7 @@ export default class ResenhaRoomsService extends Service {
     this.#roomsBySlug.clear();
 
     roomPayloads.forEach((room) => {
+      room.active_participants = sortParticipants(room.active_participants);
       this.#roomsById.set(room.id, room);
       this.#roomsBySlug.set(room.slug, room);
       this.#ensureRoomSubscription(room.id);
@@ -83,12 +98,23 @@ export default class ResenhaRoomsService extends Service {
       this.#roomsBySlug.delete(message.room.slug);
       this.#teardownRoomSubscription(message.room.id);
     } else {
+      message.room.active_participants = sortParticipants(
+        message.room.active_participants
+      );
       this.#roomsById.set(message.room.id, message.room);
       this.#roomsBySlug.set(message.room.slug, message.room);
       this.#ensureRoomSubscription(message.room.id);
     }
 
     this.rooms = Array.from(this.#roomsById.values());
+
+    if (message.type === "updated") {
+      this.#forwardToRoomHandlers(message.room.id, {
+        type: "room_updated",
+        room_id: message.room.id,
+        room: message.room,
+      });
+    }
   }
 
   registerRoomHandler(roomId, callback) {
@@ -170,10 +196,10 @@ export default class ResenhaRoomsService extends Service {
       return;
     }
 
-    room.active_participants = [
+    room.active_participants = sortParticipants([
       ...existing,
       { ...participant, is_speaking: participant.is_speaking || false },
-    ];
+    ]);
     this.rooms = [...this.rooms];
   }
 
@@ -302,6 +328,43 @@ export default class ResenhaRoomsService extends Service {
     }
   }
 
+  setParticipantVideoState(roomId, userId, fields) {
+    const targetId = Number(userId);
+    if (!targetId || !fields) {
+      return;
+    }
+
+    const room = this.#roomsById.get(roomId);
+    if (!room || !Array.isArray(room.active_participants)) {
+      return;
+    }
+
+    let changed = false;
+    room.active_participants = room.active_participants.map((participant) => {
+      const participantId = Number(participant?.id);
+      if (!participantId || participantId !== targetId) {
+        return participant;
+      }
+
+      const unchanged = Object.entries(fields).every(
+        ([key, value]) => !!participant[key] === !!value
+      );
+      if (unchanged) {
+        return participant;
+      }
+
+      changed = true;
+      return {
+        ...participant,
+        ...fields,
+      };
+    });
+
+    if (changed) {
+      this.rooms = [...this.rooms];
+    }
+  }
+
   setParticipantRole(roomId, userId, role) {
     const targetId = Number(userId);
     if (!targetId) {
@@ -386,12 +449,15 @@ export default class ResenhaRoomsService extends Service {
             is_speaking: participant.is_speaking === true,
             is_muted: participant.is_muted === true,
             is_deafened: participant.is_deafened === true,
+            is_video_on: participant.is_video_on === true,
+            is_screen_sharing: participant.is_screen_sharing === true,
+            watching_video: participant.watching_video === true,
             idle_state: participant.idle_state,
           },
         ])
     );
 
-    room.active_participants = (participants || []).map((participant) => {
+    const merged = (participants || []).map((participant) => {
       const participantId = Number(participant?.id);
       const previousState = stateByUserId.get(participantId);
       if (!participantId || !previousState) {
@@ -403,9 +469,15 @@ export default class ResenhaRoomsService extends Service {
         is_speaking: previousState.is_speaking,
         is_muted: participant.is_muted ?? previousState.is_muted,
         is_deafened: participant.is_deafened ?? previousState.is_deafened,
+        is_video_on: participant.is_video_on ?? previousState.is_video_on,
+        is_screen_sharing:
+          participant.is_screen_sharing ?? previousState.is_screen_sharing,
+        watching_video:
+          participant.watching_video ?? previousState.watching_video,
         idle_state: participant.idle_state ?? previousState.idle_state,
       };
     });
+    room.active_participants = sortParticipants(merged);
     this.rooms = [...this.rooms];
   }
 }
