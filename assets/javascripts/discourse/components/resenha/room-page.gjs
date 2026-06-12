@@ -1,8 +1,11 @@
 import Component from "@glimmer/component";
+import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
 import { service } from "@ember/service";
 import DButton from "discourse/components/d-button";
+import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 import ResenhaVideoTile from "./video-tile";
 
@@ -204,23 +207,39 @@ export default class ResenhaRoomPage extends Component {
             @translatedTitle={{this.deafenTitle}}
             class={{if this.resenhaWebrtc.deafened "--off" ""}}
           />
+          {{! Capture buttons are plain <button>s on purpose: DButton defers
+              its action via next(), which lands outside the click event
+              dispatch — Firefox only allows getDisplayMedia during the
+              actual dispatch, so a deferred call throws NotAllowedError. }}
           {{#if this.videoAllowed}}
-            <DButton
-              @action={{this.toggleCamera}}
-              @icon={{if this.cameraActive "video" "video-slash"}}
-              @translatedTitle={{this.cameraTitle}}
-              @disabled={{this.cameraDisabled}}
-              class={{if this.cameraActive "--active" ""}}
-            />
+            <button
+              type="button"
+              class={{dConcatClass
+                "btn btn-icon no-text"
+                (if this.cameraActive "--active")
+              }}
+              title={{this.cameraTitle}}
+              aria-label={{this.cameraTitle}}
+              disabled={{this.cameraDisabled}}
+              {{on "click" this.toggleCamera}}
+            >
+              {{dIcon (if this.cameraActive "video" "video-slash")}}
+            </button>
           {{/if}}
           {{#if this.showScreenShare}}
-            <DButton
-              @action={{this.toggleScreenShare}}
-              @icon="display"
-              @translatedTitle={{this.screenShareTitle}}
-              @disabled={{this.screenShareDisabled}}
-              class={{if this.screenShareActive "--active" ""}}
-            />
+            <button
+              type="button"
+              class={{dConcatClass
+                "btn btn-icon no-text"
+                (if this.screenShareActive "--active")
+              }}
+              title={{this.screenShareTitle}}
+              aria-label={{this.screenShareTitle}}
+              disabled={{this.screenShareDisabled}}
+              {{on "click" this.toggleScreenShare}}
+            >
+              {{dIcon "display"}}
+            </button>
           {{/if}}
           <DButton
             @action={{this.leaveRoom}}
