@@ -41,6 +41,10 @@ module Resenha
       ROOM_TYPES.key(room_type) || "open"
     end
 
+    def video_allowed?
+      SiteSetting.resenha_video_enabled && video_enabled && open?
+    end
+
     def moderator_ids
       room_memberships.moderator.pluck(:user_id)
     end

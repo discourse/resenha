@@ -1,12 +1,17 @@
 # frozen_string_literal: true
 require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
+require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 
 RSpec.describe Resenha::RoomsController do
   before do
     ActiveRecord::Migration.suppress_messages do
       unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
         CreateResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
+        AddVideoEnabledToResenhaRooms.new.change
+        Resenha::Room.reset_column_information
       end
     end
   end
@@ -324,6 +329,125 @@ RSpec.describe Resenha::RoomsController do
       post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true }
 
       expect(response.status).to eq(403)
+    end
+  end
+
+  describe "#state" do
+    before do
+      SiteSetting.resenha_video_enabled = true
+      Resenha::ParticipantTracker.add(room.id, user.id)
+      sign_in(user)
+    end
+
+    it "sets video metadata and broadcasts participants" do
+      published = []
+      allow(MessageBus).to receive(:publish) { |channel, data, opts|
+        published << [channel, data, opts]
+      }
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+
+      expect(response.status).to eq(204)
+
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_video_on]).to eq(true)
+
+      participants_message = published.find { |(_, data)| data[:type] == "participants" }
+      expect(participants_message).to be_present
+      participant = participants_message[1][:participants].find { |entry| entry[:id] == user.id }
+      expect(participant[:is_video_on]).to eq(true)
+    end
+
+    it "sets screen sharing and watching metadata" do
+      post "/resenha/rooms/#{room.id}/state.json", params: { screen: true, watching: true }
+
+      expect(response.status).to eq(204)
+
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_screen_sharing]).to eq(true)
+      expect(metadata[:watching_video]).to eq(true)
+    end
+
+    it "rejects video when the site setting is disabled" do
+      SiteSetting.resenha_video_enabled = false
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "rejects video when the room has video disabled" do
+      room.update!(video_enabled: false)
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "rejects video in stage rooms" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "rejects video when the publisher limit is reached" do
+      SiteSetting.resenha_video_max_publishers = 2
+
+      publishers = Fabricate.times(2, :user)
+      publishers.each do |publisher|
+        Resenha::ParticipantTracker.add(room.id, publisher.id)
+        Resenha::ParticipantTracker.update_metadata(room.id, publisher.id, { is_video_on: true })
+      end
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+
+      expect(response.status).to eq(400)
+    end
+
+    it "allows an existing publisher to keep publishing at the limit" do
+      SiteSetting.resenha_video_max_publishers = 2
+
+      publisher = Fabricate(:user)
+      Resenha::ParticipantTracker.add(room.id, publisher.id)
+      Resenha::ParticipantTracker.update_metadata(room.id, publisher.id, { is_video_on: true })
+      Resenha::ParticipantTracker.update_metadata(room.id, user.id, { is_video_on: true })
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+
+      expect(response.status).to eq(204)
+    end
+
+    it "allows turning video off even when video is disallowed" do
+      Resenha::ParticipantTracker.update_metadata(room.id, user.id, { is_video_on: true })
+      room.update!(video_enabled: false)
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: false }
+
+      expect(response.status).to eq(204)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_video_on]).to eq(false)
+    end
+
+    it "still updates mute state through the toggle_mute alias" do
+      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true }
+
+      expect(response.status).to eq(204)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_muted]).to eq(true)
+    end
+  end
+
+  describe "#update" do
+    it "lets a room manager toggle video_enabled" do
+      sign_in(staff)
+
+      put "/resenha/rooms/#{room.id}.json", params: { room: { video_enabled: false } }
+
+      expect(response.status).to eq(200)
+      expect(room.reload.video_enabled).to eq(false)
+      expect(response.parsed_body["room"]["video_enabled"]).to eq(false)
     end
   end
 

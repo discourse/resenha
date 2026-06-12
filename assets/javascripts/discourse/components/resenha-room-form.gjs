@@ -1,12 +1,15 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
+import { service } from "@ember/service";
 import BackButton from "discourse/components/back-button";
 import Form from "discourse/components/form";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
 
 export default class ResenhaRoomForm extends Component {
+  @service siteSettings;
+
   @tracked isSaving = false;
 
   get isAdminContext() {
@@ -20,7 +23,12 @@ export default class ResenhaRoomForm extends Component {
       public: this.args.room?.public ?? false,
       room_type: this.args.room?.room_type || "open",
       max_participants: this.args.room?.max_participants || null,
+      video_enabled: this.args.room?.video_enabled ?? true,
     };
+  }
+
+  get showVideoToggle() {
+    return this.siteSettings.resenha_video_enabled;
   }
 
   get maxParticipantsValidation() {
@@ -143,6 +151,19 @@ export default class ResenhaRoomForm extends Component {
         >
           <field.Toggle />
         </form.Field>
+
+        {{#if this.showVideoToggle}}
+          {{#unless (this.isStageType form.data.room_type)}}
+            <form.Field
+              @name="video_enabled"
+              @title={{i18n "resenha.admin.room.video_enabled"}}
+              @helpText={{i18n "resenha.admin.room.video_enabled_help"}}
+              as |field|
+            >
+              <field.Toggle />
+            </form.Field>
+          {{/unless}}
+        {{/if}}
 
         <form.Field
           @name="max_participants"

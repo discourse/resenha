@@ -8,6 +8,7 @@ class FakeRTCPeerConnection {
   iceGatheringState = "new";
   localDescription = null;
   #senders = [];
+  #transceivers = [];
 
   constructor() {}
 
@@ -15,6 +16,27 @@ class FakeRTCPeerConnection {
     const sender = { track };
     this.#senders.push(sender);
     return sender;
+  }
+
+  addTransceiver(kind) {
+    const sender = {
+      track: null,
+      async replaceTrack(newTrack) {
+        this.track = newTrack;
+      },
+    };
+    const transceiver = {
+      direction: "sendrecv",
+      sender,
+      receiver: { track: { kind } },
+    };
+    this.#transceivers.push(transceiver);
+    this.#senders.push(sender);
+    return transceiver;
+  }
+
+  getTransceivers() {
+    return this.#transceivers;
   }
 
   getSenders() {

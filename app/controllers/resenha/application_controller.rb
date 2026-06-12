@@ -14,9 +14,5 @@ module Resenha
         raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_enabled"))
       end
     end
-
-    def guardian
-      @guardian ||= Guardian.new(current_user)
-    end
   end
 end

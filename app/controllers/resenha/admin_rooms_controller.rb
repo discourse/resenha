@@ -45,7 +45,7 @@ module Resenha
     private
 
     def room_params
-      params.require(:room).permit(:name, :description, :public, :max_participants)
+      params.require(:room).permit(:name, :description, :public, :max_participants, :video_enabled)
     end
   end
 end

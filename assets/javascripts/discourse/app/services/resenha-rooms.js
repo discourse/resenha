@@ -89,6 +89,14 @@ export default class ResenhaRoomsService extends Service {
     }
 
     this.rooms = Array.from(this.#roomsById.values());
+
+    if (message.type === "updated") {
+      this.#forwardToRoomHandlers(message.room.id, {
+        type: "room_updated",
+        room_id: message.room.id,
+        room: message.room,
+      });
+    }
   }
 
   registerRoomHandler(roomId, callback) {
@@ -302,6 +310,43 @@ export default class ResenhaRoomsService extends Service {
     }
   }
 
+  setParticipantVideoState(roomId, userId, fields) {
+    const targetId = Number(userId);
+    if (!targetId || !fields) {
+      return;
+    }
+
+    const room = this.#roomsById.get(roomId);
+    if (!room || !Array.isArray(room.active_participants)) {
+      return;
+    }
+
+    let changed = false;
+    room.active_participants = room.active_participants.map((participant) => {
+      const participantId = Number(participant?.id);
+      if (!participantId || participantId !== targetId) {
+        return participant;
+      }
+
+      const unchanged = Object.entries(fields).every(
+        ([key, value]) => !!participant[key] === !!value
+      );
+      if (unchanged) {
+        return participant;
+      }
+
+      changed = true;
+      return {
+        ...participant,
+        ...fields,
+      };
+    });
+
+    if (changed) {
+      this.rooms = [...this.rooms];
+    }
+  }
+
   setParticipantRole(roomId, userId, role) {
     const targetId = Number(userId);
     if (!targetId) {
@@ -386,6 +431,9 @@ export default class ResenhaRoomsService extends Service {
             is_speaking: participant.is_speaking === true,
             is_muted: participant.is_muted === true,
             is_deafened: participant.is_deafened === true,
+            is_video_on: participant.is_video_on === true,
+            is_screen_sharing: participant.is_screen_sharing === true,
+            watching_video: participant.watching_video === true,
             idle_state: participant.idle_state,
           },
         ])
@@ -403,6 +451,11 @@ export default class ResenhaRoomsService extends Service {
         is_speaking: previousState.is_speaking,
         is_muted: participant.is_muted ?? previousState.is_muted,
         is_deafened: participant.is_deafened ?? previousState.is_deafened,
+        is_video_on: participant.is_video_on ?? previousState.is_video_on,
+        is_screen_sharing:
+          participant.is_screen_sharing ?? previousState.is_screen_sharing,
+        watching_video:
+          participant.watching_video ?? previousState.watching_video,
         idle_state: participant.idle_state ?? previousState.idle_state,
       };
     });

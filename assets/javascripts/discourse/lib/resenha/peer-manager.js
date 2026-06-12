@@ -15,6 +15,12 @@ export default class PeerManager {
     return `${roomId}:${userId}`;
   }
 
+  static videoTransceiverFor(pc) {
+    return pc
+      .getTransceivers()
+      .find((transceiver) => transceiver.receiver?.track?.kind === "video");
+  }
+
   #peerConnections = new Map();
   #offerRetryTimers = new Map();
   #offerRetryAttempts = new Map();
@@ -26,6 +32,7 @@ export default class PeerManager {
   #getIceServers;
   #getIceTransportPolicy;
   #getLocalStream;
+  #getLocalVideoTrack;
   #sendSignal;
   #flushQueuedSignals;
   #onTrack;
@@ -37,6 +44,7 @@ export default class PeerManager {
     getIceServers,
     getIceTransportPolicy = () => "all",
     getLocalStream,
+    getLocalVideoTrack = () => null,
     sendSignal,
     flushQueuedSignals,
     onTrack,
@@ -47,6 +55,7 @@ export default class PeerManager {
     this.#getIceServers = getIceServers;
     this.#getIceTransportPolicy = getIceTransportPolicy;
     this.#getLocalStream = getLocalStream;
+    this.#getLocalVideoTrack = getLocalVideoTrack;
     this.#sendSignal = sendSignal;
     this.#flushQueuedSignals = flushQueuedSignals;
     this.#onTrack = onTrack;
@@ -96,9 +105,23 @@ export default class PeerManager {
       }
     }
 
+    // The video m-line is negotiated up-front so that turning a camera or
+    // screen share on later is a plain replaceTrack with no renegotiation —
+    // the signaling layer only supports one-shot negotiation at peer setup.
+    // An idle sender transmits nothing.
+    const videoTransceiver = pc.addTransceiver("video", {
+      direction: "sendrecv",
+    });
+    const videoTrack = this.#getLocalVideoTrack(roomId, remoteUserId);
+    if (videoTrack) {
+      videoTransceiver.sender.replaceTrack(videoTrack).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to attach video track", error);
+      });
+    }
+
     pc.ontrack = (event) => {
-      const stream = event.streams?.[0] || new MediaStream([event.track]);
-      this.#onTrack(roomId, remoteUserId, stream);
+      this.#onTrack(roomId, remoteUserId, event.track);
     };
 
     pc.onicecandidate = (event) => {

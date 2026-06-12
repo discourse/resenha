@@ -97,6 +97,7 @@ class FakeRTCPeerConnection {
   localDescription = null;
   remoteDescription = null;
   senders = [];
+  transceivers = [];
 
   addedCandidates = [];
 
@@ -117,6 +118,35 @@ class FakeRTCPeerConnection {
 
     this.senders.push(sender);
     return sender;
+  }
+
+  addTransceiver(kind) {
+    const sender = {
+      track: null,
+      replaceCalls: [],
+      async replaceTrack(newTrack) {
+        this.track = newTrack;
+        this.replaceCalls.push(newTrack);
+      },
+      getParameters() {
+        return { encodings: [{}] };
+      },
+      async setParameters() {},
+    };
+
+    const transceiver = {
+      direction: "sendrecv",
+      sender,
+      receiver: { track: { kind } },
+    };
+
+    this.transceivers.push(transceiver);
+    this.senders.push(sender);
+    return transceiver;
+  }
+
+  getTransceivers() {
+    return this.transceivers;
   }
 
   getSenders() {
@@ -411,10 +441,39 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     this.originalRTCPeerConnection = globalThis.RTCPeerConnection;
     this.originalRTCIceCandidate = globalThis.RTCIceCandidate;
     this.originalRTCSessionDescription = globalThis.RTCSessionDescription;
+    this.originalMediaStream = globalThis.MediaStream;
 
     FakeRTCPeerConnection.created = 0;
     FakeRTCPeerConnection.instances = [];
     globalThis.RTCPeerConnection = FakeRTCPeerConnection;
+    globalThis.MediaStream = class {
+      static counter = 0;
+
+      constructor(tracks = []) {
+        this.id = `fake-media-stream-${++globalThis.MediaStream.counter}`;
+        this.tracks = [...tracks];
+      }
+
+      getTracks() {
+        return [...this.tracks];
+      }
+
+      getAudioTracks() {
+        return this.tracks.filter((track) => track.kind === "audio");
+      }
+
+      getVideoTracks() {
+        return this.tracks.filter((track) => track.kind === "video");
+      }
+
+      addTrack(track) {
+        this.tracks.push(track);
+      }
+
+      removeTrack(track) {
+        this.tracks = this.tracks.filter((existing) => existing !== track);
+      }
+    };
     globalThis.RTCIceCandidate = class {
       constructor(candidate) {
         Object.assign(this, candidate);
@@ -435,6 +494,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     globalThis.RTCPeerConnection = this.originalRTCPeerConnection;
     globalThis.RTCIceCandidate = this.originalRTCIceCandidate;
     globalThis.RTCSessionDescription = this.originalRTCSessionDescription;
+    globalThis.MediaStream = this.originalMediaStream;
   });
 
   test("iceTransportPolicy forces relay when only TURN servers are configured", function (assert) {
@@ -885,7 +945,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       assert.true(
         this.subject
           .remoteStreamsFor(1)
-          .some((stream) => stream.id === "peer-2-stream"),
+          .some((stream) =>
+            stream.getTracks().some((track) => track.id === "peer-2-track")
+          ),
         "exposes the peer's audio stream after negotiation completes"
       );
     } finally {
@@ -976,7 +1038,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       assert.true(
         this.subject
           .remoteStreamsFor(1)
-          .some((stream) => stream.id === "peer-50-stream"),
+          .some((stream) =>
+            stream.getTracks().some((track) => track.id === "peer-50-track")
+          ),
         "exposes the peer's audio after a slow-permission join"
       );
     } finally {
@@ -1054,7 +1118,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       assert.true(
         this.subject
           .remoteStreamsFor(1)
-          .some((stream) => stream.id === "peer-2-stream"),
+          .some((stream) =>
+            stream.getTracks().some((track) => track.id === "peer-2-track")
+          ),
         "exposes the peer's audio after a slow-permission join"
       );
     } finally {

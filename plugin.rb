@@ -34,7 +34,12 @@ register_svg_icon "people-group"
 register_svg_icon "calendar-week"
 register_svg_icon "trophy"
 register_svg_icon "clock"
+register_svg_icon "video"
+register_svg_icon "video-slash"
+register_svg_icon "display"
+register_svg_icon "expand"
 register_asset "stylesheets/common/resenha.scss"
+register_asset "stylesheets/common/resenha-room-page.scss"
 register_asset "stylesheets/common/resenha-admin.scss", :admin
 
 add_admin_route "resenha.admin.title", "resenha", use_new_show_route: true

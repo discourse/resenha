@@ -8,6 +8,7 @@ module Resenha
                :description,
                :public,
                :max_participants,
+               :video_enabled,
                :member_count,
                :created_at,
                :updated_at
