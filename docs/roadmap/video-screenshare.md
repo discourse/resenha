@@ -4,7 +4,7 @@
 > core decisions changed after a deep read of the WebRTC layer:
 >
 > 1. **Media strategy** — the original plan relied on `addTrack()` +
->    `onnegotiationneeded` renegotiation. The codebase has *no* renegotiation
+>    `onnegotiationneeded` renegotiation. The codebase has _no_ renegotiation
 >    path (no `onnegotiationneeded` handler; glare handling, the ufrag restart
 >    heuristic, and answer-state guards all assume one-shot negotiation at peer
 >    setup). The new design pre-allocates video transceivers at peer creation
@@ -25,7 +25,7 @@ full-mesh P2P** — no SFU, no media through the server. Joining a room remains
 audio-first; video is something you opt into by opening the room's dedicated
 page and turning on your camera.
 
-Bandwidth is explicitly *not* the constraint we design for (entry-level
+Bandwidth is explicitly _not_ the constraint we design for (entry-level
 broadband upload is now in the hundreds of Mbps). The binding constraints are:
 
 - **CPU encoder sessions** — in a mesh, each `RTCPeerConnection` runs its own
@@ -73,7 +73,7 @@ From `resenha-webrtc.js`, `peer-manager.js`, `signaling.js`:
   `idle_state`, broadcast via `RoomBroadcaster.publish_participants`. Video
   flags slot straight in.
 - **Call state lives in the `resenha-webrtc` service**, independent of routes —
-  which is why audio survives navigation today, and why a video *page* can be
+  which is why audio survives navigation today, and why a video _page_ can be
   a pure view over service state.
 
 ## Media plan: pre-allocated transceivers + `replaceTrack`
@@ -91,9 +91,21 @@ The video m-line is negotiated **once**, in the same initial offer/answer that
 already works. An idle negotiated video sender transmits nothing, so
 audio-only rooms pay no bandwidth or CPU cost.
 
+**Answerer alignment (JSEP gotcha).** Applying a remote offer only reuses
+local transceivers created via `addTrack` — never ones from `addTransceiver`,
+which are reserved for the local side's next offer. Left alone, the answerer
+gets a fresh `recvonly` transceiver for the offered video m-line and its
+pre-allocated transceiver is orphaned, so the answerer can receive video but
+never send it (one-directional video, surfaced as "the offerer's camera works,
+the answerer's doesn't"). Between `setRemoteDescription(offer)` and
+`createAnswer()`, the answerer therefore flips the associated transceiver's
+direction to `sendrecv` (the answer then carries it — still no renegotiation)
+and migrates any camera track off the orphan. Audio is unaffected because
+audio tracks go through `addTrack` and are reused per spec.
+
 ### Camera on/off
 
-- **On:** acquire a *separate* camera stream with its own
+- **On:** acquire a _separate_ camera stream with its own
   `getUserMedia({ video: ... })` call — never re-acquire or touch the mic
   stream, so the noise-suppression chain is untouched — then
   `transceiver.sender.replaceTrack(cameraTrack)` on each peer that should
@@ -106,7 +118,7 @@ No renegotiation, no new signaling messages, no glare risk, ever.
 ### Required fixes this surfaces
 
 1. **Per-user stream registry.** `#registerRemoteStream` keeps one stream per
-   user and *replaces* it when a different stream arrives. With
+   user and _replaces_ it when a different stream arrives. With
    `addTransceiver`, the incoming video track has no associated stream
    (`event.streams` is empty), so the current `ontrack` fallback would create
    a video-only `MediaStream` that clobbers the user's audio entry. Fix:
@@ -148,11 +160,11 @@ Capture once at 720p; downscale per sender with
 `sender.setParameters({ encodings: [{ maxBitrate, scaleResolutionDownBy, maxFramerate }] })`,
 scaled by **watcher count**:
 
-| Watchers | Per-peer encoding   | Upload @ 8 watchers | Encodes |
-| -------- | ------------------- | ------------------- | ------- |
-| ≤ 3      | 720p @ ~1.2 Mbps    | —                   | ≤ 3     |
-| 4–6      | 480p @ ~700 kbps    | ~3.5 Mbps           | 4–6     |
-| 7+       | 360p @ ~400 kbps    | ~2.8 Mbps           | 7+      |
+| Watchers | Per-peer encoding | Upload @ 8 watchers | Encodes |
+| -------- | ----------------- | ------------------- | ------- |
+| ≤ 3      | 720p @ ~1.2 Mbps  | —                   | ≤ 3     |
+| 4–6      | 480p @ ~700 kbps  | ~3.5 Mbps           | 4–6     |
+| 7+       | 360p @ ~400 kbps  | ~2.8 Mbps           | 7+      |
 
 Plus:
 
@@ -160,12 +172,12 @@ Plus:
   `degradationPreference: "maintain-framerate"` for camera.
 - Frame-rate caps: 24 fps, 15 fps in large rooms; screen share 15 fps.
 - Mesh gives per-link adaptation for free: each `RTCPeerConnection`'s
-  bandwidth estimator adapts to *that* peer's downlink independently — one
+  bandwidth estimator adapts to _that_ peer's downlink independently — one
   weak peer never degrades what others receive. (This is the mesh-native
   equivalent of simulcast; simulcast itself is an SFU mechanism and does not
   apply.)
 - A user-selectable quality profile (High/Medium/Low, persisted in
-  `localStorage`) remains useful as a manual override for weak *sending*
+  `localStorage`) remains useful as a manual override for weak _sending_
   hardware, layered under the automatic count-based ladder.
 - `resenha_video_max_publishers` (default 8) as the honest backstop: camera
   buttons disable past the cap, server rejects the flag. Audio mesh keeps
@@ -285,6 +297,7 @@ control it.
    ```
 
    Off by default — admin opt-in, independent of voice.
+
 5. **Page route** rendering the app shell at `/resenha/r/:slug`, guarded by
    `ensure_can_join_resenha_room!`-equivalent visibility (the room must be
    visible to the user; joining still requires the explicit join action).
@@ -296,7 +309,7 @@ Nothing changes in the signal relay.
 Nearly free once camera works — it's the same transceiver machinery:
 
 - `getDisplayMedia({ video: { frameRate: { max: 15 } } })`, then
-  `replaceTrack` on the *same* video transceiver.
+  `replaceTrack` on the _same_ video transceiver.
 - **Camera XOR screen** per user (one video track each way), as in the
   original draft — keeps transceiver count and UI simple.
 - Handle the browser's native "Stop sharing" via `track.onended`.

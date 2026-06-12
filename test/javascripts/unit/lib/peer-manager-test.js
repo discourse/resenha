@@ -97,4 +97,56 @@ module("Resenha | Unit | Lib | peer-manager", function (hooks) {
     );
     assert.strictEqual(sentSignals, 0, "does not emit a new offer");
   });
+
+  test("alignVideoTransceiverForAnswer makes the negotiated transceiver sendable and migrates the orphaned track", async function (assert) {
+    const makeSender = (track = null) => ({
+      track,
+      async replaceTrack(newTrack) {
+        this.track = newTrack;
+      },
+    });
+
+    const cameraTrack = { id: "camera", kind: "video" };
+    const orphan = {
+      mid: null,
+      direction: "sendrecv",
+      sender: makeSender(cameraTrack),
+      receiver: { track: { kind: "video" } },
+    };
+    const associated = {
+      mid: "1",
+      direction: "recvonly",
+      sender: makeSender(),
+      receiver: { track: { kind: "video" } },
+    };
+    const pc = {
+      getTransceivers() {
+        return [orphan, associated];
+      },
+    };
+
+    PeerManager.alignVideoTransceiverForAnswer(pc);
+    await Promise.resolve();
+
+    assert.strictEqual(
+      associated.direction,
+      "sendrecv",
+      "flips the negotiated transceiver to sendrecv before the answer"
+    );
+    assert.strictEqual(
+      associated.sender.track,
+      cameraTrack,
+      "moves the camera track onto the negotiated transceiver"
+    );
+    assert.strictEqual(
+      orphan.sender.track,
+      null,
+      "detaches the camera track from the orphaned transceiver"
+    );
+    assert.strictEqual(
+      PeerManager.videoTransceiverFor(pc),
+      associated,
+      "videoTransceiverFor prefers the negotiated transceiver"
+    );
+  });
 });

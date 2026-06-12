@@ -775,10 +775,11 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    if (this.localVideoKind) {
-      await this.#stopLocalVideo({ broadcast: false });
-    }
-
+    // Capture must be the first await: Firefox only allows getDisplayMedia
+    // while the click's transient activation is alive, and awaiting anything
+    // else first (e.g. stopping the current camera) consumes it. The old
+    // stream is torn down after the picker succeeds, which also keeps the
+    // camera running when the user cancels the picker.
     let stream;
     try {
       if (kind === "screen") {
@@ -805,6 +806,10 @@ export default class ResenhaWebrtcService extends Service {
         });
       }
       return;
+    }
+
+    if (this.localVideoKind) {
+      await this.#stopLocalVideo({ broadcast: false });
     }
 
     const track = stream.getVideoTracks()[0];
@@ -1302,6 +1307,7 @@ export default class ResenhaWebrtcService extends Service {
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
+        PeerManager.alignVideoTransceiverForAnswer(pc);
         await this.#peerManager.flushPendingCandidates(
           roomId,
           remoteUserId,
@@ -1313,6 +1319,10 @@ export default class ResenhaWebrtcService extends Service {
           // eslint-disable-next-line no-console
           console.warn("[resenha] failed to send answer", error);
         });
+
+        if (this.localVideoKind) {
+          await this.#syncVideoSenders(roomId);
+        }
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn(
