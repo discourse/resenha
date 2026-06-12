@@ -730,21 +730,36 @@ export default class ResenhaWebrtcService extends Service {
 
     // The room page holds the only controls that stop a camera or screen
     // share, so leaving it must stop publishing too — otherwise capture
-    // silently continues with no visible way to end it.
-    if (!watching && this.localVideoKind) {
-      this.#stopLocalVideo().catch((error) => {
+    // silently continues with no visible way to end it. The cleared video
+    // flags ride along in the same state request as the watching flag: the
+    // server rewrites the whole metadata hash per request, so two concurrent
+    // requests could race and resurrect stale publisher flags.
+    const stoppingVideo = !watching && !!this.localVideoKind;
+    if (stoppingVideo) {
+      this.#stopLocalVideo({ broadcast: false }).catch((error) => {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to stop video on page leave", error);
       });
     }
 
-    this.resenhaRooms?.setParticipantVideoState(roomId, this.currentUser?.id, {
-      watching_video: watching,
-    });
+    const localState = { watching_video: watching };
+    const data = { watching };
+    if (stoppingVideo) {
+      localState.is_video_on = false;
+      localState.is_screen_sharing = false;
+      data.video = false;
+      data.screen = false;
+    }
+
+    this.resenhaRooms?.setParticipantVideoState(
+      roomId,
+      this.currentUser?.id,
+      localState
+    );
 
     ajax(`/resenha/rooms/${roomId}/state`, {
       type: "POST",
-      data: { watching },
+      data,
     }).catch(() => {});
   }
 

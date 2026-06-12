@@ -1651,7 +1651,13 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       { id: 2, role: "participant", watching_video: true },
     ];
 
-    pretender.post("/resenha/rooms/1/state", () => response({}));
+    const stateRequests = [];
+    pretender.post("/resenha/rooms/1/state", (request) => {
+      stateRequests.push(
+        Object.fromEntries(new URLSearchParams(request.requestBody))
+      );
+      return response({});
+    });
 
     const rawTrack = createFakeTrack("raw-track");
     const rawStream = createFakeStream("raw-stream", rawTrack);
@@ -1693,6 +1699,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
         "camera publication starts from the room page"
       );
 
+      const requestsBeforeLeave = stateRequests.length;
       this.subject.setWatching(1, false);
       await wait(10);
 
@@ -1704,6 +1711,14 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       assert.true(
         cameraStopped,
         "the camera track is stopped so the device light turns off"
+      );
+
+      const leaveRequests = stateRequests.slice(requestsBeforeLeave);
+      assert.deepEqual(
+        leaveRequests,
+        [{ watching: "false", video: "false", screen: "false" }],
+        "page leave sends one combined state request so concurrent " +
+          "read-modify-write updates cannot resurrect stale publisher flags"
       );
     } finally {
       audioEnvironment.restore();
