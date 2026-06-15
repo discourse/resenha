@@ -1,12 +1,19 @@
 import Component from "@glimmer/component";
+import { tracked } from "@glimmer/tracking";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
 import { service } from "@ember/service";
+import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
+import {
+  bestTileWidth,
+  TILE_ASPECT,
+  trackGridSize,
+} from "../../lib/resenha/video-grid-layout";
 import ResenhaVideoTile from "./video-tile";
 
 const MOBILE_VIDEO_TILE_BUDGET = 4;
@@ -17,6 +24,12 @@ export default class ResenhaRoomPage extends Component {
   @service resenhaRooms;
   @service resenhaWebrtc;
   @service siteSettings;
+
+  @tracked gridWidth = 0;
+  @tracked gridHeight = 0;
+  @tracked gridGap = 0;
+
+  trackGridSize = trackGridSize;
 
   constructor() {
     super(...arguments);
@@ -72,6 +85,34 @@ export default class ResenhaRoomPage extends Component {
       }
       return { participant, isSelf, showVideo };
     });
+  }
+
+  @action
+  updateGridSize(width, height, gap) {
+    this.gridWidth = width;
+    this.gridHeight = height;
+    this.gridGap = gap;
+  }
+
+  get gridStyle() {
+    const count = this.tiles.length;
+    if (!count || !this.gridWidth || !this.gridHeight) {
+      return null;
+    }
+
+    const tileWidth = bestTileWidth(
+      this.gridWidth,
+      this.gridHeight,
+      count,
+      TILE_ASPECT,
+      this.gridGap
+    );
+
+    if (tileWidth <= 0) {
+      return null;
+    }
+
+    return htmlSafe(`--resenha-tile-width: ${tileWidth}px;`);
   }
 
   get cameraActive() {
@@ -172,7 +213,11 @@ export default class ResenhaRoomPage extends Component {
       </header>
 
       {{#if this.tiles.length}}
-        <div class="resenha-room-page__grid">
+        <div
+          class="resenha-room-page__grid"
+          style={{this.gridStyle}}
+          {{this.trackGridSize this.updateGridSize}}
+        >
           {{#each this.tiles key="participant.id" as |tile|}}
             <ResenhaVideoTile
               @room={{this.room}}

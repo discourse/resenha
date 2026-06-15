@@ -16,11 +16,13 @@
 
   &__grid {
     flex: 1;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14em, 1fr));
-    grid-auto-rows: min-content;
+    min-height: 0;
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.5em;
-    align-content: start;
+    align-content: center;
+    align-items: center;
+    justify-content: center;
   }
 
   &__empty {
@@ -49,6 +51,12 @@
 
 .resenha-video-tile {
   position: relative;
+  flex: 0 0 auto;
+
+  // Width is computed per layout and published as --resenha-tile-width; the
+  // fallback covers first paint before the container has been measured.
+  width: var(--resenha-tile-width, 20em);
+  max-width: 100%;
   aspect-ratio: 16 / 9;
   border-radius: 0.5em;
   overflow: hidden;
