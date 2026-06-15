@@ -69,10 +69,45 @@
     outline-offset: -3px;
   }
 
+  // When the tile itself is fullscreen it fills the screen at the screen's
+  // aspect, so show the whole frame rather than cropping it to fill.
+  &:fullscreen {
+    border-radius: 0;
+    background: #000;
+  }
+
+  &:fullscreen &__video {
+    object-fit: contain;
+  }
+
   &__video {
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  &__fullscreen {
+    position: absolute;
+    inset-block-start: 0.35em;
+    inset-inline-end: 0.35em;
+    color: #fff;
+    background: rgb(0 0 0 / 45%);
+
+    .d-icon {
+      color: #fff;
+    }
+
+    // Discoverable on touch (no hover); revealed on hover/focus on pointer
+    // devices to keep the tile clean.
+    html.discourse-no-touch & {
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+  }
+
+  html.discourse-no-touch &:hover &__fullscreen,
+  &__fullscreen:focus-visible {
+    opacity: 1;
   }
 
   &.--self:not(.--screen) &__video {

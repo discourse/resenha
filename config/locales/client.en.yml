@@ -41,6 +41,8 @@ en:
         publisher_limit: "The maximum number of simultaneous video streams has been reached."
         capture_failed: "We couldn't start your camera or screen share. Check your browser permissions."
         room_disabled: "Video was turned off in this room."
+        fullscreen: "Full screen"
+        exit_fullscreen: "Exit full screen"
       ptt:
         enable: "Push to Talk"
         disable: "Disable Push to Talk"

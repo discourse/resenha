@@ -1,6 +1,7 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { fn } from "@ember/helper";
+import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import didUpdate from "@ember/render-modifiers/modifiers/did-update";
@@ -10,6 +11,11 @@ import { avatarUrl } from "discourse/lib/avatar-utils";
 import { eq } from "discourse/truth-helpers";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
+import { i18n } from "discourse-i18n";
+import {
+  toggleTileFullscreen,
+  trackFullscreen,
+} from "../../lib/resenha/fullscreen";
 import {
   DEFAULT_TILE_ASPECT,
   trackVideoAspect,
@@ -19,8 +25,10 @@ export default class ResenhaVideoTile extends Component {
   @service resenhaWebrtc;
 
   @tracked aspect = null;
+  @tracked isFullscreen = false;
 
   trackVideoAspect = trackVideoAspect;
+  trackFullscreen = trackFullscreen;
 
   get participant() {
     return this.args.participant;
@@ -34,6 +42,22 @@ export default class ResenhaVideoTile extends Component {
   handleAspect(aspect) {
     this.aspect = aspect;
     this.args.onAspect?.(this.participant.id, aspect);
+  }
+
+  @action
+  setFullscreen(isFullscreen) {
+    this.isFullscreen = isFullscreen;
+  }
+
+  @action
+  toggleFullscreen(event) {
+    toggleTileFullscreen(event.currentTarget.closest(".resenha-video-tile"));
+  }
+
+  get fullscreenTitle() {
+    return this.isFullscreen
+      ? i18n("resenha.video.exit_fullscreen")
+      : i18n("resenha.video.fullscreen");
   }
 
   get stream() {
@@ -86,6 +110,7 @@ export default class ResenhaVideoTile extends Component {
       }}
       data-user-id={{this.participant.id}}
       style={{this.tileStyle}}
+      {{this.trackFullscreen this.setFullscreen}}
     >
       {{#if this.showVideo}}
         <video
@@ -118,6 +143,18 @@ export default class ResenhaVideoTile extends Component {
           {{dIcon "display"}}
         {{/if}}
       </div>
+
+      {{#if this.showVideo}}
+        <button
+          type="button"
+          class="btn btn-icon no-text resenha-video-tile__fullscreen"
+          title={{this.fullscreenTitle}}
+          aria-label={{this.fullscreenTitle}}
+          {{on "click" this.toggleFullscreen}}
+        >
+          {{dIcon (if this.isFullscreen "compress" "expand")}}
+        </button>
+      {{/if}}
     </div>
   </template>
 }

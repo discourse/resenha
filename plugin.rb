@@ -38,6 +38,7 @@ register_svg_icon "video"
 register_svg_icon "video-slash"
 register_svg_icon "display"
 register_svg_icon "expand"
+register_svg_icon "compress"
 register_asset "stylesheets/common/resenha.scss"
 register_asset "stylesheets/common/resenha-room-page.scss"
 register_asset "stylesheets/common/resenha-admin.scss", :admin
