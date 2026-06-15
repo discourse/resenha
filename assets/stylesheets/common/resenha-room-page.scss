@@ -15,6 +15,7 @@
   }
 
   &__grid {
+    position: relative;
     flex: 1;
     min-height: 0;
     display: flex;
@@ -23,6 +24,36 @@
     align-content: center;
     align-items: center;
     justify-content: center;
+
+    &:fullscreen {
+      background: #000;
+      padding: 0.5em;
+    }
+  }
+
+  // Top-left so it never collides with the per-tile fullscreen buttons
+  // (top-right). Visible in fullscreen too, since it lives inside the grid.
+  &__fullscreen {
+    position: absolute;
+    inset-block-start: 0.35em;
+    inset-inline-start: 0.35em;
+    z-index: 1;
+    color: #fff;
+    background: rgb(0 0 0 / 45%);
+
+    .d-icon {
+      color: #fff;
+    }
+
+    html.discourse-no-touch & {
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+  }
+
+  html.discourse-no-touch &__grid:hover &__fullscreen,
+  &__fullscreen:focus-visible {
+    opacity: 1;
   }
 
   &__empty {

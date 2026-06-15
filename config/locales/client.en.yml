@@ -43,6 +43,7 @@ en:
         room_disabled: "Video was turned off in this room."
         fullscreen: "Full screen"
         exit_fullscreen: "Exit full screen"
+        fullscreen_all: "Full-screen all videos"
       ptt:
         enable: "Push to Talk"
         disable: "Disable Push to Talk"

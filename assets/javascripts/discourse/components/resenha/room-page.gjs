@@ -3,12 +3,17 @@ import { tracked } from "@glimmer/tracking";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
+import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
+import {
+  toggleFullscreen,
+  trackFullscreen,
+} from "../../lib/resenha/fullscreen";
 import {
   bestRowHeight,
   DEFAULT_TILE_ASPECT,
@@ -29,8 +34,12 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridHeight = 0;
   @tracked gridGap = 0;
   @tracked tileAspects = new Map();
+  @tracked gridFullscreen = false;
+
+  gridElement = null;
 
   trackGridSize = trackGridSize;
+  trackFullscreen = trackFullscreen;
 
   constructor() {
     super(...arguments);
@@ -93,6 +102,27 @@ export default class ResenhaRoomPage extends Component {
     this.gridWidth = width;
     this.gridHeight = height;
     this.gridGap = gap;
+  }
+
+  @action
+  registerGrid(element) {
+    this.gridElement = element;
+  }
+
+  @action
+  setGridFullscreen(isFullscreen) {
+    this.gridFullscreen = isFullscreen;
+  }
+
+  @action
+  toggleGridFullscreen() {
+    toggleFullscreen(this.gridElement);
+  }
+
+  get gridFullscreenTitle() {
+    return this.gridFullscreen
+      ? i18n("resenha.video.exit_fullscreen")
+      : i18n("resenha.video.fullscreen_all");
   }
 
   @action
@@ -235,8 +265,20 @@ export default class ResenhaRoomPage extends Component {
         <div
           class="resenha-room-page__grid"
           style={{this.gridStyle}}
+          {{didInsert this.registerGrid}}
           {{this.trackGridSize this.updateGridSize}}
+          {{this.trackFullscreen this.setGridFullscreen}}
         >
+          <button
+            type="button"
+            class="btn btn-icon no-text resenha-room-page__fullscreen"
+            title={{this.gridFullscreenTitle}}
+            aria-label={{this.gridFullscreenTitle}}
+            {{on "click" this.toggleGridFullscreen}}
+          >
+            {{dIcon (if this.gridFullscreen "compress" "expand")}}
+          </button>
+
           {{#each this.tiles key="participant.id" as |tile|}}
             <ResenhaVideoTile
               @room={{this.room}}

@@ -4,12 +4,14 @@ function fullscreenElement() {
   return document.fullscreenElement || document.webkitFullscreenElement || null;
 }
 
-// Toggle fullscreen for a tile. Must be called synchronously from a user
+// Toggle fullscreen for an element. Must be called synchronously from a user
 // gesture — the Fullscreen API consumes transient activation just like
 // getDisplayMedia, so the caller has to be a plain click handler, not a
-// DButton (which defers via next()).
-export function toggleTileFullscreen(tile) {
-  if (!tile) {
+// DButton (which defers via next()). When `fallbackVideo` is set and the
+// element can't go fullscreen itself, the first descendant <video> is used
+// instead (iOS Safari only allows the media element to go fullscreen).
+export function toggleFullscreen(element, { fallbackVideo = false } = {}) {
+  if (!element) {
     return;
   }
 
@@ -18,16 +20,20 @@ export function toggleTileFullscreen(tile) {
     return;
   }
 
-  if (tile.requestFullscreen) {
-    tile.requestFullscreen().catch(() => {});
-  } else if (tile.webkitRequestFullscreen) {
+  if (element.requestFullscreen) {
+    element.requestFullscreen().catch(() => {});
+  } else if (element.webkitRequestFullscreen) {
     // Safari on macOS.
-    tile.webkitRequestFullscreen();
-  } else {
-    // iOS Safari only lets the <video> element itself go fullscreen, via the
-    // native player; container fullscreen is unsupported there.
-    tile.querySelector("video")?.webkitEnterFullscreen?.();
+    element.webkitRequestFullscreen();
+  } else if (fallbackVideo) {
+    element.querySelector("video")?.webkitEnterFullscreen?.();
   }
+}
+
+// A single tile can fall back to its own <video> on iOS, where container
+// fullscreen is unsupported.
+export function toggleTileFullscreen(tile) {
+  toggleFullscreen(tile, { fallbackVideo: true });
 }
 
 // Reports whether `element` is the current fullscreen element, updating on

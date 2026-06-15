@@ -1,5 +1,8 @@
 import { module, test } from "qunit";
-import { toggleTileFullscreen } from "discourse/plugins/resenha/discourse/lib/resenha/fullscreen";
+import {
+  toggleFullscreen,
+  toggleTileFullscreen,
+} from "discourse/plugins/resenha/discourse/lib/resenha/fullscreen";
 
 // Nothing is fullscreen during these tests, so toggle always takes the enter
 // path; each case exposes only one browser's API to assert the fallback order.
@@ -55,5 +58,24 @@ module("Resenha | Unit | Lib | fullscreen", function () {
   test("does nothing without a tile", function (assert) {
     toggleTileFullscreen(null);
     assert.true(true, "returns without throwing");
+  });
+
+  test("the generic toggle never falls back to a descendant video", function (assert) {
+    let videoCalled = false;
+    const element = {
+      querySelector() {
+        return {
+          webkitEnterFullscreen() {
+            videoCalled = true;
+          },
+        };
+      },
+    };
+
+    toggleFullscreen(element);
+    assert.false(
+      videoCalled,
+      "fullscreening the gallery container does not hijack a single video"
+    );
   });
 });
