@@ -53,11 +53,13 @@
   position: relative;
   flex: 0 0 auto;
 
-  // Width is computed per layout and published as --resenha-tile-width; the
-  // fallback covers first paint before the container has been measured.
-  width: var(--resenha-tile-width, 20em);
+  // Rows share a height (computed per layout, published as
+  // --resenha-tile-height); each tile sets its own aspect-ratio inline from
+  // its measured video, so portrait and landscape feeds coexist without
+  // cropping. The fallback height covers first paint before measurement.
+  height: var(--resenha-tile-height, 12em);
+  width: auto;
   max-width: 100%;
-  aspect-ratio: 16 / 9;
   border-radius: 0.5em;
   overflow: hidden;
   background: var(--primary-very-low);

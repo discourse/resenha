@@ -10,8 +10,8 @@ import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 import {
-  bestTileWidth,
-  TILE_ASPECT,
+  bestRowHeight,
+  DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
 import ResenhaVideoTile from "./video-tile";
@@ -28,6 +28,7 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridWidth = 0;
   @tracked gridHeight = 0;
   @tracked gridGap = 0;
+  @tracked tileAspects = new Map();
 
   trackGridSize = trackGridSize;
 
@@ -94,25 +95,43 @@ export default class ResenhaRoomPage extends Component {
     this.gridGap = gap;
   }
 
+  @action
+  reportTileAspect(participantId, aspect) {
+    const current = this.tileAspects.get(participantId) ?? null;
+    if (current === aspect) {
+      return;
+    }
+
+    const next = new Map(this.tileAspects);
+    if (aspect) {
+      next.set(participantId, aspect);
+    } else {
+      next.delete(participantId);
+    }
+    this.tileAspects = next;
+  }
+
   get gridStyle() {
-    const count = this.tiles.length;
-    if (!count || !this.gridWidth || !this.gridHeight) {
+    if (!this.tiles.length || !this.gridWidth || !this.gridHeight) {
       return null;
     }
 
-    const tileWidth = bestTileWidth(
+    const aspects = this.tiles.map(
+      (tile) => this.tileAspects.get(tile.participant.id) ?? DEFAULT_TILE_ASPECT
+    );
+
+    const rowHeight = bestRowHeight(
       this.gridWidth,
       this.gridHeight,
-      count,
-      TILE_ASPECT,
+      aspects,
       this.gridGap
     );
 
-    if (tileWidth <= 0) {
+    if (rowHeight <= 0) {
       return null;
     }
 
-    return htmlSafe(`--resenha-tile-width: ${tileWidth}px;`);
+    return htmlSafe(`--resenha-tile-height: ${rowHeight}px;`);
   }
 
   get cameraActive() {
@@ -224,6 +243,7 @@ export default class ResenhaRoomPage extends Component {
               @participant={{tile.participant}}
               @isSelf={{tile.isSelf}}
               @showVideo={{tile.showVideo}}
+              @onAspect={{this.reportTileAspect}}
             />
           {{/each}}
         </div>

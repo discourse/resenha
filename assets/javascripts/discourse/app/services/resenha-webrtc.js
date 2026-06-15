@@ -813,10 +813,17 @@ export default class ResenhaWebrtcService extends Service {
           audio: false,
         });
       } else {
+        // Request dimensions matching the device orientation so a phone held
+        // in portrait sends an upright portrait frame rather than fighting a
+        // hardcoded landscape ideal. The grid lays out whatever aspect the
+        // camera actually delivers.
+        const portrait =
+          window.matchMedia?.("(orientation: portrait)")?.matches ?? false;
+        const [idealWidth, idealHeight] = portrait ? [720, 1280] : [1280, 720];
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: idealWidth },
+            height: { ideal: idealHeight },
             frameRate: { max: 24 },
           },
         });

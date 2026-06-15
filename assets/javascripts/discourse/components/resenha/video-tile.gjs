@@ -1,18 +1,39 @@
 import Component from "@glimmer/component";
+import { tracked } from "@glimmer/tracking";
 import { fn } from "@ember/helper";
+import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { service } from "@ember/service";
+import { htmlSafe } from "@ember/template";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { eq } from "discourse/truth-helpers";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
+import {
+  DEFAULT_TILE_ASPECT,
+  trackVideoAspect,
+} from "../../lib/resenha/video-grid-layout";
 
 export default class ResenhaVideoTile extends Component {
   @service resenhaWebrtc;
 
+  @tracked aspect = null;
+
+  trackVideoAspect = trackVideoAspect;
+
   get participant() {
     return this.args.participant;
+  }
+
+  get tileStyle() {
+    return htmlSafe(`aspect-ratio: ${this.aspect ?? DEFAULT_TILE_ASPECT};`);
+  }
+
+  @action
+  handleAspect(aspect) {
+    this.aspect = aspect;
+    this.args.onAspect?.(this.participant.id, aspect);
   }
 
   get stream() {
@@ -64,6 +85,7 @@ export default class ResenhaVideoTile extends Component {
         (if this.participant.is_speaking "--speaking")
       }}
       data-user-id={{this.participant.id}}
+      style={{this.tileStyle}}
     >
       {{#if this.showVideo}}
         <video
@@ -73,6 +95,7 @@ export default class ResenhaVideoTile extends Component {
             (fn this.resenhaWebrtc.attachVideoStream this.stream)
             this.stream
           }}
+          {{this.trackVideoAspect this.handleAspect}}
           muted
           autoplay
           playsinline
