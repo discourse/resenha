@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "page_objects/components/resenha_sidebar"
+require_relative "../support/resenha_fake_media"
 
 describe "Resenha voice rooms", type: :system do
   let(:resenha_sidebar) { PageObjects::Components::ResenhaSidebar.new }
@@ -77,6 +78,64 @@ describe "Resenha voice rooms", type: :system do
         # Users with sufficient trust level can see and manage all rooms, including private ones
         expect(resenha_sidebar).to have_room(room.name)
         expect(resenha_sidebar).to have_room(private_room.name)
+      end
+
+      it "can publish a fake camera stream on the room page" do
+        SiteSetting.resenha_video_enabled = true
+        install_resenha_fake_media
+
+        visit("/resenha/r/#{room.slug}")
+        click_button(I18n.t("js.resenha.room.join"))
+
+        expect(page).to have_button(I18n.t("js.resenha.video.camera_on"))
+        click_button(I18n.t("js.resenha.video.camera_on"))
+
+        expect(page).to have_css(
+          ".resenha-video-tile.--video[data-user-id='#{user.id}'] video.resenha-video-tile__video",
+        )
+        track_count = page.evaluate_async_script(<<~JS)
+          const done = arguments[0];
+          const startedAt = performance.now();
+          const trackCount = () =>
+            document.querySelector(".resenha-video-tile__video")
+              ?.srcObject
+              ?.getVideoTracks()
+              ?.length || 0;
+          const waitForTracks = () => {
+            const count = trackCount();
+            if (count > 0 || performance.now() - startedAt > 5000) {
+              done(count);
+            } else {
+              requestAnimationFrame(waitForTracks);
+            }
+          };
+          waitForTracks();
+        JS
+
+        expect(track_count).to eq(1)
+      end
+
+      it "provides three distinct fake video feeds for system tests" do
+        install_resenha_fake_media
+
+        visit("/latest")
+
+        labels = page.evaluate_async_script(<<~JS)
+          const done = arguments[0];
+          Promise.all([
+            navigator.mediaDevices.getUserMedia({ video: true }),
+            navigator.mediaDevices.getUserMedia({ video: true }),
+            navigator.mediaDevices.getUserMedia({ video: true }),
+          ]).then((streams) => {
+            done(streams.map((stream) => stream.__resenhaFakeMediaLabel));
+          });
+        JS
+
+        expect(labels).to contain_exactly(
+          "Resenha fake camera A",
+          "Resenha fake camera B",
+          "Resenha fake camera C",
+        )
       end
     end
 
