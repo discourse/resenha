@@ -135,13 +135,14 @@ module Resenha
 
       if params.key?(:idle_state)
         idle_state = params[:idle_state].to_s
-        if %w[active idle afk].include?(idle_state)
-          metadata[:idle_state] = idle_state
-          Resenha::RoomBroadcaster.publish_participants(@room)
-        end
+        metadata[:idle_state] = idle_state if %w[active idle afk].include?(idle_state)
       end
 
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
+
+      # Detect and broadcast any drift (idle change, or a participant whose TTL
+      # lapsed after an abrupt disconnect) now that metadata is persisted.
+      Resenha::RoomBroadcaster.publish_participants_if_changed(@room)
 
       if !metadata[:skip_status] && Resenha::UserStatusManager.resenha_status_active?(current_user)
         if metadata[:idle_state] == "afk"
