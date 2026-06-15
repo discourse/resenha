@@ -91,6 +91,7 @@ end
 #  public             :boolean          default(FALSE), not null
 #  room_type          :integer          default(0), not null
 #  slug               :string           not null
+#  video_enabled      :boolean          default(TRUE), not null
 #  created_at         :datetime         not null
 #  updated_at         :datetime         not null
 #  creator_id         :bigint           not null
