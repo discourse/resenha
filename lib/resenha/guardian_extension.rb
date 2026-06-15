@@ -9,9 +9,10 @@ module Resenha
 
     # Whether Resenha is open to everyone, including anonymous visitors. This is
     # the case when `resenha_allowed_groups` includes the "everyone" group, and
-    # it lets logged-out users browse (but not join) public rooms.
+    # it lets logged-out users browse (but not join) public rooms. Never true on
+    # login-required sites, where there are no anonymous visitors to serve.
     def resenha_public_access?
-      SiteSetting.resenha_enabled? &&
+      SiteSetting.resenha_enabled? && !SiteSetting.login_required &&
         SiteSetting.resenha_allowed_groups_map.include?(Group::AUTO_GROUPS[:everyone])
     end
 
