@@ -1,6 +1,7 @@
 import noop from "discourse/helpers/noop";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { withPluginApi } from "discourse/lib/plugin-api";
+import { prioritizeNameInUx } from "discourse/lib/settings";
 import { i18n } from "discourse-i18n";
 import ResenhaCreateRoomModal from "discourse/plugins/resenha/discourse/components/modal/resenha-create-room";
 import ResenhaParticipantSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-context-menu";
@@ -343,8 +344,14 @@ export default {
             return "#";
           }
 
+          get #displayName() {
+            return prioritizeNameInUx(this.participant.name)
+              ? this.participant.name
+              : this.participant.username;
+          }
+
           get title() {
-            const name = this.participant.name || this.participant.username;
+            const name = this.#displayName;
             if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
               return `${name} — ${i18n("resenha.ptt.badge", { key: humanKeyName(this.resenhaWebrtc.pttKey) })}`;
             }
@@ -352,7 +359,7 @@ export default {
           }
 
           get text() {
-            return this.participant.name || this.participant.username;
+            return this.#displayName;
           }
 
           get suffixType() {

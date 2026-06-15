@@ -6,6 +6,10 @@ module Resenha
       new(room).publish_participants
     end
 
+    def self.publish_participants_if_changed(room)
+      new(room).publish_participants_if_changed
+    end
+
     def self.publish_kick(room, user_id)
       new(room).publish_kick(user_id)
     end
@@ -18,7 +22,7 @@ module Resenha
       @room = room
     end
 
-    def publish_participants
+    def publish_participants(fingerprint: nil)
       guardian = Guardian.new(nil)
       all_metadata = Resenha::ParticipantTracker.get_all_metadata(room.id)
       payload = {
@@ -36,6 +40,22 @@ module Resenha
       }
 
       MessageBus.publish(Resenha.room_channel(room.id), payload, **room.message_bus_targets)
+
+      # Keep the stored fingerprint in sync so the heartbeat backstop doesn't
+      # redundantly re-broadcast the state we just sent.
+      Resenha::ParticipantTracker.update_fingerprint(room.id, fingerprint)
+    end
+
+    # Backstop for ghosts left by abrupt disconnects (refresh, tab close,
+    # crash) that never sent a clean leave. Called on every heartbeat: it
+    # compares the live membership/state against the last broadcast and emits a
+    # single participants broadcast when — and only when — something changed.
+    def publish_participants_if_changed
+      fingerprint = Resenha::ParticipantTracker.participants_fingerprint(room.id)
+      previous = Resenha::ParticipantTracker.swap_fingerprint(room.id, fingerprint)
+      return if previous == fingerprint
+
+      publish_participants(fingerprint: fingerprint)
     end
 
     def publish_room(payload)

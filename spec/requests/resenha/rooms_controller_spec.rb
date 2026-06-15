@@ -162,6 +162,41 @@ RSpec.describe Resenha::RoomsController do
       expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
     end
 
+    it "broadcasts the participant list when a stale participant has dropped out" do
+      sign_in(user)
+      Resenha::ParticipantTracker.add(room.id, user.id)
+      Resenha::ParticipantTracker.add(room.id, other_participant.id)
+
+      # other_participant left abruptly (refresh/close) and their heartbeat lapsed.
+      key = "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants"
+      Discourse.redis.zadd(key, 1.hour.ago.to_f, other_participant.id)
+
+      published = []
+      allow(MessageBus).to receive(:publish) { |channel, data, _opts| published << data }
+
+      post "/resenha/rooms/#{room.id}/heartbeat.json"
+
+      expect(response.status).to eq(204)
+      participants_message = published.find { |data| data[:type] == "participants" }
+      expect(participants_message).to be_present
+      expect(participants_message[:participants].map { |p| p[:id] }).to contain_exactly(user.id)
+    end
+
+    it "does not broadcast when membership and state are unchanged" do
+      sign_in(user)
+      Resenha::ParticipantTracker.add(room.id, user.id)
+      # Prime the stored fingerprint so the next heartbeat sees no change.
+      Resenha::RoomBroadcaster.publish_participants_if_changed(room)
+
+      published = []
+      allow(MessageBus).to receive(:publish) { |channel, data, _opts| published << data }
+
+      post "/resenha/rooms/#{room.id}/heartbeat.json"
+
+      expect(response.status).to eq(204)
+      expect(published.find { |data| data[:type] == "participants" }).to be_nil
+    end
+
     context "with user status integration" do
       before do
         SiteSetting.enable_user_status = true

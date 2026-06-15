@@ -95,4 +95,62 @@ RSpec.describe Resenha::ParticipantTracker do
       expect(described_class.get_metadata(room.id, user1.id)).to eq({})
     end
   end
+
+  describe ".participants_fingerprint" do
+    it "is stable across calls and independent of insertion order" do
+      described_class.add(room.id, user1.id)
+      described_class.add(room.id, user2.id)
+
+      fingerprint = described_class.participants_fingerprint(room.id)
+
+      expect(described_class.participants_fingerprint(room.id)).to eq(fingerprint)
+    end
+
+    it "ignores last_heartbeat_at so plain heartbeats don't look like changes" do
+      described_class.add(room.id, user1.id)
+      described_class.update_metadata(room.id, user1.id, { last_heartbeat_at: 1.0 })
+      before = described_class.participants_fingerprint(room.id)
+
+      described_class.update_metadata(room.id, user1.id, { last_heartbeat_at: 2.0 })
+
+      expect(described_class.participants_fingerprint(room.id)).to eq(before)
+    end
+
+    it "changes when a participant joins" do
+      described_class.add(room.id, user1.id)
+      before = described_class.participants_fingerprint(room.id)
+
+      described_class.add(room.id, user2.id)
+
+      expect(described_class.participants_fingerprint(room.id)).not_to eq(before)
+    end
+
+    it "changes when a participant's heartbeat goes stale" do
+      described_class.add(room.id, user1.id)
+      described_class.add(room.id, user2.id)
+      before = described_class.participants_fingerprint(room.id)
+
+      key = "#{described_class::KEY_NAMESPACE}:#{room.id}:participants"
+      Discourse.redis.zadd(key, 1.hour.ago.to_f, user2.id)
+
+      expect(described_class.participants_fingerprint(room.id)).not_to eq(before)
+    end
+
+    it "changes when rendered metadata such as idle_state changes" do
+      described_class.add(room.id, user1.id)
+      described_class.update_metadata(room.id, user1.id, { idle_state: "active" })
+      before = described_class.participants_fingerprint(room.id)
+
+      described_class.update_metadata(room.id, user1.id, { idle_state: "afk" })
+
+      expect(described_class.participants_fingerprint(room.id)).not_to eq(before)
+    end
+  end
+
+  describe ".swap_fingerprint" do
+    it "stores the new fingerprint and returns the previous value" do
+      expect(described_class.swap_fingerprint(room.id, "first")).to be_nil
+      expect(described_class.swap_fingerprint(room.id, "second")).to eq("first")
+    end
+  end
 end

@@ -46,6 +46,7 @@ module Resenha
       def clear(room_id)
         redis.del(key(room_id))
         redis.del(metadata_key(room_id))
+        redis.del(fingerprint_key(room_id))
       end
 
       def update_metadata(room_id, user_id, metadata)
@@ -66,6 +67,33 @@ module Resenha
           .transform_values { |value| JSON.parse(value, symbolize_names: true) }
       end
 
+      # A stable hash of the live (TTL-filtered) membership plus the metadata
+      # that clients render. `last_heartbeat_at` is excluded so the fingerprint
+      # only changes when something a client would actually display changes —
+      # otherwise every 10s heartbeat would look like a change.
+      def participants_fingerprint(room_id)
+        metadata = get_all_metadata(room_id)
+        payload =
+          user_ids(room_id).sort.map do |id|
+            [id, (metadata[id] || {}).except(:last_heartbeat_at).sort.to_h]
+          end
+        Digest::MD5.hexdigest(payload.to_json)
+      end
+
+      # Atomically store the new fingerprint and return the previous one, so a
+      # single caller (whichever heartbeat observes the change first) can decide
+      # to broadcast while concurrent heartbeats see their own value and skip it.
+      def swap_fingerprint(room_id, fingerprint)
+        previous = redis.getset(fingerprint_key(room_id), fingerprint)
+        redis.expire(fingerprint_key(room_id), SAFETY_TTL)
+        previous
+      end
+
+      def update_fingerprint(room_id, fingerprint = nil)
+        fingerprint ||= participants_fingerprint(room_id)
+        redis.set(fingerprint_key(room_id), fingerprint, ex: SAFETY_TTL)
+      end
+
       private
 
       def redis
@@ -78,6 +106,10 @@ module Resenha
 
       def metadata_key(room_id)
         "#{KEY_NAMESPACE}:#{room_id}:metadata"
+      end
+
+      def fingerprint_key(room_id)
+        "#{KEY_NAMESPACE}:#{room_id}:fingerprint"
       end
     end
   end
