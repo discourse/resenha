@@ -1,7 +1,8 @@
 {
   "private": true,
   "scripts": {
-    "build:dtln-worklet": "./scripts/build-dtln-worklet.sh"
+    "build:dtln-worklet": "./scripts/build-dtln-worklet.sh",
+    "resenha:bots": "node scripts/resenha-fake-participants.mjs"
   },
   "devDependencies": {
     "@discourse/lint-configs": "2.11.1",
@@ -9,6 +10,7 @@
     "eslint": "9.22.0",
     "prettier": "3.5.3",
     "prettier-plugin-ember-template-tag": "^2.1.3",
+    "playwright": "^1.59.1",
     "stylelint": "16.16.0",
     "webpack": "^5.105.1",
     "webpack-cli": "^6.0.1"
