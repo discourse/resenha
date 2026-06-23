@@ -12,14 +12,7 @@ DISCOURSE_URL=http://localhost:4200 ROOM=watercooler BOT_COUNT=3 \
   pnpm resenha:bots -- --headed --screenshots
 ```
 
-For the local Docker Discourse checkout used on this machine, the URL is often:
-
-```bash
-DISCOURSE_URL=https://disco2021.musaraj.com ROOM=watercooler \
-  pnpm resenha:bots -- --headed --bot-count 2
-```
-
-By default the harness uses Discourse's development/test-only `/session/:username/become.json` login route. That means the named users must already exist and the target site must allow that route.
+sBy default the harness uses Discourse's development/test-only `/session/:username/become.json` login route. That means the named users must already exist and the target site must allow that route.
 
 ## Bot config
 
