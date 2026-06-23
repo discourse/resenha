@@ -39,7 +39,7 @@ module Resenha
             end,
       }
 
-      MessageBus.publish(Resenha.room_channel(room.id), payload, **room.message_bus_targets)
+      MessageBus.publish(Resenha.room_channel(room.id), payload, **room_message_bus_targets)
 
       # Keep the stored fingerprint in sync so the heartbeat backstop doesn't
       # redundantly re-broadcast the state we just sent.
@@ -62,7 +62,7 @@ module Resenha
       MessageBus.publish(
         Resenha.room_channel(room.id),
         payload.merge(room_id: room.id),
-        **room.message_bus_targets,
+        **room_message_bus_targets,
       )
     end
 
@@ -88,5 +88,13 @@ module Resenha
     private
 
     attr_reader :room
+
+    def room_message_bus_targets
+      targets = room.message_bus_targets
+      participant_ids = Resenha::ParticipantTracker.user_ids(room.id)
+      return targets if participant_ids.empty?
+
+      targets.merge(user_ids: Array(targets[:user_ids] || []) | participant_ids)
+    end
   end
 end
