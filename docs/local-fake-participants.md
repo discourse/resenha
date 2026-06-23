@@ -12,7 +12,7 @@ DISCOURSE_URL=http://localhost:4200 ROOM=watercooler BOT_COUNT=3 \
   pnpm resenha:bots -- --headed --screenshots
 ```
 
-sBy default the harness uses Discourse's development/test-only `/session/:username/become.json` login route. That means the named users must already exist and the target site must allow that route.
+By default the harness uses Discourse's development/test-only `/session/:username/become.json` login route. That means the named users must already exist and the target site must allow that route.
 
 ## Bot config
 
