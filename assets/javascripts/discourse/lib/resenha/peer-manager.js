@@ -121,6 +121,15 @@ export default class PeerManager {
     return this.#peerConnections.get(roomId);
   }
 
+  remoteVideoTrack(roomId, userId) {
+    const pc = this.get(roomId, userId);
+    if (!pc) {
+      return null;
+    }
+
+    return PeerManager.videoTransceiverFor(pc)?.receiver?.track || null;
+  }
+
   allPeerConnections() {
     return this.#peerConnections;
   }

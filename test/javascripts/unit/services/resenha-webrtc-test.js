@@ -122,6 +122,10 @@ class FakeRTCPeerConnection {
   }
 
   addTransceiver(kind) {
+    const receiverTrack = {
+      id: `${kind}-receiver-${this.transceivers.length + 1}`,
+      kind,
+    };
     const sender = {
       track: null,
       replaceCalls: [],
@@ -138,7 +142,7 @@ class FakeRTCPeerConnection {
     const transceiver = {
       direction: "sendrecv",
       sender,
-      receiver: { track: { kind } },
+      receiver: { track: receiverTrack },
     };
 
     this.transceivers.push(transceiver);
@@ -273,10 +277,10 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function createFakeTrack(id) {
+function createFakeTrack(id, kind = "audio") {
   return {
     id,
-    kind: "audio",
+    kind,
     enabled: true,
     stop() {},
   };
@@ -1719,6 +1723,69 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
         [{ watching: "false", video: "false", screen: "false" }],
         "page leave sends one combined state request so concurrent " +
           "read-modify-write updates cannot resurrect stale publisher flags"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
+  test("remote camera start exposes the negotiated video track without a refresh", async function (assert) {
+    assert.timeout(2000);
+
+    this.siteSettings.resenha_video_enabled = true;
+    this.siteSettings.resenha_video_max_publishers = 8;
+
+    this.room.room_type = "open";
+    this.room.video_enabled = true;
+    this.room.membership = { role_name: "participant" };
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      {
+        id: 2,
+        role: "participant",
+        is_video_on: false,
+        is_screen_sharing: false,
+      },
+    ];
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: rawStream,
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      assert.notOk(
+        this.subject.remoteStreamFor(1, 2),
+        "starts without a stored remote media stream when no track event has fired"
+      );
+
+      this.rooms.emit(1, {
+        type: "participants",
+        participants: [
+          { id: this.currentUser.id, role: "participant" },
+          {
+            id: 2,
+            role: "participant",
+            is_video_on: true,
+            is_screen_sharing: false,
+          },
+        ],
+      });
+
+      await waitUntil(() => this.subject.remoteStreamFor(1, 2), 1000);
+
+      assert.deepEqual(
+        this.subject
+          .remoteStreamFor(1, 2)
+          .getVideoTracks()
+          .map((track) => track.id),
+        ["video-receiver-1"],
+        "adds the already-negotiated remote video track when presence says the peer started publishing"
       );
     } finally {
       audioEnvironment.restore();

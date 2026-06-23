@@ -1492,8 +1492,28 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
+    this.#syncRemoteVideoTracks(roomId, participants);
+
     if (this.localVideoKind) {
       await this.#syncVideoSenders(roomId);
+    }
+  }
+
+  #syncRemoteVideoTracks(roomId, participants) {
+    for (const participant of participants || []) {
+      const participantId = Number(participant?.id);
+      if (!participantId || participantId === this.currentUser?.id) {
+        continue;
+      }
+
+      if (!participant.is_video_on && !participant.is_screen_sharing) {
+        continue;
+      }
+
+      const track = this.#peerManager.remoteVideoTrack(roomId, participantId);
+      if (track) {
+        this.#registerRemoteTrack(roomId, participantId, track);
+      }
     }
   }
 
