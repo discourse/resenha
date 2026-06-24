@@ -4,3 +4,5 @@ node_modules
 .env
 /vendor/dtln-rs
 /src/dtln-worklet/dtln.js
+/.local
+/tmp
