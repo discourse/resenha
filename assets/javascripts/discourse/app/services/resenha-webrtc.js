@@ -32,6 +32,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked localStream;
   @tracked localVideoStream;
   @tracked localVideoKind = null;
+  @tracked activeRoomId = null;
   @tracked watchingRoomId = null;
   @tracked audioEnabled = true;
   @tracked noiseSuppressionEnabled = false;
@@ -251,6 +252,32 @@ export default class ResenhaWebrtcService extends Service {
     return "idle";
   }
 
+  get hasActiveRoom() {
+    return !!this.activeRoomId;
+  }
+
+  get activeRoom() {
+    return this.activeRoomId
+      ? this.resenhaRooms?.roomById(this.activeRoomId)
+      : null;
+  }
+
+  isActiveRoom(roomId) {
+    return Number(this.activeRoomId) === Number(roomId);
+  }
+
+  #setActiveRoomId(roomId) {
+    this.activeRoomId = roomId ?? null;
+  }
+
+  #clearActiveRoomId(roomId) {
+    if (Number(this.activeRoomId) !== Number(roomId)) {
+      return;
+    }
+
+    this.activeRoomId = this.#activeRoomIds.values().next().value ?? null;
+  }
+
   #canSpeakInRoom(room) {
     if (room.room_type !== "stage") {
       return true;
@@ -374,6 +401,7 @@ export default class ResenhaWebrtcService extends Service {
     // connections before localStream is available (race condition that
     // caused voice to fail on first join).
     this.#activeRoomIds.add(room.id);
+    this.#setActiveRoomId(room.id);
 
     this.#addLocalParticipant(room.id);
 
@@ -445,6 +473,7 @@ export default class ResenhaWebrtcService extends Service {
     ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
     this.#connectingRoomIds.delete(room.id);
     this.#activeRoomIds.delete(room.id);
+    this.#clearActiveRoomId(room.id);
     this.#bumpConnectionRevision();
 
     if (wasConnected && !keepLocalStream) {
@@ -717,7 +746,7 @@ export default class ResenhaWebrtcService extends Service {
     await this.#startLocalVideo("screen");
   }
 
-  setWatching(roomId, watching) {
+  setWatching(roomId, watching, options = {}) {
     if (watching) {
       this.watchingRoomId = roomId;
     } else if (this.watchingRoomId === roomId) {
@@ -728,13 +757,12 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    // The room page holds the only controls that stop a camera or screen
-    // share, so leaving it must stop publishing too — otherwise capture
-    // silently continues with no visible way to end it. The cleared video
-    // flags ride along in the same state request as the watching flag: the
-    // server rewrites the whole metadata hash per request, so two concurrent
-    // requests could race and resurrect stale publisher flags.
-    const stoppingVideo = !watching && !!this.localVideoKind;
+    // The room page used to hold the only controls that stop a camera or
+    // screen share, so leaving it stopped publishing. A persistent call widget
+    // is also a visible control surface; when it is present, route changes can
+    // keep video alive without leaving capture running invisibly.
+    const keepVideo = options.keepVideo === true;
+    const stoppingVideo = !watching && !keepVideo && !!this.localVideoKind;
     if (stoppingVideo) {
       this.#stopLocalVideo({ broadcast: false }).catch((error) => {
         // eslint-disable-next-line no-console

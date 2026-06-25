@@ -1,5 +1,5 @@
 import { withPluginApi } from "discourse/lib/plugin-api";
-import ResenhaVoiceCanvas from "discourse/plugins/resenha/discourse/components/resenha/voice-canvas";
+import ResenhaGlobalCallLayer from "discourse/plugins/resenha/discourse/components/resenha/global-call-layer";
 
 export default {
   name: "resenha-voice-canvas",
@@ -13,7 +13,7 @@ export default {
         return;
       }
 
-      api.renderInOutlet("below-site-header", ResenhaVoiceCanvas);
+      api.renderInOutlet("below-site-header", ResenhaGlobalCallLayer);
     });
   },
 };

@@ -48,7 +48,9 @@ export default class ResenhaRoomPage extends Component {
 
   willDestroy() {
     super.willDestroy(...arguments);
-    this.resenhaWebrtc.setWatching(this.args.room.id, false);
+    this.resenhaWebrtc.setWatching(this.args.room.id, false, {
+      keepVideo: this.resenhaWebrtc.isActiveRoom(this.args.room.id),
+    });
   }
 
   get room() {

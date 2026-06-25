@@ -33,6 +33,8 @@ en:
         open_page: "Open room view"
       room_page:
         empty: "No one is here yet — join to get things started."
+      widget:
+        title: "Active voice room: %{room}"
       video:
         camera_on: "Turn on camera"
         camera_off: "Turn off camera"
