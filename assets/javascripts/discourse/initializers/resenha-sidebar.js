@@ -1,3 +1,4 @@
+import { next } from "@ember/runloop";
 import noop from "discourse/helpers/noop";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { withPluginApi } from "discourse/lib/plugin-api";
@@ -15,8 +16,6 @@ let sidebarContextMenuHandler;
 
 export default {
   name: "resenha-sidebar",
-  // Chat must register its sidebar panel before we attach a section to it.
-  after: "chat-sidebar",
   initialize(owner) {
     withPluginApi((api) => {
       const currentUser = api.getCurrentUser();
@@ -569,8 +568,18 @@ export default {
       );
 
       // Mirror the section into the chat panel so rooms stay visible in the
-      // full-screen chat separate sidebar.
-      if (siteSettings.chat_enabled) {
+      // full-screen chat separate sidebar. The chat panel is registered by the
+      // chat plugin's own initializer, which may run after this one, so retry on
+      // the next runloop if it isn't there yet.
+      const registerChatRoomsSection = () => {
+        const chatPanelExists = (sidebarState.panels || []).some(
+          (panel) => panel.key === CHAT_PANEL
+        );
+
+        if (!chatPanelExists) {
+          return false;
+        }
+
         api.addSidebarSection(
           buildRoomsSection({
             sectionName: "resenha-rooms-chat",
@@ -578,6 +587,11 @@ export default {
           }),
           CHAT_PANEL
         );
+        return true;
+      };
+
+      if (siteSettings.chat_enabled && !registerChatRoomsSection()) {
+        next(registerChatRoomsSection);
       }
 
       if (sidebarClickHandler) {
