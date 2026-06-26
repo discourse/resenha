@@ -3,23 +3,28 @@
 module PageObjects
   module Components
     class ResenhaSidebar < PageObjects::Components::Base
-      SECTION_SELECTOR = ".sidebar-section[data-section-name='resenha-rooms']"
       ROOM_LINK_SELECTOR = ".sidebar-section-link.resenha-sidebar-link"
 
+      attr_reader :section_selector
+
+      def initialize(section_name: "resenha-rooms")
+        @section_selector = ".sidebar-section[data-section-name='#{section_name}']"
+      end
+
       def visible?
-        page.has_css?(SECTION_SELECTOR)
+        page.has_css?(section_selector)
       end
 
       def not_visible?
-        page.has_no_css?(SECTION_SELECTOR)
+        page.has_no_css?(section_selector)
       end
 
       def has_room?(room_name)
-        page.has_css?(SECTION_SELECTOR, text: room_name)
+        page.has_css?(section_selector, text: room_name)
       end
 
       def has_no_room?(room_name)
-        page.has_no_css?(SECTION_SELECTOR, text: room_name)
+        page.has_no_css?(section_selector, text: room_name)
       end
 
       def room_link(room_id)
@@ -70,7 +75,7 @@ module PageObjects
       end
 
       def section_title
-        find("#{SECTION_SELECTOR} .sidebar-section-header-text").text
+        find("#{section_selector} .sidebar-section-header-text").text
       end
     end
   end
