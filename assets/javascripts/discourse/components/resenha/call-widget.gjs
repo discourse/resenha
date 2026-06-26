@@ -1,7 +1,10 @@
 import Component from "@glimmer/component";
+import { tracked } from "@glimmer/tracking";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
+import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { service } from "@ember/service";
+import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
@@ -9,12 +12,35 @@ import { i18n } from "discourse-i18n";
 import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
+const WIDGET_VIEWPORT_MARGIN = 16;
+const DRAG_AXIS_THRESHOLD = 4;
+const DRAG_HOLD_DELAY_MS = 250;
+
+function clamp(value, min, max) {
+  if (max < min) {
+    return min;
+  }
+  return Math.min(Math.max(value, min), max);
+}
 
 export default class ResenhaCallWidget extends Component {
   @service currentUser;
   @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
+
+  @tracked dockEdge = "bottom";
+  @tracked dockOffset = null;
+  @tracked dragging = false;
+
+  widgetElement = null;
+  dragState = null;
+  dragHoldTimer = null;
+
+  willDestroy() {
+    super.willDestroy(...arguments);
+    window.clearTimeout(this.dragHoldTimer);
+  }
 
   get room() {
     return this.resenhaWebrtc.activeRoom;
@@ -26,12 +52,6 @@ export default class ResenhaCallWidget extends Component {
 
   get onActiveRoomPage() {
     return this.router.currentURL === `/resenha/r/${this.room?.slug}`;
-  }
-
-  get connectionState() {
-    return this.room
-      ? this.resenhaWebrtc.connectionStateFor(this.room.id)
-      : "idle";
   }
 
   get participants() {
@@ -116,6 +136,22 @@ export default class ResenhaCallWidget extends Component {
     return i18n("resenha.room.open_page");
   }
 
+  get widgetStyle() {
+    if (this.dockOffset === null) {
+      return null;
+    }
+
+    if (this.dockEdge === "right") {
+      return htmlSafe(
+        `inset-block-start: ${this.dockOffset}px; inset-block-end: auto; inset-inline-start: auto; inset-inline-end: ${WIDGET_VIEWPORT_MARGIN}px;`
+      );
+    }
+
+    return htmlSafe(
+      `inset-inline-start: ${this.dockOffset}px; inset-inline-end: auto; inset-block-start: auto; inset-block-end: ${WIDGET_VIEWPORT_MARGIN}px;`
+    );
+  }
+
   @action
   openRoom() {
     if (this.room?.slug) {
@@ -151,27 +187,128 @@ export default class ResenhaCallWidget extends Component {
   @action
   noopAspect() {}
 
+  @action
+  registerWidget(element) {
+    this.widgetElement = element;
+  }
+
+  @action
+  startDrag(event) {
+    if (event.button !== 0 || !this.widgetElement) {
+      return;
+    }
+
+    const rect = this.widgetElement.getBoundingClientRect();
+    this.dragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      rect,
+      axis: null,
+      armed: false,
+    };
+    this.widgetElement.setPointerCapture?.(event.pointerId);
+    this.dragHoldTimer = window.setTimeout(() => {
+      if (this.dragState?.pointerId === event.pointerId) {
+        this.dragState.armed = true;
+        this.dragging = true;
+      }
+    }, DRAG_HOLD_DELAY_MS);
+    event.preventDefault();
+  }
+
+  @action
+  dragWidget(event) {
+    if (!this.dragState || event.pointerId !== this.dragState.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - this.dragState.startX;
+    const deltaY = event.clientY - this.dragState.startY;
+
+    if (!this.dragState.armed) {
+      if (
+        Math.abs(deltaX) >= DRAG_AXIS_THRESHOLD ||
+        Math.abs(deltaY) >= DRAG_AXIS_THRESHOLD
+      ) {
+        window.clearTimeout(this.dragHoldTimer);
+        this.dragHoldTimer = null;
+      }
+      return;
+    }
+
+    let axis = this.dragState.axis;
+
+    if (!axis) {
+      if (
+        Math.abs(deltaX) < DRAG_AXIS_THRESHOLD &&
+        Math.abs(deltaY) < DRAG_AXIS_THRESHOLD
+      ) {
+        return;
+      }
+      axis = Math.abs(deltaX) >= Math.abs(deltaY) ? "x" : "y";
+      this.dragState.axis = axis;
+    }
+
+    const { rect } = this.dragState;
+    if (axis === "y") {
+      this.dockEdge = "right";
+      this.dockOffset = clamp(
+        rect.top + deltaY,
+        WIDGET_VIEWPORT_MARGIN,
+        window.innerHeight - rect.height - WIDGET_VIEWPORT_MARGIN
+      );
+    } else {
+      this.dockEdge = "bottom";
+      this.dockOffset = clamp(
+        rect.left + deltaX,
+        WIDGET_VIEWPORT_MARGIN,
+        window.innerWidth - rect.width - WIDGET_VIEWPORT_MARGIN
+      );
+    }
+
+    event.preventDefault();
+  }
+
+  @action
+  stopDrag(event) {
+    if (!this.dragState || event.pointerId !== this.dragState.pointerId) {
+      return;
+    }
+
+    window.clearTimeout(this.dragHoldTimer);
+    this.dragHoldTimer = null;
+    this.widgetElement?.releasePointerCapture?.(event.pointerId);
+    this.dragState = null;
+    this.dragging = false;
+  }
+
   <template>
     {{#if this.shouldRender}}
       <section
-        class="resenha-call-widget"
+        class={{dConcatClass
+          "resenha-call-widget"
+          (if this.dragging "--dragging")
+        }}
+        style={{this.widgetStyle}}
         data-room-id={{this.room.id}}
         aria-label={{i18n "resenha.widget.title" room=this.room.name}}
+        {{didInsert this.registerWidget}}
+        {{on "pointermove" this.dragWidget}}
+        {{on "pointerup" this.stopDrag}}
+        {{on "pointercancel" this.stopDrag}}
       >
         <header class="resenha-call-widget__header">
-          <button
-            type="button"
+          <div
             class="resenha-call-widget__room"
-            title={{this.openRoomTitle}}
-            {{on "click" this.openRoom}}
+            role="heading"
+            aria-level="2"
+            {{on "pointerdown" this.startDrag}}
           >
             <span
               class="resenha-call-widget__room-name"
             >{{this.room.name}}</span>
-            <span
-              class="resenha-call-widget__state"
-            >{{this.connectionState}}</span>
-          </button>
+          </div>
         </header>
 
         <div class="resenha-call-widget__tiles">
@@ -236,7 +373,7 @@ export default class ResenhaCallWidget extends Component {
           {{/if}}
           <DButton
             @action={{this.openRoom}}
-            @icon="up-right-from-square"
+            @icon="expand"
             @translatedTitle={{this.openRoomTitle}}
           />
           <DButton

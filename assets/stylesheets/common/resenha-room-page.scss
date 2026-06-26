@@ -18,33 +18,24 @@
     min-width: 0;
   }
 
+  &.--dragging &__room {
+    cursor: grabbing;
+  }
+
   &__room {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.75rem;
     width: 100%;
-    padding: 0;
-    border: 0;
-    color: var(--primary);
-    background: transparent;
-    text-align: start;
-    cursor: pointer;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
   }
 
   &__room-name {
+    display: block;
     min-width: 0;
     overflow: hidden;
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  &__state {
-    flex: 0 0 auto;
-    color: var(--primary-medium);
-    font-size: var(--font-down-2);
-    text-transform: capitalize;
   }
 
   &__tiles {

@@ -4,6 +4,7 @@ import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
+import { next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
@@ -26,6 +27,7 @@ const MOBILE_VIDEO_TILE_BUDGET = 4;
 export default class ResenhaRoomPage extends Component {
   @service capabilities;
   @service currentUser;
+  @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
   @service siteSettings;
@@ -41,15 +43,14 @@ export default class ResenhaRoomPage extends Component {
   trackGridSize = trackGridSize;
   trackFullscreen = trackFullscreen;
 
-  constructor() {
-    super(...arguments);
-    this.resenhaWebrtc.setWatching(this.args.room.id, true);
-  }
-
   willDestroy() {
     super.willDestroy(...arguments);
-    this.resenhaWebrtc.setWatching(this.args.room.id, false, {
-      keepVideo: this.resenhaWebrtc.isActiveRoom(this.args.room.id),
+    const resenhaWebrtc = this.resenhaWebrtc;
+    const roomId = this.args.room.id;
+    const keepVideo = resenhaWebrtc.isActiveRoom(roomId);
+
+    next(() => {
+      resenhaWebrtc.setWatching(roomId, false, { keepVideo });
     });
   }
 
@@ -112,6 +113,17 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
+  watchRoom() {
+    next(this, () => {
+      if (this.isDestroying || this.isDestroyed) {
+        return;
+      }
+
+      this.resenhaWebrtc.setWatching(this.args.room.id, true);
+    });
+  }
+
+  @action
   setGridFullscreen(isFullscreen) {
     this.gridFullscreen = isFullscreen;
   }
@@ -134,13 +146,13 @@ export default class ResenhaRoomPage extends Component {
       return;
     }
 
-    const next = new Map(this.tileAspects);
+    const nextAspects = new Map(this.tileAspects);
     if (aspect) {
-      next.set(participantId, aspect);
+      nextAspects.set(participantId, aspect);
     } else {
-      next.delete(participantId);
+      nextAspects.delete(participantId);
     }
-    this.tileAspects = next;
+    this.tileAspects = nextAspects;
   }
 
   get gridStyle() {
@@ -233,6 +245,11 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
+  dockRoom() {
+    this.router.transitionTo("discovery.latest");
+  }
+
+  @action
   toggleMute() {
     this.resenhaWebrtc.toggleMute();
   }
@@ -253,7 +270,7 @@ export default class ResenhaRoomPage extends Component {
   }
 
   <template>
-    <section class="resenha-room-page">
+    <section class="resenha-room-page" {{didInsert this.watchRoom}}>
       <header class="resenha-room-page__header">
         <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
         {{#if this.room.description_excerpt}}
@@ -350,6 +367,11 @@ export default class ResenhaRoomPage extends Component {
               {{dIcon "display"}}
             </button>
           {{/if}}
+          <DButton
+            @action={{this.dockRoom}}
+            @icon="compress"
+            @translatedTitle="resenha.room.widget_mode"
+          />
           <DButton
             @action={{this.leaveRoom}}
             @icon="phone-slash"
