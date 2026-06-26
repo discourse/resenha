@@ -284,6 +284,7 @@ export default class ResenhaCallWidget extends Component {
   }
 
   <template>
+    {{! eslint-disable ember/template-no-pointer-down-event-binding }}
     {{#if this.shouldRender}}
       <section
         class={{dConcatClass

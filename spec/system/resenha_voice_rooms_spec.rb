@@ -6,8 +6,12 @@ require_relative "../support/resenha_fake_media"
 describe "Resenha voice rooms", type: :system do
   let(:resenha_sidebar) { PageObjects::Components::ResenhaSidebar.new }
 
-  def route_to(path)
-    page.execute_script(%(require("discourse/lib/url").default.routeTo(#{path.to_json});))
+  def click_room_page_widget_mode_button
+    within(".resenha-room-page__controls") { all(".btn-icon").last.click }
+  end
+
+  def click_call_widget_open_page_button
+    within(".resenha-call-widget__controls") { all(".btn-icon").last.click }
   end
 
   fab!(:user)
@@ -101,7 +105,7 @@ describe "Resenha voice rooms", type: :system do
         expect(resenha_media_track_count(video_selector)).to eq(1)
       end
 
-      it "keeps the active call in a widget while navigating the site" do
+      it "keeps the active call in a widget after switching to widget mode" do
         SiteSetting.resenha_video_enabled = true
         install_resenha_fake_media
 
@@ -109,7 +113,7 @@ describe "Resenha voice rooms", type: :system do
         click_button(I18n.t("js.resenha.room.join"))
         click_button(I18n.t("js.resenha.video.camera_on"))
 
-        route_to("/latest")
+        click_room_page_widget_mode_button
 
         expect(page).to have_css(".resenha-call-widget", text: room.name)
         expect(page).to have_button(I18n.t("js.resenha.video.camera_off"))
@@ -119,6 +123,14 @@ describe "Resenha voice rooms", type: :system do
           ".resenha-call-widget .resenha-video-tile.--video[data-user-id='#{user.id}'] video.resenha-video-tile__video"
         expect(page).to have_css(widget_video_selector)
         expect(resenha_media_track_count(widget_video_selector)).to eq(1)
+
+        click_call_widget_open_page_button
+
+        page_video_selector =
+          ".resenha-room-page .resenha-video-tile.--video[data-user-id='#{user.id}'] video.resenha-video-tile__video"
+        expect(page).to have_current_path("/resenha/r/#{room.slug}")
+        expect(page).to have_css(page_video_selector)
+        expect(resenha_media_track_count(page_video_selector)).to eq(1)
       end
 
       it "can stop video and leave the call from the persistent widget" do
@@ -129,7 +141,7 @@ describe "Resenha voice rooms", type: :system do
         click_button(I18n.t("js.resenha.room.join"))
         click_button(I18n.t("js.resenha.video.camera_on"))
 
-        route_to("/latest")
+        click_room_page_widget_mode_button
 
         within(".resenha-call-widget") { click_button(I18n.t("js.resenha.video.camera_off")) }
 
