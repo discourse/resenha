@@ -1,3 +1,94 @@
+.resenha-call-widget {
+  position: fixed;
+  inset-inline-end: max(1rem, env(safe-area-inset-right));
+  inset-block-end: max(1rem, env(safe-area-inset-bottom));
+  z-index: 1040;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  width: min(24rem, calc(100vw - 2rem));
+  max-height: min(60vh, 32rem);
+  padding: 0.75rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 0.75rem;
+  background: var(--secondary);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 20%);
+
+  &__header {
+    min-width: 0;
+  }
+
+  &.--dragging &__room {
+    cursor: grabbing;
+  }
+
+  &__room {
+    width: 100%;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+
+  &__room-name {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    gap: 0.5rem;
+    min-height: 5rem;
+    max-height: 18rem;
+    overflow: auto;
+  }
+
+  .resenha-video-tile {
+    width: 100%;
+    height: auto;
+    min-height: 5rem;
+  }
+
+  .resenha-video-tile__fullscreen {
+    display: none;
+  }
+
+  .resenha-video-tile__avatar img {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .resenha-video-tile__info {
+    font-size: var(--font-down-2);
+  }
+
+  &__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+
+    .--off,
+    .--active {
+      color: var(--tertiary);
+    }
+  }
+}
+
+@media (max-width: 700px) {
+  .resenha-call-widget {
+    inset-inline: 0.5rem;
+    inset-block-end: 0.5rem;
+    width: auto;
+    max-height: 45vh;
+  }
+}
+
 .resenha-room-page {
   display: flex;
   flex-direction: column;
