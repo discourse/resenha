@@ -18,15 +18,9 @@
     min-width: 0;
   }
 
-  &.--dragging &__room {
-    cursor: grabbing;
-  }
-
   &__room {
     width: 100%;
-    cursor: grab;
-    touch-action: none;
-    user-select: none;
+    min-width: 0;
   }
 
   &__room-name {
@@ -77,6 +71,35 @@
     .--active {
       color: var(--tertiary);
     }
+  }
+
+  // When the user has resized the widget, honor the explicit height and let
+  // the tiles fill the extra space instead of capping at their default.
+  &.--resized {
+    max-height: none;
+
+    .resenha-call-widget__tiles {
+      flex: 1;
+      max-height: none;
+    }
+  }
+
+  &.--resizing {
+    user-select: none;
+  }
+
+  // Invisible grab area in the widget's top-left corner — like the chat
+  // drawer's resizer, you only get a resize cursor on hover, no visible glyph.
+  // The widget is anchored bottom-right, so dragging here grows it up/left.
+  &__resize {
+    position: absolute;
+    z-index: 2;
+    inset-block-start: -5px;
+    inset-inline-start: -5px;
+    width: 15px;
+    height: 15px;
+    cursor: nwse-resize;
+    touch-action: none;
   }
 }
 
