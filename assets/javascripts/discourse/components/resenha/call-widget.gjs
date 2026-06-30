@@ -3,6 +3,8 @@ import { tracked } from "@glimmer/tracking";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
+import didUpdate from "@ember/render-modifiers/modifiers/did-update";
+import { next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
@@ -40,10 +42,20 @@ export default class ResenhaCallWidget extends Component {
   willDestroy() {
     super.willDestroy(...arguments);
     window.clearTimeout(this.dragHoldTimer);
+    this.stopWatchingWidgetRoom();
   }
 
   get room() {
-    return this.resenhaWebrtc.activeRoom;
+    const activeRoomId = this.resenhaWebrtc.activeRoomId;
+    if (!activeRoomId) {
+      return null;
+    }
+
+    return (
+      this.resenhaRooms.rooms.find(
+        (room) => Number(room.id) === Number(activeRoomId)
+      ) ?? this.resenhaWebrtc.activeRoom
+    );
   }
 
   get shouldRender() {
@@ -190,6 +202,30 @@ export default class ResenhaCallWidget extends Component {
   @action
   registerWidget(element) {
     this.widgetElement = element;
+    this.watchWidgetRoom();
+  }
+
+  @action
+  watchWidgetRoom() {
+    const roomId = this.room?.id;
+    if (!roomId) {
+      return;
+    }
+
+    next(this, () => {
+      if (this.isDestroying || this.isDestroyed || this.room?.id !== roomId) {
+        return;
+      }
+
+      this.resenhaWebrtc.setWatching(roomId, true);
+    });
+  }
+
+  stopWatchingWidgetRoom() {
+    const roomId = this.room?.id;
+    if (roomId) {
+      this.resenhaWebrtc.setWatching(roomId, false, { keepVideo: true });
+    }
   }
 
   @action
@@ -295,6 +331,7 @@ export default class ResenhaCallWidget extends Component {
         data-room-id={{this.room.id}}
         aria-label={{i18n "resenha.widget.title" room=this.room.name}}
         {{didInsert this.registerWidget}}
+        {{didUpdate this.watchWidgetRoom this.room.id}}
         {{on "pointermove" this.dragWidget}}
         {{on "pointerup" this.stopDrag}}
         {{on "pointercancel" this.stopDrag}}
@@ -380,7 +417,7 @@ export default class ResenhaCallWidget extends Component {
           <DButton
             @action={{this.leaveRoom}}
             @icon="phone-slash"
-            @label="resenha.room.leave"
+            @ariaLabel="resenha.room.leave"
             class="btn-danger resenha-call-widget__leave"
           />
         </footer>
