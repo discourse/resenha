@@ -61,6 +61,19 @@ module Resenha
       end
     end
 
+    def chat_linked?
+      chat_channel_id.present?
+    end
+
+    def chat_channel
+      return nil unless chat_channel_id && defined?(::Chat)
+      ::Chat::Channel.find_by(id: chat_channel_id)
+    end
+
+    def chat_idle_seconds
+      [chat_idle_minutes || 15, 1].max * 60
+    end
+
     private
 
     def ensure_slug
@@ -83,23 +96,27 @@ end
 #
 # Table name: resenha_rooms
 #
-#  id                 :bigint           not null, primary key
-#  cooked_description :text
-#  description        :text
-#  max_participants   :integer
-#  name               :string           not null
-#  public             :boolean          default(FALSE), not null
-#  room_type          :integer          default(0), not null
-#  slug               :string           not null
-#  video_enabled      :boolean          default(TRUE), not null
-#  created_at         :datetime         not null
-#  updated_at         :datetime         not null
-#  creator_id         :bigint           not null
+#  id                         :bigint           not null, primary key
+#  chat_idle_minutes          :integer          default(15), not null
+#  chat_thread_title_template :string
+#  cooked_description         :text
+#  description                :text
+#  max_participants           :integer
+#  name                       :string           not null
+#  public                     :boolean          default(FALSE), not null
+#  room_type                  :integer          default(0), not null
+#  slug                       :string           not null
+#  video_enabled              :boolean          default(TRUE), not null
+#  created_at                 :datetime         not null
+#  updated_at                 :datetime         not null
+#  chat_channel_id            :bigint
+#  creator_id                 :bigint           not null
 #
 # Indexes
 #
-#  index_resenha_rooms_on_creator_id  (creator_id)
-#  index_resenha_rooms_on_slug        (slug) UNIQUE
+#  index_resenha_rooms_on_chat_channel_id  (chat_channel_id)
+#  index_resenha_rooms_on_creator_id       (creator_id)
+#  index_resenha_rooms_on_slug             (slug) UNIQUE
 #
 # Foreign Keys
 #

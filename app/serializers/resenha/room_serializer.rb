@@ -19,7 +19,12 @@ module Resenha
                :description_excerpt,
                :visit_count,
                :video_enabled,
-               :video_allowed
+               :video_allowed,
+               :chat_channel_id,
+               :chat_idle_minutes,
+               :chat_thread_title_template,
+               :chat_available,
+               :chat_channel
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
 
@@ -65,6 +70,17 @@ module Resenha
 
     def video_allowed
       object.video_allowed?
+    end
+
+    def chat_available
+      Resenha::ChatSession.available_for?(object, scope)
+    end
+
+    def chat_channel
+      return nil unless chat_available
+      channel = object.chat_channel
+      return nil unless channel
+      { id: channel.id, slug: channel.slug, title: channel.title }
     end
   end
 end

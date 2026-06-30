@@ -1,6 +1,8 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
+import { getOwner } from "@ember/owner";
+import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { service } from "@ember/service";
 import BackButton from "discourse/components/back-button";
 import Form from "discourse/components/form";
@@ -11,6 +13,7 @@ export default class ResenhaRoomForm extends Component {
   @service siteSettings;
 
   @tracked isSaving = false;
+  @tracked chatChannels = [];
 
   get isAdminContext() {
     return !this.args.onSubmit;
@@ -24,11 +27,47 @@ export default class ResenhaRoomForm extends Component {
       room_type: this.args.room?.room_type || "open",
       max_participants: this.args.room?.max_participants || null,
       video_enabled: this.args.room?.video_enabled ?? true,
+      chat_channel_id: this.args.room?.chat_channel_id || null,
+      chat_idle_minutes: this.args.room?.chat_idle_minutes ?? 15,
+      chat_thread_title_template:
+        this.args.room?.chat_thread_title_template || "",
     };
   }
 
   get showVideoToggle() {
     return this.siteSettings.resenha_video_enabled;
+  }
+
+  get showChatSettings() {
+    return (
+      this.siteSettings.chat_enabled && this.siteSettings.resenha_chat_enabled
+    );
+  }
+
+  threadTitlePreview(template) {
+    const text = (
+      template || i18n("resenha.chat.default_thread_title")
+    ).toString();
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, "0")}:${String(
+      now.getMinutes()
+    ).padStart(2, "0")}`;
+    const date = now.toISOString().slice(0, 10);
+    return text.replaceAll("{time}", time).replaceAll("{date}", date);
+  }
+
+  @action
+  async loadChatChannels() {
+    if (!this.showChatSettings) {
+      return;
+    }
+    try {
+      const collection = getOwner(this).lookup("service:chat-api").channels();
+      await collection.load();
+      this.chatChannels = collection.items ?? [];
+    } catch (e) {
+      popupAjaxError(e);
+    }
   }
 
   get maxParticipantsValidation() {
@@ -174,6 +213,64 @@ export default class ResenhaRoomForm extends Component {
         >
           <field.Input @type="number" />
         </form.Field>
+
+        {{#if this.showChatSettings}}
+          <div
+            class="resenha-room-form__chat"
+            {{didInsert this.loadChatChannels}}
+          >
+            <form.Field
+              @name="chat_channel_id"
+              @title={{i18n "resenha.admin.room.chat_channel"}}
+              @description={{i18n "resenha.admin.room.chat_channel_help"}}
+              @format="full"
+              as |field|
+            >
+              <field.Select as |select|>
+                {{#each this.chatChannels as |channel|}}
+                  <select.Option
+                    @value={{channel.id}}
+                  >{{channel.title}}</select.Option>
+                {{/each}}
+              </field.Select>
+            </form.Field>
+
+            {{#if form.data.chat_channel_id}}
+              <form.Field
+                @name="chat_idle_minutes"
+                @title={{i18n "resenha.admin.room.chat_idle_minutes"}}
+                @description={{i18n
+                  "resenha.admin.room.chat_idle_minutes_help"
+                }}
+                @validation="integer|number:1,1440"
+                as |field|
+              >
+                <field.Input @type="number" />
+              </form.Field>
+
+              <form.Field
+                @name="chat_thread_title_template"
+                @title={{i18n "resenha.admin.room.chat_thread_title_template"}}
+                @description={{i18n
+                  "resenha.admin.room.chat_thread_title_template_help"
+                }}
+                @format="full"
+                as |field|
+              >
+                <field.Input
+                  placeholder={{i18n "resenha.chat.default_thread_title"}}
+                />
+              </form.Field>
+
+              <div class="resenha-room-form__chat-preview">
+                {{i18n "resenha.admin.room.chat_thread_title_preview"}}
+                <strong>{{this.threadTitlePreview
+                    form.data.chat_thread_title_template
+                  }}</strong>
+              </div>
+            {{/if}}
+          </div>
+        {{/if}}
 
         <form.Submit
           @label={{this.submitLabel}}

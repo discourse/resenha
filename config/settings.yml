@@ -68,3 +68,6 @@ plugins:
     default: 400
     min: 7
     max: 3650
+  resenha_chat_enabled:
+    default: true
+    client: true
