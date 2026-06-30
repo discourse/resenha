@@ -215,7 +215,6 @@ module ResenhaFakeMedia
       waitForLiveTrack();
     JS
   end
-
 end
 
 RSpec.configure { |config| config.include ResenhaFakeMedia, type: :system }

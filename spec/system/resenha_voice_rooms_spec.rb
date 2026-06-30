@@ -262,7 +262,6 @@ describe "Resenha voice rooms", type: :system do
           expect(resenha_media_track_live?(remote_video_selector, timeout: 10)).to eq(true)
         end
       end
-
     end
 
     context "as admin" do
