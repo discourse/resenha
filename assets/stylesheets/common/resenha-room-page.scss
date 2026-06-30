@@ -81,8 +81,8 @@
     }
   }
 
-  // When the user has resized the widget, honor the explicit height and let
-  // the tiles fill the extra space instead of capping at their default.
+  // Once the user sets an explicit widget height, drop the default tile cap so
+  // the video tiles can use the resized vertical space.
   &.--resized {
     max-height: none;
 
@@ -104,7 +104,8 @@
     }
   }
 
-  // Invisible grab areas at each corner; resize keeps the opposite corner fixed.
+  // Corner hit targets for resizing. Dragging a corner moves that corner while
+  // the diagonal corner stays anchored in place.
   &__resize {
     position: absolute;
     z-index: 2;
@@ -136,6 +137,15 @@
       cursor: nwse-resize;
     }
   }
+}
+
+// On touch devices the widget is a full-width bottom dock: corner resize is
+// hidden (component-side) and the header only drags it vertically, since
+// free positioning and tiny corner handles are awkward with a finger.
+html.discourse-touch .resenha-call-widget {
+  inset-inline: 0.5rem;
+  width: auto;
+  max-height: 45vh;
 }
 
 .resenha-room-page {

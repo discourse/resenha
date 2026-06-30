@@ -30,6 +30,7 @@ function clamp(value, min, max) {
 }
 
 export default class ResenhaCallWidget extends Component {
+  @service capabilities;
   @service currentUser;
   @service router;
   @service resenhaRooms;
@@ -214,6 +215,22 @@ export default class ResenhaCallWidget extends Component {
   get widgetStyle() {
     const parts = [];
 
+    if (this.capabilities.touch) {
+      if (this.posTop !== null) {
+        const h = this.widgetElement?.offsetHeight ?? 0;
+        const top = clamp(
+          this.posTop,
+          WIDGET_VIEWPORT_MARGIN,
+          Math.max(
+            WIDGET_VIEWPORT_MARGIN,
+            window.innerHeight - h - WIDGET_VIEWPORT_MARGIN
+          )
+        );
+        parts.push(`inset-block-start: ${top}px;`, "inset-block-end: auto;");
+      }
+      return parts.length ? htmlSafe(parts.join(" ")) : null;
+    }
+
     const width = this.#clampWidth(this.widgetWidth);
     const height = this.#clampHeight(this.widgetHeight);
 
@@ -323,16 +340,19 @@ export default class ResenhaCallWidget extends Component {
       event.preventDefault();
     }
 
-    this.posLeft = clamp(
-      state.originLeft + dx,
-      WIDGET_VIEWPORT_MARGIN,
-      window.innerWidth - state.width - WIDGET_VIEWPORT_MARGIN
-    );
     this.posTop = clamp(
       state.originTop + dy,
       WIDGET_VIEWPORT_MARGIN,
       window.innerHeight - state.height - WIDGET_VIEWPORT_MARGIN
     );
+
+    if (!this.capabilities.touch) {
+      this.posLeft = clamp(
+        state.originLeft + dx,
+        WIDGET_VIEWPORT_MARGIN,
+        window.innerWidth - state.width - WIDGET_VIEWPORT_MARGIN
+      );
+    }
   }
 
   @action
@@ -589,17 +609,19 @@ export default class ResenhaCallWidget extends Component {
           />
         </footer>
 
-        {{#each this.resizeCorners as |corner|}}
-          <div
-            class={{dConcatClass
-              "resenha-call-widget__resize"
-              (concat "--" corner)
-            }}
-            aria-hidden="true"
-            {{on "mousedown" (fn this.startResize corner)}}
-            {{on "touchstart" (fn this.startResize corner)}}
-          ></div>
-        {{/each}}
+        {{#unless this.capabilities.touch}}
+          {{#each this.resizeCorners as |corner|}}
+            <div
+              class={{dConcatClass
+                "resenha-call-widget__resize"
+                (concat "--" corner)
+              }}
+              aria-hidden="true"
+              {{on "mousedown" (fn this.startResize corner)}}
+              {{on "touchstart" (fn this.startResize corner)}}
+            ></div>
+          {{/each}}
+        {{/unless}}
       </section>
     {{/if}}
   </template>
