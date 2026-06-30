@@ -253,15 +253,12 @@ describe "Resenha voice rooms", type: :system do
         using_session(:alice) do
           remote_tile_selector =
             ".resenha-call-widget .resenha-video-tile[data-user-id='#{other_user.id}']"
-          remote_video_selector =
-            "#{remote_tile_selector}.--video video.resenha-video-tile__video"
+          remote_video_selector = "#{remote_tile_selector}.--video video.resenha-video-tile__video"
 
           expect(page).to have_css(remote_tile_selector, wait: 10)
           expect(page).to have_css(remote_video_selector, wait: 10)
           expect(resenha_media_track_count(remote_video_selector, timeout: 10)).to eq(1)
-          expect(resenha_video_frame_changed?(remote_video_selector, timeout: 10)).to eq(
-            true,
-          )
+          expect(resenha_video_frame_changed?(remote_video_selector, timeout: 10)).to eq(true)
         end
 
         using_session(:bob) do
