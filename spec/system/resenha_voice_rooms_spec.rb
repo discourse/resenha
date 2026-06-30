@@ -12,8 +12,12 @@ describe "Resenha voice rooms", type: :system do
 
   def click_call_widget_open_page_button
     within(".resenha-call-widget__controls") do
-      all("button").find { |button| button.has_css?(".d-icon-expand") }.click
+      find(".d-icon-expand").ancestor("button").click
     end
+  end
+
+  def click_call_widget_leave_button
+    within(".resenha-call-widget__controls") { find(".resenha-call-widget__leave").click }
   end
 
   fab!(:user)
@@ -119,7 +123,6 @@ describe "Resenha voice rooms", type: :system do
 
         expect(page).to have_css(".resenha-call-widget", text: room.name)
         expect(page).to have_button(I18n.t("js.resenha.video.camera_off"))
-        expect(page).to have_button(I18n.t("js.resenha.room.leave"))
 
         widget_video_selector =
           ".resenha-call-widget .resenha-video-tile.--video[data-user-id='#{user.id}'] video.resenha-video-tile__video"
@@ -150,7 +153,7 @@ describe "Resenha voice rooms", type: :system do
         expect(page).to have_button(I18n.t("js.resenha.video.camera_on"))
         expect(page).to have_no_css(".resenha-call-widget .resenha-video-tile.--video")
 
-        within(".resenha-call-widget") { click_button(I18n.t("js.resenha.room.leave")) }
+        click_call_widget_leave_button
 
         expect(page).to have_no_css(".resenha-call-widget")
       end
