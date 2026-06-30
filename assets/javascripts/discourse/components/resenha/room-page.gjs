@@ -20,6 +20,7 @@ import {
   DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
+import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
 
 const MOBILE_VIDEO_TILE_BUDGET = 4;
@@ -37,6 +38,7 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridGap = 0;
   @tracked tileAspects = new Map();
   @tracked gridFullscreen = false;
+  @tracked chatOpen = false;
 
   gridElement = null;
 
@@ -249,6 +251,26 @@ export default class ResenhaRoomPage extends Component {
     this.router.transitionTo("discovery.latest");
   }
 
+  get chatAvailable() {
+    return this.room.chat_available;
+  }
+
+  get chatToggleTitle() {
+    return this.chatOpen
+      ? i18n("resenha.chat.close")
+      : i18n("resenha.chat.open");
+  }
+
+  @action
+  toggleChat() {
+    this.chatOpen = !this.chatOpen;
+  }
+
+  @action
+  closeChat() {
+    this.chatOpen = false;
+  }
+
   @action
   toggleMute() {
     this.resenhaWebrtc.toggleMute();
@@ -270,49 +292,65 @@ export default class ResenhaRoomPage extends Component {
   }
 
   <template>
-    <section class="resenha-room-page" {{didInsert this.watchRoom}}>
-      <header class="resenha-room-page__header">
-        <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
-        {{#if this.room.description_excerpt}}
-          <p class="resenha-room-page__description">
-            {{this.room.description_excerpt}}
-          </p>
+    <section
+      class={{dConcatClass
+        "resenha-room-page"
+        (if this.chatOpen "--chat-open")
+      }}
+      {{didInsert this.watchRoom}}
+    >
+      <div class="resenha-room-page__body">
+        <div class="resenha-room-page__main">
+          <header class="resenha-room-page__header">
+            <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
+            {{#if this.room.description_excerpt}}
+              <p class="resenha-room-page__description">
+                {{this.room.description_excerpt}}
+              </p>
+            {{/if}}
+          </header>
+
+          {{#if this.tiles.length}}
+            <div
+              class="resenha-room-page__grid"
+              style={{this.gridStyle}}
+              {{didInsert this.registerGrid}}
+              {{this.trackGridSize this.updateGridSize}}
+              {{this.trackFullscreen this.setGridFullscreen}}
+            >
+              <button
+                type="button"
+                class="btn btn-icon no-text resenha-room-page__fullscreen"
+                title={{this.gridFullscreenTitle}}
+                aria-label={{this.gridFullscreenTitle}}
+                {{on "click" this.toggleGridFullscreen}}
+              >
+                {{dIcon (if this.gridFullscreen "compress" "expand")}}
+              </button>
+
+              {{#each this.tiles key="participant.id" as |tile|}}
+                <ResenhaVideoTile
+                  @room={{this.room}}
+                  @participant={{tile.participant}}
+                  @isSelf={{tile.isSelf}}
+                  @showVideo={{tile.showVideo}}
+                  @onAspect={{this.reportTileAspect}}
+                />
+              {{/each}}
+            </div>
+          {{else}}
+            <div class="resenha-room-page__empty">
+              {{i18n "resenha.room_page.empty"}}
+            </div>
+          {{/if}}
+        </div>
+
+        {{#if this.chatOpen}}
+          <aside class="resenha-room-page__sidebar">
+            <ResenhaChatPanel @room={{this.room}} @onClose={{this.closeChat}} />
+          </aside>
         {{/if}}
-      </header>
-
-      {{#if this.tiles.length}}
-        <div
-          class="resenha-room-page__grid"
-          style={{this.gridStyle}}
-          {{didInsert this.registerGrid}}
-          {{this.trackGridSize this.updateGridSize}}
-          {{this.trackFullscreen this.setGridFullscreen}}
-        >
-          <button
-            type="button"
-            class="btn btn-icon no-text resenha-room-page__fullscreen"
-            title={{this.gridFullscreenTitle}}
-            aria-label={{this.gridFullscreenTitle}}
-            {{on "click" this.toggleGridFullscreen}}
-          >
-            {{dIcon (if this.gridFullscreen "compress" "expand")}}
-          </button>
-
-          {{#each this.tiles key="participant.id" as |tile|}}
-            <ResenhaVideoTile
-              @room={{this.room}}
-              @participant={{tile.participant}}
-              @isSelf={{tile.isSelf}}
-              @showVideo={{tile.showVideo}}
-              @onAspect={{this.reportTileAspect}}
-            />
-          {{/each}}
-        </div>
-      {{else}}
-        <div class="resenha-room-page__empty">
-          {{i18n "resenha.room_page.empty"}}
-        </div>
-      {{/if}}
+      </div>
 
       <footer class="resenha-room-page__controls">
         {{#if this.joined}}
@@ -365,6 +403,23 @@ export default class ResenhaRoomPage extends Component {
               {{on "click" this.toggleScreenShare}}
             >
               {{dIcon "display"}}
+            </button>
+          {{/if}}
+          {{#if this.chatAvailable}}
+            <button
+              type="button"
+              class={{dConcatClass
+                "btn btn-icon no-text resenha-room-page__chat-toggle"
+                (if this.chatOpen "--active")
+              }}
+              title={{this.chatToggleTitle}}
+              aria-label={{this.chatToggleTitle}}
+              {{on "click" this.toggleChat}}
+            >
+              {{dIcon "far-comment"}}
+              {{! Zero-width space: matches DButton so an icon-only button keeps
+                  full button height and aligns with its DButton siblings. }}
+              <span aria-hidden="true">&#8203;</span>
             </button>
           {{/if}}
           <DButton

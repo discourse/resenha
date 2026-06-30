@@ -15,6 +15,8 @@ module Resenha
                     leave
                     participants
                     signal
+                    chat_session
+                    chat_message
                     kick
                     heartbeat
                     toggle_mute
@@ -139,6 +141,10 @@ module Resenha
       end
 
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
+
+      # Keep an in-progress chat session alive while someone is present, so it
+      # only rolls over to a new thread once the room is idle AND empty.
+      Resenha::ChatSession.touch!(@room)
 
       # Detect and broadcast any drift (idle change, or a participant whose TTL
       # lapsed after an abrupt disconnect) now that metadata is persisted.
@@ -292,7 +298,42 @@ module Resenha
       head :no_content
     end
 
+    # Returns the room's current live chat thread (if any) so the panel can
+    # render it. Does not create a thread.
+    def chat_session
+      ensure_chat_available!
+      render json: {
+               channel_id: @room.chat_channel_id,
+               thread_id: Resenha::ChatSession.active_thread_id(@room),
+             }
+    end
+
+    # Opens/continues the room's chat thread. With a blank message this just
+    # starts the session (the "start chat" button); otherwise it posts the
+    # message into the active thread, rolling over to a new thread first if the
+    # previous session went idle.
+    def chat_message
+      ensure_chat_available!
+
+      text = params[:message].to_s
+      thread =
+        if text.blank?
+          Resenha::ChatSession.ensure_thread!(@room, current_user)
+        else
+          Resenha::ChatSession.post_message!(@room, current_user, text).thread
+        end
+
+      render json: { channel_id: @room.chat_channel_id, thread_id: thread&.id }
+    end
+
     private
+
+    def ensure_chat_available!
+      guardian.ensure_can_join_resenha_room!(@room)
+      unless Resenha::ChatSession.available_for?(@room, guardian)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.chat_unavailable"))
+      end
+    end
 
     def refresh_participant_statuses(room)
       Resenha::ParticipantTracker
@@ -334,6 +375,9 @@ module Resenha
           :max_participants,
           :room_type,
           :video_enabled,
+          :chat_channel_id,
+          :chat_idle_minutes,
+          :chat_thread_title_template,
         )
       if permitted.key?(:room_type)
         permitted[:room_type] = Resenha::Room::ROOM_TYPES[permitted[:room_type].to_s] ||

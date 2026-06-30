@@ -8,6 +8,8 @@ Resenha::Engine.routes.draw do
       delete :leave
       get :participants
       post :signal
+      get :chat_session
+      post :chat_message
       post :toggle_mute
       post :state
       delete :kick

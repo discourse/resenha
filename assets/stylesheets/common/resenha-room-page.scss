@@ -88,6 +88,28 @@
     user-select: none;
   }
 
+  &__chat {
+    position: relative;
+  }
+
+  &__chat-badge {
+    position: absolute;
+    inset-block-start: -0.15em;
+    inset-inline-end: -0.15em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.15em;
+    height: 1.15em;
+    padding-inline: var(--space-1);
+    border-radius: 1em;
+    background: var(--tertiary);
+    color: var(--secondary);
+    font-size: var(--font-down-2);
+    font-weight: 700;
+    line-height: 1;
+  }
+
   // Invisible grab area in the widget's top-left corner — like the chat
   // drawer's resizer, you only get a resize cursor on hover, no visible glyph.
   // The widget is anchored bottom-right, so dragging here grows it up/left.
@@ -126,6 +148,58 @@
     margin: 0;
     color: var(--primary-high);
     overflow-wrap: anywhere;
+  }
+
+  // The video column and the chat sidebar sit side by side; the column flexes
+  // and the sidebar takes a fixed width. min-height: 0 lets the grid and the
+  // chat message list scroll instead of pushing the page taller.
+  &__body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: var(--space-4);
+  }
+
+  &__main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  &__sidebar {
+    flex: 0 0 22rem;
+    width: 22rem;
+    min-height: 0;
+    display: flex;
+  }
+
+  &__chat-toggle {
+    position: relative;
+
+    &.--active {
+      color: var(--tertiary);
+    }
+  }
+
+  &__chat-badge {
+    position: absolute;
+    inset-block-start: -0.15em;
+    inset-inline-end: -0.15em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.15em;
+    height: 1.15em;
+    padding-inline: var(--space-1);
+    border-radius: 1em;
+    background: var(--tertiary);
+    color: var(--secondary);
+    font-size: var(--font-down-2);
+    font-weight: 700;
+    line-height: 1;
   }
 
   &__grid {
@@ -191,6 +265,20 @@
     .--active {
       color: var(--tertiary);
     }
+  }
+}
+
+// On narrow viewports the sidebar can't sit beside the video column, so it
+// becomes a full-height drawer over the page (above the docked call widget).
+@media (max-width: 700px) {
+  .resenha-room-page__sidebar {
+    position: fixed;
+    inset-block: var(--header-offset, 4em) 0;
+    inset-inline: 0;
+    z-index: 1050;
+    flex: none;
+    width: auto;
+    background: var(--secondary);
   }
 }
 

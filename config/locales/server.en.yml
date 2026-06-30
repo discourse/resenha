@@ -13,9 +13,12 @@ en:
     resenha_afk_disconnect_threshold_minutes: "Minutes of inactivity before a voice room participant is automatically disconnected. Set to 0 to disable."
     resenha_video_enabled: "Enable camera video and screen sharing in voice rooms. Rooms can individually opt out via their room settings."
     resenha_video_max_publishers: "Maximum number of participants who can share video or their screen at the same time in a room. Media stays peer-to-peer, so higher values increase CPU and bandwidth load for everyone watching."
+    resenha_chat_enabled: "Allow voice rooms to be linked to a chat channel. Each chat session opens a thread in that channel; messages are real chat messages, so participants can also follow along in the chat UI."
   resenha:
     defaults:
       watercooler_description: "Join for casual drop-in voice chats with other community members."
+    chat:
+      default_thread_title: "Voice chat at {time}"
     errors:
       not_enabled: "Resenha voice rooms are disabled."
       not_authorized: "You are not allowed to perform that action for this room."
@@ -26,6 +29,7 @@ en:
       listeners_cannot_unmute: "Listeners cannot unmute in a Stage room."
       video_not_allowed: "Video is not enabled in this room."
       video_publisher_limit: "The maximum number of simultaneous video streams for this room has been reached."
+      chat_unavailable: "Chat is not available for this room."
   badges:
     mic_check:
       name: "Mic Check"

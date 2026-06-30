@@ -2,6 +2,7 @@
 require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
+require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
 
 RSpec.describe Resenha::RoomsController do
   before do
@@ -11,9 +12,12 @@ RSpec.describe Resenha::RoomsController do
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
         AddVideoEnabledToResenhaRooms.new.change
-        Resenha::Room.reset_column_information
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :chat_channel_id)
+        AddChatSettingsToResenhaRooms.new.change
       end
     end
+    Resenha::Room.reset_column_information
   end
 
   fab!(:staff, :admin)
@@ -660,6 +664,76 @@ RSpec.describe Resenha::RoomsController do
         "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
       )
       expect(candidate_payload[2][:user_ids]).to eq([other_participant.id])
+    end
+  end
+
+  describe "chat" do
+    fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
+
+    before do
+      SiteSetting.chat_enabled = true
+      SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:everyone]
+      room.update!(chat_channel_id: channel.id)
+    end
+
+    after { Resenha::ChatSession.clear(room.id) }
+
+    describe "#chat_session" do
+      it "returns the channel and a null thread before any chat" do
+        sign_in(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["channel_id"]).to eq(channel.id)
+        expect(response.parsed_body["thread_id"]).to be_nil
+      end
+
+      it "returns 403 when chat is disabled site-wide" do
+        SiteSetting.chat_enabled = false
+        sign_in(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "returns 403 when the room has no linked channel" do
+        room.update!(chat_channel_id: nil)
+        sign_in(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "requires authentication" do
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+    end
+
+    describe "#chat_message" do
+      it "opens a thread in the linked channel and posts the message into it" do
+        sign_in(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello everyone" }
+
+        expect(response.status).to eq(200)
+        thread_id = response.parsed_body["thread_id"]
+        expect(thread_id).to be_present
+
+        thread = Chat::Thread.find(thread_id)
+        expect(thread.channel_id).to eq(channel.id)
+        expect(thread.chat_messages.last.message).to eq("hello everyone")
+      end
+
+      it "requires authentication" do
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hi" }
+
+        expect(response.status).to eq(403)
+      end
     end
   end
 end

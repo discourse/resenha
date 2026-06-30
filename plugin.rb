@@ -39,8 +39,13 @@ register_svg_icon "video-slash"
 register_svg_icon "display"
 register_svg_icon "expand"
 register_svg_icon "compress"
+register_svg_icon "far-comment"
+register_svg_icon "paper-plane"
+register_svg_icon "xmark"
+register_svg_icon "up-right-from-square"
 register_asset "stylesheets/common/resenha.scss"
 register_asset "stylesheets/common/resenha-room-page.scss"
+register_asset "stylesheets/common/resenha-chat.scss"
 register_asset "stylesheets/common/resenha-admin.scss", :admin
 
 add_admin_route "resenha.admin.title", "resenha", use_new_show_route: true
