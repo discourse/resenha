@@ -53,10 +53,95 @@ RSpec.describe Resenha::ChatSession do
     end
   end
 
-  describe ".post_message!" do
-    it "opens a thread with a templated starter + title and posts into it" do
-      room.update!(chat_thread_title_template: "Team Meeting at {time}")
+  describe ".post_message! without a thread template (plain room)" do
+    it "posts the first message to the channel without opening a thread" do
+      message = described_class.post_message!(room, user, "hello")
 
+      expect(message.thread_id).to be_nil
+      expect(message.message).to eq("hello")
+      expect(described_class.active_thread_id(room)).to be_nil
+
+      state = described_class.state(room)
+      expect(state[:thread_id]).to be_nil
+      expect(state[:root_message_id]).to eq(message.id)
+      expect(state[:root_message][:cooked]).to include("hello")
+    end
+
+    it "opens a thread from the first message once a second arrives" do
+      first = described_class.post_message!(room, user, "first")
+      second = described_class.post_message!(room, other, "second")
+
+      expect(second.thread_id).to be_present
+      thread = second.thread
+      expect(thread.original_message_id).to eq(first.id)
+      expect(first.reload.thread_id).to eq(thread.id)
+      expect(described_class.active_thread_id(room)).to eq(thread.id)
+      expect(described_class.state(room)[:root_message_id]).to be_nil
+    end
+
+    it "reuses the thread for later messages" do
+      described_class.post_message!(room, user, "first")
+      second = described_class.post_message!(room, other, "second")
+      third = described_class.post_message!(room, user, "third")
+      expect(third.thread_id).to eq(second.thread_id)
+    end
+
+    it "starts a fresh session after going idle and empty" do
+      described_class.post_message!(room, user, "first")
+      first_thread = described_class.post_message!(room, other, "second").thread_id
+
+      # Simulate the session going idle past the room's timeout.
+      Discourse.redis.set("resenha:room:#{room.id}:chat_touched_at", (Time.now - 30.minutes).to_f)
+
+      # The next message is a brand-new lone root again (no thread yet)...
+      rolled = described_class.post_message!(room, user, "later")
+      expect(rolled.thread_id).to be_nil
+      expect(described_class.active_thread_id(room)).to be_nil
+
+      # ...and only the following one opens a new, distinct thread.
+      follow_up = described_class.post_message!(room, other, "reply")
+      expect(follow_up.thread_id).to be_present
+      expect(follow_up.thread_id).not_to eq(first_thread)
+    end
+
+    it "is a no-op for .start!" do
+      described_class.start!(room, user)
+      expect(described_class.active_thread_id(room)).to be_nil
+      expect(described_class.state(room)[:root_message_id]).to be_nil
+    end
+
+    it "treats a deleted pending root as a fresh first message" do
+      first = described_class.post_message!(room, user, "first")
+      ::Chat::Message.find(first.id).trash!(Discourse.system_user)
+
+      second = described_class.post_message!(room, other, "second")
+
+      expect(second.thread_id).to be_nil
+      expect(described_class.state(room)[:root_message_id]).to eq(second.id)
+    end
+
+    it "abandons a thread whose original message was deleted" do
+      described_class.post_message!(room, user, "first")
+      thread = described_class.post_message!(room, other, "second").thread
+      thread.original_message.trash!(Discourse.system_user)
+
+      expect(described_class.active_thread_id(room)).to be_nil
+
+      fresh = described_class.post_message!(room, user, "again")
+      expect(fresh.thread_id).to be_nil
+      expect(described_class.state(room)[:root_message_id]).to eq(fresh.id)
+    end
+
+    it "auto-follows the poster to the channel" do
+      described_class.post_message!(room, user, "hi")
+      expect(channel.membership_for(user)).to be_present
+    end
+  end
+
+  describe ".post_message! with a thread template (team room)" do
+    before { room.update!(chat_thread_title_template: "Team Meeting at {time}") }
+
+    it "opens a thread with a system starter + title and posts the message as a reply" do
       message = described_class.post_message!(room, user, "hello everyone")
       thread = message.thread
 
@@ -64,7 +149,9 @@ RSpec.describe Resenha::ChatSession do
       expect(thread.channel_id).to eq(channel.id)
       expect(thread.title).to start_with("Team Meeting at ")
       expect(thread.original_message.message).to start_with("Team Meeting at ")
+      expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
       expect(message.message).to eq("hello everyone")
+      expect(message.user_id).to eq(user.id)
       expect(described_class.active_thread_id(room)).to eq(thread.id)
     end
 
@@ -77,18 +164,20 @@ RSpec.describe Resenha::ChatSession do
     it "opens a new thread once the session has gone idle" do
       first = described_class.post_message!(room, user, "one")
 
-      # Simulate the session going idle past the room's timeout. (Posted by a
-      # different user so the same-minute starter text isn't rejected as a
-      # duplicate — a real rollover is >= 15 min later, well clear of that.)
       Discourse.redis.set("resenha:room:#{room.id}:chat_touched_at", (Time.now - 30.minutes).to_f)
 
       second = described_class.post_message!(room, other, "two")
       expect(second.thread_id).not_to eq(first.thread_id)
     end
 
-    it "auto-follows the poster to the channel" do
-      described_class.post_message!(room, user, "hi")
-      expect(channel.membership_for(user)).to be_present
+    it "starts an empty session via .start! with just the system starter" do
+      described_class.start!(room, user)
+
+      thread_id = described_class.active_thread_id(room)
+      expect(thread_id).to be_present
+      thread = ::Chat::Thread.find(thread_id)
+      expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
+      expect(thread.original_message.message).to start_with("Team Meeting at ")
     end
   end
 end

@@ -298,32 +298,29 @@ module Resenha
       head :no_content
     end
 
-    # Returns the room's current live chat thread (if any) so the panel can
-    # render it. Does not create a thread.
+    # Returns the room's current live chat session (linked channel, active
+    # thread, and any pending lone root message) so the panel can render it.
+    # Does not create or change anything.
     def chat_session
       ensure_chat_available!
-      render json: {
-               channel_id: @room.chat_channel_id,
-               thread_id: Resenha::ChatSession.active_thread_id(@room),
-             }
+      render json: Resenha::ChatSession.state(@room)
     end
 
-    # Opens/continues the room's chat thread. With a blank message this just
-    # starts the session (the "start chat" button); otherwise it posts the
-    # message into the active thread, rolling over to a new thread first if the
-    # previous session went idle.
+    # Opens/continues the room's chat session. With a blank message this just
+    # starts the session (the "start chat" button — only meaningful for rooms
+    # with a thread template); otherwise it posts the message, opening or rolling
+    # over the session as needed.
     def chat_message
       ensure_chat_available!
 
       text = params[:message].to_s
-      thread =
-        if text.blank?
-          Resenha::ChatSession.ensure_thread!(@room, current_user)
-        else
-          Resenha::ChatSession.post_message!(@room, current_user, text).thread
-        end
+      if text.blank?
+        Resenha::ChatSession.start!(@room, current_user)
+      else
+        Resenha::ChatSession.post_message!(@room, current_user, text)
+      end
 
-      render json: { channel_id: @room.chat_channel_id, thread_id: thread&.id }
+      render json: Resenha::ChatSession.state(@room)
     end
 
     private

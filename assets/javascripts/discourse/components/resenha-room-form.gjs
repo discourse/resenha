@@ -45,9 +45,7 @@ export default class ResenhaRoomForm extends Component {
   }
 
   threadTitlePreview(template) {
-    const text = (
-      template || i18n("resenha.chat.default_thread_title")
-    ).toString();
+    const text = (template || "").toString();
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, "0")}:${String(
       now.getMinutes()
@@ -258,15 +256,21 @@ export default class ResenhaRoomForm extends Component {
                 as |field|
               >
                 <field.Input
-                  placeholder={{i18n "resenha.chat.default_thread_title"}}
+                  placeholder={{i18n
+                    "resenha.admin.room.chat_thread_title_placeholder"
+                  }}
                 />
               </form.Field>
 
               <div class="resenha-room-form__chat-preview">
-                {{i18n "resenha.admin.room.chat_thread_title_preview"}}
-                <strong>{{this.threadTitlePreview
-                    form.data.chat_thread_title_template
-                  }}</strong>
+                {{#if form.data.chat_thread_title_template}}
+                  {{i18n "resenha.admin.room.chat_thread_title_preview"}}
+                  <strong>{{this.threadTitlePreview
+                      form.data.chat_thread_title_template
+                    }}</strong>
+                {{else}}
+                  {{i18n "resenha.admin.room.chat_no_template_hint"}}
+                {{/if}}
               </div>
             {{/if}}
           </div>

@@ -28,16 +28,19 @@ export default class ResenhaChatPanel extends Component {
   @tracked loading = true;
   @tracked channelId = null;
   @tracked threadId = null;
+  @tracked rootMessageId = null;
   @tracked messages = [];
 
   messagesElement = null;
   textareaElement = null;
   #pinnedToBottom = true;
   #subscribedPath = null;
+  #sessionPath = null;
 
   willDestroy() {
     super.willDestroy(...arguments);
     this.#unsubscribe();
+    this.#unsubscribeSession();
   }
 
   get room() {
@@ -46,6 +49,10 @@ export default class ResenhaChatPanel extends Component {
 
   get hasThread() {
     return !!this.threadId;
+  }
+
+  get showStart() {
+    return !this.hasThread && !!this.room?.chat_thread_title_template;
   }
 
   get hasMessages() {
@@ -113,17 +120,40 @@ export default class ResenhaChatPanel extends Component {
 
   @action
   async loadSession() {
+    this.#subscribeSession();
     try {
       const data = await ajax(`/resenha/rooms/${this.room.id}/chat_session`);
-      this.channelId = data.channel_id;
-      if (data.thread_id) {
-        await this.#openThread(data.thread_id);
-      }
+      await this.#applyState(data);
     } catch (e) {
       popupAjaxError(e);
     } finally {
       this.loading = false;
     }
+  }
+
+  async #applyState(data) {
+    if (!data) {
+      return;
+    }
+    this.channelId = data.channel_id;
+    if (data.thread_id) {
+      await this.#openThread(data.thread_id);
+    } else {
+      this.#showRoot(data.root_message);
+    }
+  }
+
+  #showRoot(message) {
+    if (this.threadId) {
+      this.#unsubscribe();
+      this.threadId = null;
+    }
+    const id = message?.id ?? null;
+    if (this.rootMessageId === id) {
+      return;
+    }
+    this.rootMessageId = id;
+    this.messages = message ? [message] : [];
   }
 
   async #openThread(threadId) {
@@ -133,6 +163,7 @@ export default class ResenhaChatPanel extends Component {
 
     this.#unsubscribe();
     this.threadId = threadId;
+    this.rootMessageId = null;
     this.#subscribe();
 
     try {
@@ -144,6 +175,26 @@ export default class ResenhaChatPanel extends Component {
     } catch (e) {
       popupAjaxError(e);
     }
+  }
+
+  #subscribeSession() {
+    if (this.#sessionPath) {
+      return;
+    }
+    this.#sessionPath = `/resenha/rooms/${this.room.id}/chat`;
+    this.messageBus.subscribe(this.#sessionPath, this.onSessionMessage);
+  }
+
+  #unsubscribeSession() {
+    if (this.#sessionPath) {
+      this.messageBus.unsubscribe(this.#sessionPath, this.onSessionMessage);
+      this.#sessionPath = null;
+    }
+  }
+
+  @action
+  onSessionMessage(data) {
+    this.#applyState(data);
   }
 
   #subscribe() {
@@ -274,10 +325,7 @@ export default class ResenhaChatPanel extends Component {
         type: "POST",
         data: { message },
       });
-      this.channelId = data.channel_id;
-      if (data.thread_id) {
-        await this.#openThread(data.thread_id);
-      }
+      await this.#applyState(data);
     } catch (e) {
       popupAjaxError(e);
     }
@@ -391,7 +439,7 @@ export default class ResenhaChatPanel extends Component {
             <p class="resenha-chat__empty-body">
               {{i18n "resenha.chat.empty_body"}}
             </p>
-            {{#unless this.hasThread}}
+            {{#if this.showStart}}
               <button
                 type="button"
                 class="btn btn-default resenha-chat__start"
@@ -399,7 +447,7 @@ export default class ResenhaChatPanel extends Component {
               >
                 {{i18n "resenha.chat.start"}}
               </button>
-            {{/unless}}
+            {{/if}}
           </div>
         {{/if}}
       </div>
