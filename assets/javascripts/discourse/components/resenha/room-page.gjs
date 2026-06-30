@@ -370,7 +370,7 @@ export default class ResenhaRoomPage extends Component {
           <DButton
             @action={{this.dockRoom}}
             @icon="compress"
-            @translatedTitle="resenha.room.widget_mode"
+            @label="resenha.room.widget_mode"
           />
           <DButton
             @action={{this.leaveRoom}}
