@@ -18,10 +18,14 @@ module Resenha
   #   messages are replies.
   #
   # The live thread id (or, before a plain-mode thread exists, the pending root
-  # message id) and a "last touched" timestamp live in Redis, keyed by room. The
-  # timestamp is bumped on every message AND on the room heartbeat while
-  # participants are present, so a session only rolls over to a fresh thread once
-  # it has been idle AND empty for longer than the room's configured timeout.
+  # message id) live in Redis, keyed by room.
+  #
+  # Liveness is derived from two sources: the timestamp of the session's most
+  # recent chat message (messages already carry their own +created_at+, so
+  # there's nothing extra to store) and a Redis "last seen" timestamp bumped on
+  # the room heartbeat while a participant is present. A session only rolls over
+  # to a fresh thread once both have been quiet longer than the room's configured
+  # timeout — i.e. it has been idle (no messages) AND empty (no one present).
   class ChatSession
     KEY_NAMESPACE = "resenha:room"
     SAFETY_TTL = 1.day.to_i
@@ -68,11 +72,23 @@ module Resenha
         live_thread_id(room)
       end
 
-      # Keeps the current session alive (called on each message and on the room
-      # heartbeat while a participant is present) so it doesn't roll over.
+      # Records that a participant is present (called on the room heartbeat) so a
+      # session with people in it but no recent messages doesn't roll over.
+      # Message recency is read straight from the messages themselves.
       def touch!(room)
-        return if redis.get(thread_key(room.id)).blank? && redis.get(root_key(room.id)).blank?
-        redis.set(touched_key(room.id), Time.now.to_f, ex: SAFETY_TTL)
+        thread = redis.get(thread_key(room.id))
+        root = redis.get(root_key(room.id))
+        return if thread.blank? && root.blank?
+
+        # Never revive a session that already went idle AND empty — let the next
+        # message roll it over to a fresh thread instead.
+        return if stale?(room)
+
+        # Keep the identity keys alive alongside presence, so a long, present but
+        # quiet session doesn't lose its thread/root pointer to TTL expiry.
+        redis.expire(thread_key(room.id), SAFETY_TTL) if thread.present?
+        redis.expire(root_key(room.id), SAFETY_TTL) if root.present?
+        redis.set(seen_key(room.id), Time.now.to_f, ex: SAFETY_TTL)
       end
 
       # Starts a session without a participant message. Only templated rooms can
@@ -110,7 +126,7 @@ module Resenha
       def clear(room_id)
         redis.del(thread_key(room_id))
         redis.del(root_key(room_id))
-        redis.del(touched_key(room_id))
+        redis.del(seen_key(room_id))
       end
 
       private
@@ -252,8 +268,18 @@ module Resenha
         MessageBus.publish(
           Resenha.room_chat_channel(room.id),
           state(room),
-          **room.message_bus_targets,
+          **message_bus_targets(room),
         )
+      end
+
+      # Same audience the room broadcaster uses: the room's configured targets
+      # plus anyone currently present, so a participant who isn't a channel/room
+      # member still sees the panel follow along.
+      def message_bus_targets(room)
+        targets = room.message_bus_targets
+        participant_ids = Resenha::ParticipantTracker.user_ids(room.id)
+        return targets if participant_ids.empty?
+        targets.merge(user_ids: Array(targets[:user_ids] || []) | participant_ids)
       end
 
       # The subset of a chat message the panel needs to render it, matching the
@@ -312,19 +338,52 @@ module Resenha
       def store_thread(room, thread_id)
         redis.set(thread_key(room.id), thread_id, ex: SAFETY_TTL)
         redis.del(root_key(room.id))
-        redis.set(touched_key(room.id), Time.now.to_f, ex: SAFETY_TTL)
       end
 
       def store_root(room, message_id)
         redis.del(thread_key(room.id))
         redis.set(root_key(room.id), message_id, ex: SAFETY_TTL)
-        redis.set(touched_key(room.id), Time.now.to_f, ex: SAFETY_TTL)
       end
 
+      # A session is stale once it has been both idle (no messages) and empty (no
+      # one present, so no heartbeats) for longer than the room's timeout.
       def stale?(room)
-        touched = redis.get(touched_key(room.id))
-        return true if touched.blank?
-        (Time.now.to_f - touched.to_f) > room.chat_idle_seconds
+        last = liveness_at(room)
+        return true if last.nil?
+        (Time.now.to_f - last) > room.chat_idle_seconds
+      end
+
+      # The most recent sign of life: the newest message in the session, or the
+      # last heartbeat while someone was present — whichever is later.
+      def liveness_at(room)
+        candidates = []
+        message_at = last_message_at(room)
+        candidates << message_at.to_f if message_at
+        seen_at = redis.get(seen_key(room.id))
+        candidates << seen_at.to_f if seen_at.present?
+        candidates.max
+      end
+
+      # Timestamp of the session's most recent (non-deleted) chat message, read
+      # straight from the messages — the active thread's latest reply, or the
+      # pending plain-mode root before a thread exists.
+      def last_message_at(room)
+        thread_id = redis.get(thread_key(room.id)).to_i
+        if thread_id > 0
+          latest = ::Chat::Message.where(thread_id: thread_id).maximum(:created_at)
+          return latest if latest
+        end
+
+        root_id = redis.get(root_key(room.id)).to_i
+        if root_id > 0
+          return(
+            ::Chat::Message.where(id: root_id, chat_channel_id: room.chat_channel_id).maximum(
+              :created_at,
+            )
+          )
+        end
+
+        nil
       end
 
       def title_for(room)
@@ -349,8 +408,8 @@ module Resenha
         "#{KEY_NAMESPACE}:#{room_id}:chat_root"
       end
 
-      def touched_key(room_id)
-        "#{KEY_NAMESPACE}:#{room_id}:chat_touched_at"
+      def seen_key(room_id)
+        "#{KEY_NAMESPACE}:#{room_id}:chat_seen_at"
       end
     end
   end

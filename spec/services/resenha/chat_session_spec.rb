@@ -90,18 +90,60 @@ RSpec.describe Resenha::ChatSession do
       described_class.post_message!(room, user, "first")
       first_thread = described_class.post_message!(room, other, "second").thread_id
 
-      # Simulate the session going idle past the room's timeout.
-      Discourse.redis.set("resenha:room:#{room.id}:chat_touched_at", (Time.now - 30.minutes).to_f)
+      # No messages and no heartbeats for longer than the room's timeout: the
+      # session has gone idle and empty.
+      freeze_time(31.minutes.from_now) do
+        # The next message is a brand-new lone root again (no thread yet)...
+        rolled = described_class.post_message!(room, user, "later")
+        expect(rolled.thread_id).to be_nil
+        expect(described_class.active_thread_id(room)).to be_nil
 
-      # The next message is a brand-new lone root again (no thread yet)...
-      rolled = described_class.post_message!(room, user, "later")
-      expect(rolled.thread_id).to be_nil
-      expect(described_class.active_thread_id(room)).to be_nil
+        # ...and only the following one opens a new, distinct thread.
+        follow_up = described_class.post_message!(room, other, "reply")
+        expect(follow_up.thread_id).to be_present
+        expect(follow_up.thread_id).not_to eq(first_thread)
+      end
+    end
 
-      # ...and only the following one opens a new, distinct thread.
-      follow_up = described_class.post_message!(room, other, "reply")
-      expect(follow_up.thread_id).to be_present
-      expect(follow_up.thread_id).not_to eq(first_thread)
+    it "keeps the session alive while participants are present (heartbeat)" do
+      described_class.post_message!(room, user, "first")
+      first_thread = described_class.post_message!(room, other, "second").thread_id
+
+      # A heartbeat within the timeout keeps the session warm...
+      freeze_time(10.minutes.from_now) { described_class.touch!(room) }
+
+      # ...so a message a bit later still lands in the same thread.
+      freeze_time(20.minutes.from_now) do
+        reply = described_class.post_message!(room, user, "still here")
+        expect(reply.thread_id).to eq(first_thread)
+      end
+    end
+
+    it "does not let a late heartbeat revive an already-idle session" do
+      described_class.post_message!(room, user, "first")
+      first_thread = described_class.post_message!(room, other, "second").thread_id
+
+      # The session has already gone idle and empty; a heartbeat from a returning
+      # joiner must not resurrect it.
+      freeze_time(31.minutes.from_now) do
+        described_class.touch!(room)
+        rolled = described_class.post_message!(room, user, "later")
+        expect(rolled.thread_id).to be_nil
+
+        follow_up = described_class.post_message!(room, other, "reply")
+        expect(follow_up.thread_id).not_to eq(first_thread)
+      end
+    end
+
+    it "refreshes the session key TTL on heartbeat so a long quiet session isn't dropped" do
+      described_class.post_message!(room, user, "first")
+      described_class.post_message!(room, other, "second")
+      thread_key = "resenha:room:#{room.id}:chat_thread"
+
+      Discourse.redis.expire(thread_key, 60)
+      described_class.touch!(room)
+
+      expect(Discourse.redis.ttl(thread_key)).to be > 60
     end
 
     it "is a no-op for .start!" do
@@ -164,10 +206,10 @@ RSpec.describe Resenha::ChatSession do
     it "opens a new thread once the session has gone idle" do
       first = described_class.post_message!(room, user, "one")
 
-      Discourse.redis.set("resenha:room:#{room.id}:chat_touched_at", (Time.now - 30.minutes).to_f)
-
-      second = described_class.post_message!(room, other, "two")
-      expect(second.thread_id).not_to eq(first.thread_id)
+      freeze_time(31.minutes.from_now) do
+        second = described_class.post_message!(room, other, "two")
+        expect(second.thread_id).not_to eq(first.thread_id)
+      end
     end
 
     it "starts an empty session via .start! with just the system starter" do

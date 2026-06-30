@@ -185,29 +185,9 @@ html.discourse-touch .resenha-call-widget {
   }
 
   &__chat-toggle {
-    position: relative;
-
     &.--active {
       color: var(--tertiary);
     }
-  }
-
-  &__chat-badge {
-    position: absolute;
-    inset-block-start: -0.15em;
-    inset-inline-end: -0.15em;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.15em;
-    height: 1.15em;
-    padding-inline: var(--space-1);
-    border-radius: 1em;
-    background: var(--tertiary);
-    color: var(--secondary);
-    font-size: var(--font-down-2);
-    font-weight: 700;
-    line-height: 1;
   }
 
   &__grid {
