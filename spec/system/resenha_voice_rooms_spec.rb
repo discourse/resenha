@@ -11,9 +11,7 @@ describe "Resenha voice rooms", type: :system do
   end
 
   def click_call_widget_open_page_button
-    within(".resenha-call-widget__controls") do
-      find(".d-icon-expand").ancestor("button").click
-    end
+    within(".resenha-call-widget__controls") { find(".d-icon-expand").ancestor("button").click }
   end
 
   def click_call_widget_leave_button
