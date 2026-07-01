@@ -288,6 +288,7 @@ export default class ResenhaChatPanel extends Component {
         {{/if}}
       </header>
 
+      {{! template-lint-disable no-invalid-interactive }}
       <div
         class="resenha-chat__body {{if this.hideSkeleton '--hide-skeleton'}}"
         {{on "keydown" this.interceptEscape capture=true}}
