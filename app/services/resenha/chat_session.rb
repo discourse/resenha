@@ -144,6 +144,25 @@ module Resenha
         redis.del(seen_key(room_id))
       end
 
+      # The subset of a chat message the panel needs to render it, matching the
+      # shape of chat's own thread-message serializer. Public so the controller
+      # can echo a just-posted message straight back to the sender for immediate
+      # rendering, instead of making them wait for the MessageBus round-trip.
+      def serialize_message(message)
+        author = message.user
+        {
+          id: message.id,
+          cooked: message.cooked,
+          created_at: message.created_at,
+          user: {
+            id: author&.id,
+            username: author&.username,
+            name: author&.name,
+            avatar_template: author&.avatar_template,
+          },
+        }
+      end
+
       private
 
       def templated?(room)
@@ -328,23 +347,6 @@ module Resenha
         participant_ids = Resenha::ParticipantTracker.user_ids(room.id)
         return targets if participant_ids.empty?
         targets.merge(user_ids: Array(targets[:user_ids] || []) | participant_ids)
-      end
-
-      # The subset of a chat message the panel needs to render it, matching the
-      # shape of chat's own thread-message serializer.
-      def serialize_message(message)
-        author = message.user
-        {
-          id: message.id,
-          cooked: message.cooked,
-          created_at: message.created_at,
-          user: {
-            id: author&.id,
-            username: author&.username,
-            name: author&.name,
-            avatar_template: author&.avatar_template,
-          },
-        }
       end
 
       # --- redis state ---------------------------------------------------------

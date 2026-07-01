@@ -216,14 +216,17 @@ export default class ResenhaChatPanel extends Component {
   @action
   onBusMessage(data) {
     if (data?.type === "sent" && data.chat_message) {
-      const message = data.chat_message;
-      if (this.messages.some((m) => m.id === message.id)) {
-        return;
-      }
-      this.messages = [...this.messages, message];
+      this.#appendMessage(data.chat_message);
     } else if (data?.type === "delete") {
       this.messages = this.messages.filter((m) => m.id !== data.deleted_id);
     }
+  }
+
+  #appendMessage(message) {
+    if (!message || this.messages.some((m) => m.id === message.id)) {
+      return;
+    }
+    this.messages = [...this.messages, message];
   }
 
   @action
@@ -322,6 +325,7 @@ export default class ResenhaChatPanel extends Component {
         data: { message },
       });
       await this.#applyState(data);
+      this.#appendMessage(data.message);
     } catch (e) {
       popupAjaxError(e);
     }

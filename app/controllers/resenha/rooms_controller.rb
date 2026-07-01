@@ -316,15 +316,20 @@ module Resenha
       text = params[:message].to_s
       if text.blank?
         Resenha::ChatSession.start!(@room, current_user)
+        render json: Resenha::ChatSession.state(@room)
       else
         # We post through Chat::CreateMessage directly, which bypasses the
         # per-user flood limit + auto-silence that chat enforces in its own
         # controller — apply it here so this endpoint isn't a way around it.
         ::Chat::MessageRateLimiter.run!(current_user)
-        Resenha::ChatSession.post_message!(@room, current_user, text)
+        message = Resenha::ChatSession.post_message!(@room, current_user, text)
+        # Echo the created message back so the sender's panel can render it
+        # immediately, rather than waiting for the MessageBus round-trip.
+        render json:
+                 Resenha::ChatSession.state(@room).merge(
+                   message: Resenha::ChatSession.serialize_message(message),
+                 )
       end
-
-      render json: Resenha::ChatSession.state(@room)
     rescue Resenha::ChatSession::Error => e
       # The chat plugin rejected the message for a reason worth showing (a
       # duplicate, a too-long message, threading disabled, …) — surface it

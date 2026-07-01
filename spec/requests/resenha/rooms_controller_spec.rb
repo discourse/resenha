@@ -781,6 +781,25 @@ RSpec.describe Resenha::RoomsController do
         expect(response.parsed_body["errors"].join).to match(/identical message/i)
       end
 
+      it "echoes the created message so the sender can render it immediately" do
+        sign_in(user)
+        join_room!(user)
+
+        # The lone root is echoed back...
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "first" }
+        expect(response.parsed_body["message"]["cooked"]).to include("first")
+
+        # ...the promoting reply is echoed...
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "second" }
+        expect(response.parsed_body["message"]["cooked"]).to include("second")
+
+        # ...and so is a plain in-thread reply, which the response's `state`
+        # alone would not let the panel render (it carries no message content).
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "third" }
+        expect(response.parsed_body["message"]["cooked"]).to include("third")
+        expect(response.parsed_body["message"]["id"]).to be_present
+      end
+
       context "without a thread template (plain room)" do
         it "posts the first message to the channel without opening a thread" do
           sign_in(user)
