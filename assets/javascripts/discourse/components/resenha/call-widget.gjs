@@ -135,7 +135,11 @@ export default class ResenhaCallWidget extends Component {
   }
 
   get onActiveRoomPage() {
-    return this.router.currentURL === `/resenha/r/${this.room?.slug}`;
+    const currentRoute = this.router.currentRoute;
+    return (
+      currentRoute?.name === "resenha-room" &&
+      currentRoute?.params?.slug === this.room?.slug
+    );
   }
 
   get participants() {
