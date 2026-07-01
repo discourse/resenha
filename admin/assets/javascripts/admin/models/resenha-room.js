@@ -11,12 +11,27 @@ const SAVED_PROPERTIES = [
   "chat_thread_title_template",
 ];
 
+// A cleared FormKit <field.Control @type="select"> reports `undefined`
+// (its "None" option), and this model's adapter JSON-encodes properties for
+// the request body — JSON.stringify drops `undefined`-valued keys entirely,
+// so clearing a nullable field like chat_channel_id would silently never
+// reach the server. Send an explicit `null` instead.
+function withNullsForUndefined(properties) {
+  const normalized = { ...properties };
+  for (const key of Object.keys(normalized)) {
+    if (normalized[key] === undefined) {
+      normalized[key] = null;
+    }
+  }
+  return normalized;
+}
+
 export default class ResenhaRoom extends RestModel {
   createProperties() {
-    return this.getProperties(SAVED_PROPERTIES);
+    return withNullsForUndefined(this.getProperties(SAVED_PROPERTIES));
   }
 
   updateProperties() {
-    return this.getProperties(SAVED_PROPERTIES);
+    return withNullsForUndefined(this.getProperties(SAVED_PROPERTIES));
   }
 }
