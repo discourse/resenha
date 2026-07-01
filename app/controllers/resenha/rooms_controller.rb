@@ -16,6 +16,7 @@ module Resenha
                     participants
                     signal
                     chat_session
+                    ensure_chat_session
                     chat_message
                     kick
                     heartbeat
@@ -298,38 +299,35 @@ module Resenha
       head :no_content
     end
 
-    # Returns the room's current live chat session (linked channel, active
-    # thread, and any pending lone root message) so the panel can render it.
-    # Does not create or change anything.
+    # Returns the room's current live chat session (linked channel and active
+    # thread) so the panel can render it. Does not create or change anything.
     def chat_session
       ensure_chat_available!
       render json: Resenha::ChatSession.state(@room)
     end
 
-    # Opens/continues the room's chat session. With a blank message this just
-    # starts the session (the "start chat" button — only meaningful for rooms
-    # with a thread template); otherwise it posts the message, opening or rolling
-    # over the session as needed.
+    # Prepares the room's chat session for the caller: rolls a stale session
+    # over and follows them on the linked channel so chat's own message
+    # endpoints accept their posts. Never creates a thread — that only happens
+    # with the session's first message (see #chat_message); every later message
+    # goes through chat's regular API, not through Resenha.
+    def ensure_chat_session
+      ensure_chat_available!
+      render json: Resenha::ChatSession.start!(@room, current_user)
+    end
+
+    # Posts the session's opening message, creating the thread it roots. Only
+    # called by a panel that sees no live thread; once one exists, messages go
+    # through chat's own API instead.
     def chat_message
       ensure_chat_available!
 
-      text = params[:message].to_s
-      if text.blank?
-        Resenha::ChatSession.start!(@room, current_user)
-        render json: Resenha::ChatSession.state(@room)
-      else
-        # We post through Chat::CreateMessage directly, which bypasses the
-        # per-user flood limit + auto-silence that chat enforces in its own
-        # controller — apply it here so this endpoint isn't a way around it.
-        ::Chat::MessageRateLimiter.run!(current_user)
-        message = Resenha::ChatSession.post_message!(@room, current_user, text)
-        # Echo the created message back so the sender's panel can render it
-        # immediately, rather than waiting for the MessageBus round-trip.
-        render json:
-                 Resenha::ChatSession.state(@room).merge(
-                   message: Resenha::ChatSession.serialize_message(message),
-                 )
-      end
+      text = params.require(:message).to_s
+      # We post through Chat::CreateMessage directly, which bypasses the
+      # per-user flood limit + auto-silence that chat enforces in its own
+      # controller — apply it here so this endpoint isn't a way around it.
+      ::Chat::MessageRateLimiter.run!(current_user)
+      render json: Resenha::ChatSession.post_message!(@room, current_user, text)
     rescue Resenha::ChatSession::Error => e
       # The chat plugin rejected the message for a reason worth showing (a
       # duplicate, a too-long message, threading disabled, …) — surface it

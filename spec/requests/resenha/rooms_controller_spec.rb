@@ -695,7 +695,6 @@ RSpec.describe Resenha::RoomsController do
         expect(response.status).to eq(200)
         expect(response.parsed_body["channel_id"]).to eq(channel.id)
         expect(response.parsed_body["thread_id"]).to be_nil
-        expect(response.parsed_body["root_message_id"]).to be_nil
       end
 
       it "returns 403 when chat is disabled site-wide" do
@@ -733,6 +732,42 @@ RSpec.describe Resenha::RoomsController do
       end
     end
 
+    describe "#ensure_chat_session" do
+      it "requires authentication" do
+        post "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "returns 403 with the room's own message when signed in but not present" do
+        sign_in(user)
+
+        post "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t("resenha.errors.chat_requires_presence"),
+        )
+      end
+
+      it "follows the caller on the channel without creating a thread" do
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["channel_id"]).to eq(channel.id)
+        expect(response.parsed_body["thread_id"]).to be_nil
+        expect(Chat::Thread.where(channel_id: channel.id).count).to eq(0)
+
+        # Followed, so chat's own message endpoints accept the user's posts.
+        membership = channel.membership_for(user)
+        expect(membership).to be_present
+        expect(membership.following).to eq(true)
+      end
+    end
+
     describe "#chat_message" do
       it "requires authentication" do
         post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hi" }
@@ -751,6 +786,54 @@ RSpec.describe Resenha::RoomsController do
         )
       end
 
+      it "opens a thread rooted on the message and exposes it via GET" do
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello everyone" }
+
+        expect(response.status).to eq(200)
+        thread_id = response.parsed_body["thread_id"]
+        expect(thread_id).to be_present
+
+        thread = Chat::Thread.find(thread_id)
+        expect(thread.channel_id).to eq(channel.id)
+        expect(thread.original_message.message).to eq("hello everyone")
+        expect(thread.original_message.user_id).to eq(user.id)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+        expect(response.parsed_body["thread_id"]).to eq(thread_id)
+      end
+
+      it "opens a templated room's thread with a system starter and the message as a reply" do
+        room.update!(chat_thread_title_template: "Team meeting at {time}")
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello" }
+
+        thread = Chat::Thread.find(response.parsed_body["thread_id"])
+        expect(thread.title).to start_with("Team meeting at ")
+        expect(thread.original_message.message).to eq(thread.title)
+        expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
+        expect(thread.replies.last.message).to eq("hello")
+        expect(thread.replies.last.user_id).to eq(user.id)
+      end
+
+      it "delivers a racing message to the live thread instead of a new one" do
+        sign_in(user)
+        join_room!(user)
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "first" }
+        thread_id = response.parsed_body["thread_id"]
+
+        sign_in(other_participant)
+        join_room!(other_participant)
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "second" }
+
+        expect(response.parsed_body["thread_id"]).to eq(thread_id)
+        expect(Chat::Thread.find(thread_id).replies.last.message).to eq("second")
+      end
+
       it "does not bypass chat's per-user flood limit" do
         RateLimiter.enable
         SiteSetting.chat_allowed_messages_for_other_trust_levels = 1
@@ -767,97 +850,14 @@ RSpec.describe Resenha::RoomsController do
       end
 
       it "surfaces the chat plugin's rejection reason as a 422, not a generic 403" do
+        channel.update!(threading_enabled: false)
         sign_in(user)
         join_room!(user)
 
-        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "dup" }
-        expect(response.status).to eq(200)
-
-        # An identical message seconds later is blocked by chat; the real reason
-        # must reach the client instead of the misleading "not permitted" error.
-        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "dup" }
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello" }
 
         expect(response.status).to eq(422)
-        expect(response.parsed_body["errors"].join).to match(/identical message/i)
-      end
-
-      it "echoes the created message so the sender can render it immediately" do
-        sign_in(user)
-        join_room!(user)
-
-        # The lone root is echoed back...
-        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "first" }
-        expect(response.parsed_body["message"]["cooked"]).to include("first")
-
-        # ...the promoting reply is echoed...
-        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "second" }
-        expect(response.parsed_body["message"]["cooked"]).to include("second")
-
-        # ...and so is a plain in-thread reply, which the response's `state`
-        # alone would not let the panel render (it carries no message content).
-        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "third" }
-        expect(response.parsed_body["message"]["cooked"]).to include("third")
-        expect(response.parsed_body["message"]["id"]).to be_present
-      end
-
-      context "without a thread template (plain room)" do
-        it "posts the first message to the channel without opening a thread" do
-          sign_in(user)
-          join_room!(user)
-
-          post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello everyone" }
-
-          expect(response.status).to eq(200)
-          expect(response.parsed_body["thread_id"]).to be_nil
-
-          root_id = response.parsed_body["root_message_id"]
-          expect(root_id).to be_present
-          message = Chat::Message.find(root_id)
-          expect(message.thread_id).to be_nil
-          expect(message.message).to eq("hello everyone")
-          expect(response.parsed_body["root_message"]["cooked"]).to include("hello everyone")
-        end
-
-        it "opens a thread from the first message once a second arrives" do
-          sign_in(user)
-          join_room!(user)
-          post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "first" }
-          root_id = response.parsed_body["root_message_id"]
-
-          sign_in(other_participant)
-          join_room!(other_participant)
-          post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "second" }
-
-          expect(response.status).to eq(200)
-          thread_id = response.parsed_body["thread_id"]
-          expect(thread_id).to be_present
-          expect(response.parsed_body["root_message_id"]).to be_nil
-
-          thread = Chat::Thread.find(thread_id)
-          expect(thread.original_message_id).to eq(root_id)
-          expect(thread.replies.last.message).to eq("second")
-        end
-      end
-
-      context "with a thread template (team room)" do
-        before { room.update!(chat_thread_title_template: "Team meeting at {time}") }
-
-        it "opens a thread with a system starter and posts the message as a reply" do
-          sign_in(user)
-          join_room!(user)
-
-          post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello everyone" }
-
-          expect(response.status).to eq(200)
-          thread_id = response.parsed_body["thread_id"]
-          expect(thread_id).to be_present
-
-          thread = Chat::Thread.find(thread_id)
-          expect(thread.channel_id).to eq(channel.id)
-          expect(thread.title).to start_with("Team meeting at ")
-          expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
-          expect(thread.replies.last.message).to eq("hello everyone")
-        end
+        expect(response.parsed_body["errors"].join).to match(/threading/i)
       end
     end
   end

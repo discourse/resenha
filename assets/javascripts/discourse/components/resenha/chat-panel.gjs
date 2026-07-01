@@ -1,180 +1,131 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
+import { array } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import didUpdate from "@ember/render-modifiers/modifiers/did-update";
-import { next } from "@ember/runloop";
 import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
 import EmojiPicker from "discourse/components/emoji-picker";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
-import { avatarUrl } from "discourse/lib/avatar-utils";
-import { prioritizeNameInUx } from "discourse/lib/settings";
+import { optionalRequire } from "discourse/lib/utilities";
+import { and } from "discourse/truth-helpers";
 import DConditionalLoadingSpinner from "discourse/ui-kit/d-conditional-loading-spinner";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 
-const SCROLL_BOTTOM_THRESHOLD = 48;
-
 export default class ResenhaChatPanel extends Component {
-  @service currentUser;
-  @service chatApi;
-  @service chatStateManager;
+  @service chat;
+  @service chatChannelsManager;
   @service messageBus;
   @service router;
 
-  @tracked draft = "";
   @tracked loading = true;
-  @tracked channelId = null;
-  @tracked threadId = null;
-  @tracked rootMessageId = null;
-  @tracked messages = [];
+  @tracked unavailable = false;
+  @tracked channel = null;
+  @tracked thread = null;
+  @tracked draft = "";
+  @tracked sending = false;
+  @tracked hideSkeleton = false;
 
-  messagesElement = null;
+  // Resolved at runtime rather than statically imported: cross-plugin static
+  // imports aren't resolvable in the compiled plugin bundle and break the
+  // whole bundle load.
+  chatThread = optionalRequire(
+    "discourse/plugins/chat/discourse/components/chat-thread"
+  );
+  // Chat's own loading skeleton doubles as the panel's loading state, so the
+  // hand-off to the thread's identical skeleton reads as one continuous load
+  // instead of a spinner flashing into a skeleton.
+  chatSkeleton = optionalRequire(
+    "discourse/plugins/chat/discourse/components/chat-skeleton"
+  );
+
   textareaElement = null;
-  #pinnedToBottom = true;
-  #subscribedPath = null;
   #sessionPath = null;
 
   willDestroy() {
     super.willDestroy(...arguments);
-    this.#unsubscribe();
     this.#unsubscribeSession();
+    this.#deactivate();
   }
 
   get room() {
     return this.args.room;
   }
 
-  get hasThread() {
-    return !!this.threadId;
-  }
-
-  get hasMessages() {
-    return this.messages.length > 0;
-  }
-
-  get messageCount() {
-    return this.messages.length;
+  get canOpenInChat() {
+    return !!this.thread;
   }
 
   get sendDisabled() {
-    return this.draft.trim().length === 0;
-  }
-
-  get canOpenInChat() {
-    return this.hasThread && !!this.room?.chat_channel?.slug;
-  }
-
-  get groups() {
-    const groups = [];
-
-    for (const message of this.messages) {
-      const senderId = message.user?.id;
-      const last = groups[groups.length - 1];
-      if (last && last.senderId === senderId) {
-        last.items.push(this.#decorate(message));
-        continue;
-      }
-
-      const name = message.user?.name;
-      const username = message.user?.username;
-      const avatarTemplate = message.user?.avatar_template;
-      groups.push({
-        key: message.id,
-        senderId,
-        mine: Number(senderId) === Number(this.currentUser?.id),
-        username,
-        displayName: prioritizeNameInUx(name) ? name : username,
-        avatar: avatarTemplate ? avatarUrl(avatarTemplate, "small") : null,
-        items: [this.#decorate(message)],
-      });
-    }
-
-    return groups;
-  }
-
-  #decorate(message) {
-    return {
-      id: message.id,
-      cooked: htmlSafe(message.cooked),
-      time: this.#formatTime(message.created_at),
-    };
-  }
-
-  #formatTime(iso) {
-    if (!iso) {
-      return "";
-    }
-    const date = new Date(iso);
-    if (isNaN(date.getTime())) {
-      return "";
-    }
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return this.sending || this.draft.trim().length === 0;
   }
 
   @action
   async loadSession() {
     this.#subscribeSession();
-    await this.#fetchSession();
-  }
 
-  async #fetchSession() {
     try {
-      const data = await ajax(`/resenha/rooms/${this.room.id}/chat_session`);
+      // POST prepares the session: it rolls a stale session over and follows
+      // us on the channel so chat's own message endpoints accept our posts.
+      // The thread itself only comes into existence with the first message.
+      const data = await ajax(`/resenha/rooms/${this.room.id}/chat_session`, {
+        type: "POST",
+      });
       await this.#applyState(data);
     } catch (e) {
+      this.unavailable = true;
       popupAjaxError(e);
     } finally {
       this.loading = false;
     }
   }
 
-  async #applyState(data) {
-    if (!data) {
-      return;
-    }
-    this.channelId = data.channel_id;
-    if (data.thread_id) {
-      await this.#openThread(data.thread_id);
-    } else {
-      this.#showRoot(data.root_message);
-    }
-  }
-
-  #showRoot(message) {
-    if (this.threadId) {
-      this.#unsubscribe();
-      this.threadId = null;
-    }
-    const id = message?.id ?? null;
-    if (this.rootMessageId === id) {
-      return;
-    }
-    this.rootMessageId = id;
-    this.messages = message ? [message] : [];
-  }
-
-  async #openThread(threadId) {
-    if (!threadId || this.threadId === threadId) {
-      return;
-    }
-
-    this.#unsubscribe();
-    this.threadId = threadId;
-    this.rootMessageId = null;
-    this.#subscribe();
-
+  @action
+  async onSessionMessage() {
     try {
-      const data = await this.chatApi.channelThreadMessages(
-        this.channelId,
-        threadId
-      );
-      this.messages = data.messages ?? [];
-    } catch (e) {
-      popupAjaxError(e);
+      const data = await ajax(`/resenha/rooms/${this.room.id}/chat_session`);
+      await this.#applyState(data);
+    } catch {
+      // A transient refresh failure only delays the panel following a session
+      // change; the next signal or reopen retries.
+    }
+  }
+
+  async #applyState(data) {
+    if (!data?.channel_id || !data?.thread_id) {
+      return;
+    }
+    if (this.thread?.id === data.thread_id && this.channel) {
+      return;
+    }
+
+    const channel = await this.chatChannelsManager.find(data.channel_id);
+    if (!channel.isFollowing) {
+      // The server already followed us when the session was ensured; this only
+      // refreshes a channel that was cached client-side before that happened.
+      await this.chatChannelsManager.follow(channel);
+    }
+    const thread = await channel.threadsManager.find(
+      channel.id,
+      data.thread_id
+    );
+
+    this.channel = channel;
+    this.thread = thread;
+
+    // ChatThreadPane and the composer resolve "the current thread" from this
+    // global active state, exactly like the chat drawer's router sets it —
+    // without it, sending and message actions break outside chat's own routes.
+    this.chat.activeChannel = channel;
+    channel.activeThread = thread;
+  }
+
+  #deactivate() {
+    if (this.channel && this.chat.activeChannel === this.channel) {
+      // Also clears the channel's activeThread (the setter handles it).
+      this.chat.activeChannel = null;
     }
   }
 
@@ -194,77 +145,30 @@ export default class ResenhaChatPanel extends Component {
   }
 
   @action
-  onSessionMessage() {
-    this.#fetchSession();
-  }
-
-  #subscribe() {
-    if (!this.channelId || !this.threadId) {
+  interceptEscape(event) {
+    if (event.key !== "Escape") {
       return;
     }
-    this.#subscribedPath = `/chat/${this.channelId}/thread/${this.threadId}`;
-    this.messageBus.subscribe(this.#subscribedPath, this.onBusMessage);
-  }
-
-  #unsubscribe() {
-    if (this.#subscribedPath) {
-      this.messageBus.unsubscribe(this.#subscribedPath, this.onBusMessage);
-      this.#subscribedPath = null;
+    if (this.thread?.draft?.editing) {
+      // Let the composer's own handler cancel the in-progress edit.
+      return;
     }
+    // The thread composer's Escape handler "closes the pane" by routing to the
+    // chat channel page, which would navigate away from the room — swallow it.
+    event.stopPropagation();
   }
 
   @action
-  onBusMessage(data) {
-    if (data?.type === "sent" && data.chat_message) {
-      this.#appendMessage(data.chat_message);
-    } else if (data?.type === "delete") {
-      this.messages = this.messages.filter((m) => m.id !== data.deleted_id);
-    }
-  }
-
-  #appendMessage(message) {
-    if (!message || this.messages.some((m) => m.id === message.id)) {
+  openInChat() {
+    if (!this.thread) {
       return;
     }
-    this.messages = [...this.messages, message];
-  }
-
-  @action
-  registerMessages(element) {
-    this.messagesElement = element;
-    this.#scrollToBottom();
+    this.router.transitionTo("chat.channel.thread", ...this.thread.routeModels);
   }
 
   @action
   registerTextarea(element) {
     this.textareaElement = element;
-  }
-
-  @action
-  trackScroll() {
-    const element = this.messagesElement;
-    if (!element) {
-      return;
-    }
-    const distance =
-      element.scrollHeight - element.scrollTop - element.clientHeight;
-    this.#pinnedToBottom = distance <= SCROLL_BOTTOM_THRESHOLD;
-  }
-
-  @action
-  onMessagesChanged() {
-    if (this.#pinnedToBottom) {
-      this.#scrollToBottom();
-    }
-  }
-
-  #scrollToBottom() {
-    next(() => {
-      const element = this.messagesElement;
-      if (element) {
-        element.scrollTop = element.scrollHeight;
-      }
-    });
   }
 
   @action
@@ -277,7 +181,7 @@ export default class ResenhaChatPanel extends Component {
   onKeydown(event) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      this.send();
+      this.sendFirstMessage();
     }
   }
 
@@ -304,46 +208,40 @@ export default class ResenhaChatPanel extends Component {
     element.setSelectionRange(caret, caret);
   }
 
+  // Sends the session's opening message, which creates the thread it roots —
+  // the panel then swaps to chat's own thread UI and every later message goes
+  // through chat's own composer instead.
   @action
-  async send() {
+  async sendFirstMessage() {
     if (this.sendDisabled) {
       return;
     }
-    const message = this.draft;
-    this.draft = "";
-    if (this.textareaElement) {
-      this.textareaElement.value = "";
-    }
-    this.#autogrow();
-    await this.#post(message);
-  }
 
-  async #post(message) {
+    this.sending = true;
+    // The freshly created thread holds only this message, which loads faster
+    // than the thread's skeleton can finish appearing — keep the skeleton out
+    // of this swap so it doesn't flash.
+    this.hideSkeleton = true;
     try {
       const data = await ajax(`/resenha/rooms/${this.room.id}/chat_message`, {
         type: "POST",
-        data: { message },
+        data: { message: this.draft },
       });
+      // Swap to the thread UI before clearing anything: the starter composer
+      // keeps the typed text until the native thread replaces it, so the panel
+      // doesn't flash an empty "no chat yet" state mid-send. Clearing only on
+      // success also means a rejection (a duplicate, rate limit, …) doesn't
+      // eat what the user typed.
       await this.#applyState(data);
-      this.#appendMessage(data.message);
+      this.draft = "";
+      if (this.textareaElement) {
+        this.textareaElement.value = "";
+      }
     } catch (e) {
       popupAjaxError(e);
+    } finally {
+      this.sending = false;
     }
-  }
-
-  @action
-  openInChat() {
-    if (!this.canOpenInChat) {
-      return;
-    }
-    const channel = this.room.chat_channel;
-    this.chatStateManager.didOpenDrawer?.();
-    this.router.transitionTo(
-      "chat.channel.thread",
-      channel.slug,
-      channel.id,
-      this.threadId
-    );
   }
 
   #autogrow() {
@@ -391,47 +289,26 @@ export default class ResenhaChatPanel extends Component {
       </header>
 
       <div
-        class="resenha-chat__messages"
-        role="log"
-        aria-live="polite"
-        aria-label={{i18n "resenha.chat.title"}}
-        {{didInsert this.registerMessages}}
-        {{didUpdate this.onMessagesChanged this.messageCount}}
-        {{on "scroll" this.trackScroll}}
+        class="resenha-chat__body {{if this.hideSkeleton '--hide-skeleton'}}"
+        {{on "keydown" this.interceptEscape capture=true}}
       >
         {{#if this.loading}}
-          <DConditionalLoadingSpinner @condition={{true}} />
-        {{else if this.hasMessages}}
-          {{#each this.groups key="key" as |group|}}
-            <div
-              class={{if
-                group.mine
-                "resenha-chat__group --mine"
-                "resenha-chat__group"
-              }}
-            >
-              {{#unless group.mine}}
-                <div class="resenha-chat__avatar">
-                  {{#if group.avatar}}
-                    <img src={{group.avatar}} alt={{group.username}} />
-                  {{/if}}
-                </div>
-              {{/unless}}
-              <div class="resenha-chat__group-body">
-                <div class="resenha-chat__meta">
-                  <span
-                    class="resenha-chat__author"
-                  >{{group.displayName}}</span>
-                </div>
-                {{#each group.items key="id" as |item|}}
-                  <div class="resenha-chat__message">
-                    <span class="resenha-chat__bubble">{{item.cooked}}</span>
-                    <span class="resenha-chat__time">{{item.time}}</span>
-                  </div>
-                {{/each}}
-              </div>
-            </div>
+          {{#if this.chatSkeleton}}
+            <this.chatSkeleton />
+          {{else}}
+            <DConditionalLoadingSpinner @condition={{true}} />
+          {{/if}}
+        {{else if (and this.chatThread this.thread)}}
+          {{#each (array this.thread) key="id" as |thread|}}
+            <this.chatThread @thread={{thread}} />
           {{/each}}
+        {{else if this.unavailable}}
+          <div class="resenha-chat__empty">
+            {{dIcon "far-comment"}}
+            <p class="resenha-chat__empty-title">
+              {{i18n "resenha.chat.unavailable"}}
+            </p>
+          </div>
         {{else}}
           <div class="resenha-chat__empty">
             {{dIcon "far-comment"}}
@@ -442,36 +319,36 @@ export default class ResenhaChatPanel extends Component {
               {{i18n "resenha.chat.empty_body"}}
             </p>
           </div>
+          <footer class="resenha-chat__composer">
+            <div class="resenha-chat__composer-inner">
+              <EmojiPicker
+                @context="resenha-chat"
+                @didSelectEmoji={{this.insertEmoji}}
+                @btnClass="btn-transparent resenha-chat__emoji"
+              />
+              <textarea
+                class="resenha-chat__input"
+                rows="1"
+                placeholder={{i18n "resenha.chat.composer_placeholder"}}
+                aria-label={{i18n "resenha.chat.composer_placeholder"}}
+                {{didInsert this.registerTextarea}}
+                {{on "input" this.updateDraft}}
+                {{on "keydown" this.onKeydown}}
+              ></textarea>
+              <button
+                type="button"
+                class="btn btn-transparent btn-icon no-text resenha-chat__send"
+                title={{i18n "resenha.chat.send"}}
+                aria-label={{i18n "resenha.chat.send"}}
+                disabled={{this.sendDisabled}}
+                {{on "click" this.sendFirstMessage}}
+              >
+                {{dIcon "paper-plane"}}
+              </button>
+            </div>
+          </footer>
         {{/if}}
       </div>
-
-      <footer class="resenha-chat__composer">
-        <EmojiPicker
-          @context="resenha-chat"
-          @didSelectEmoji={{this.insertEmoji}}
-          @btnClass="btn-transparent resenha-chat__emoji"
-        />
-        <textarea
-          class="resenha-chat__input"
-          rows="1"
-          placeholder={{i18n "resenha.chat.composer_placeholder"}}
-          aria-label={{i18n "resenha.chat.composer_placeholder"}}
-          maxlength="1000"
-          {{didInsert this.registerTextarea}}
-          {{on "input" this.updateDraft}}
-          {{on "keydown" this.onKeydown}}
-        ></textarea>
-        <button
-          type="button"
-          class="btn btn-primary btn-icon no-text resenha-chat__send"
-          title={{i18n "resenha.chat.send"}}
-          aria-label={{i18n "resenha.chat.send"}}
-          disabled={{this.sendDisabled}}
-          {{on "click" this.send}}
-        >
-          {{dIcon "paper-plane"}}
-        </button>
-      </footer>
     </section>
   </template>
 }

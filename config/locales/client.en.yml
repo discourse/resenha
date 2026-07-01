@@ -41,6 +41,7 @@ en:
         title: "Chat"
         open: "Open chat"
         close: "Close chat"
+        unavailable: "Chat is unavailable right now."
         empty_title: "No chat yet"
         empty_body: "Send a message to get the conversation started."
         composer_placeholder: "Message the room…"

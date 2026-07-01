@@ -4,33 +4,33 @@ module Resenha
   # Bridges a Resenha voice room to the Discourse chat plugin.
   #
   # A room is linked to a chat channel; each "chat session" lives in a thread on
-  # that channel. There are two flavours, chosen by whether the room has a
+  # that channel. A session's thread is only created when someone actually sends
+  # a message. There are two flavours, chosen by whether the room has a
   # thread-title template configured:
   #
-  # * Templated (e.g. a "Team" room): the system opens the session by posting a
-  #   templated starter message ("Meeting at 12:00 on 2026-10-10"). That starter
-  #   becomes the thread's title and original message, and every participant
-  #   message is a reply in the thread.
+  # * Templated (e.g. a "Team" room): the system posts the interpolated template
+  #   ("Team meeting at 12:00") as the thread's starter message and the sender's
+  #   message becomes the first reply.
   #
-  # * Plain (e.g. a "Chill" room): the first message is posted as a regular
-  #   channel message. Only when a second message arrives is a thread opened —
-  #   using that first message as its original message — and from then on
-  #   messages are replies.
+  # * Plain (e.g. a "Chill" room): the first message itself roots the thread,
+  #   titled with a default.
   #
-  # The live thread id (or, before a plain-mode thread exists, the pending root
-  # message id) live in Redis, keyed by room.
+  # From then on participants read and post through chat's own UI and API;
+  # Resenha only tracks WHICH thread is the room's live session.
   #
-  # Liveness is derived from two sources: the timestamp of the session's most
-  # recent chat message (messages already carry their own +created_at+, so
-  # there's nothing extra to store) and a Redis "last seen" timestamp bumped on
-  # the room heartbeat while a participant is present. A session only rolls over
-  # to a fresh thread once both have been quiet longer than the room's configured
-  # timeout — i.e. it has been idle (no messages) AND empty (no one present).
+  # The live thread id lives in Redis, keyed by room. Liveness is derived from
+  # two sources: the timestamp of the thread's most recent chat message
+  # (messages already carry their own +created_at+, so there's nothing extra to
+  # store) and a Redis "last seen" timestamp bumped on the room heartbeat while
+  # a participant is present. A session only rolls over to a fresh thread once
+  # both have been quiet longer than the room's configured timeout — i.e. it
+  # has been idle (no messages) AND empty (no one present).
   class ChatSession
     # Raised when an underlying chat operation is rejected for a reason worth
-    # showing the poster (a duplicate or too-long message, threading disabled,
-    # etc.) rather than masking it behind a generic "not permitted" error. The
-    # controller renders it as a 422 carrying the real message.
+    # showing the user (threading disabled on the channel, a duplicate or
+    # too-long message, etc.) rather than masking it behind a generic "not
+    # permitted" error. The controller renders it as a 422 carrying the real
+    # message.
     class Error < StandardError
     end
 
@@ -52,122 +52,75 @@ module Resenha
       end
 
       # A snapshot of the room's live chat session for the client: the linked
-      # channel, the active thread (if any), and — while a plain-mode session has
-      # a first message but no thread yet — that lone root message, serialized,
-      # so the panel can render it before the thread exists.
+      # channel and the active thread (if any). Never creates anything.
       def state(room)
         channel_id = room.chat_channel_id
-        if channel_id.blank? || stale?(room)
-          return { channel_id: channel_id, thread_id: nil, root_message_id: nil }
-        end
-
-        thread_id = live_thread_id(room)
-        root_id = thread_id ? nil : live_root_id(room)
-
-        payload = { channel_id: channel_id, thread_id: thread_id, root_message_id: root_id }
-        if root_id
-          message = ::Chat::Message.find_by(id: root_id)
-          payload[:root_message] = serialize_message(message) if message
-        end
-        payload
-      end
-
-      # The id of the room's live thread, or nil when there is no active
-      # (non-stale, still-existing) thread. Never creates a thread.
-      def active_thread_id(room)
-        return nil if stale?(room)
-        live_thread_id(room)
+        thread_id = channel_id.present? && !stale?(room) ? live_thread_id(room) : nil
+        { channel_id: channel_id, thread_id: thread_id }
       end
 
       # Records that a participant is present (called on the room heartbeat) so a
       # session with people in it but no recent messages doesn't roll over.
       # Message recency is read straight from the messages themselves.
       def touch!(room)
-        thread = redis.get(thread_key(room.id))
-        root = redis.get(root_key(room.id))
-        return if thread.blank? && root.blank?
+        return if redis.get(thread_key(room.id)).blank?
 
         # Never revive a session that already went idle AND empty — let the next
-        # message roll it over to a fresh thread instead.
+        # panel open roll it over to a fresh thread instead.
         return if stale?(room)
 
-        # Keep the identity keys alive alongside presence, so a long, present but
-        # quiet session doesn't lose its thread/root pointer to TTL expiry.
-        redis.expire(thread_key(room.id), SAFETY_TTL) if thread.present?
-        redis.expire(root_key(room.id), SAFETY_TTL) if root.present?
+        # Keep the identity key alive alongside presence, so a long, present but
+        # quiet session doesn't lose its thread pointer to TTL expiry.
+        redis.expire(thread_key(room.id), SAFETY_TTL)
         redis.set(seen_key(room.id), Time.now.to_f, ex: SAFETY_TTL)
       end
 
-      # Starts a session without a participant message. Only templated rooms can
-      # start empty (the system posts the starter and opens the thread); a plain
-      # room has nothing to root a thread on yet, so this is a no-op for it.
+      # Prepares the room's session for +user+ without creating anything: rolls
+      # a stale session over and follows the user on the channel so chat's own
+      # message endpoints accept their posts. The thread itself only comes into
+      # existence with the session's first message (see +post_message!+).
+      # Returns the session state.
       def start!(room, user)
         channel = ensure_channel!(room)
         with_session_lock(room) do
           roll_over_if_stale!(room)
-          # Only templated rooms can start a session without a participant
-          # message (the system posts the starter); a plain room has nothing to
-          # root a thread on yet. Broadcast only when a thread is actually
-          # opened — otherwise a blank request would be a free way to trigger a
-          # fan-out refetch on every open panel without changing anything.
-          if templated?(room)
-            had_thread = live_thread_id(room).present?
-            ensure_template_thread!(room, channel)
-            publish_state(room) unless had_thread
-          end
+          ::Chat::ChannelMembershipManager.new(channel).follow(user)
         end
-        nil
+        state(room)
       end
 
-      # Posts +message+ as +user+, opening or rolling over the session as needed.
-      # Returns the created participant Chat::Message.
+      # Posts the session's opening message as +user+: the message is created on
+      # the channel and a thread is opened from it, titled from the room's
+      # template (or the default). Once a thread is live, messages flow through
+      # chat's own API instead — this is only called by a panel that believes no
+      # thread exists yet, so if one appeared in the meantime the message is
+      # delivered there rather than spawning a competing thread.
+      # Returns the session state.
       def post_message!(room, user, message)
         channel = ensure_channel!(room)
         with_session_lock(room) do
           roll_over_if_stale!(room)
 
-          instance =
-            if templated?(room)
-              post_templated!(room, channel, user, message)
-            else
-              post_plain!(room, channel, user, message)
-            end
-
-          publish_state(room)
-          instance
+          if (thread_id = live_thread_id(room))
+            create_message!(
+              guardian: user.guardian,
+              channel_id: channel.id,
+              message: message,
+              thread_id: thread_id,
+            )
+          else
+            open_session_thread!(room, channel, user, message)
+          end
         end
+        state(room)
       end
 
       def clear(room_id)
         redis.del(thread_key(room_id))
-        redis.del(root_key(room_id))
         redis.del(seen_key(room_id))
       end
 
-      # The subset of a chat message the panel needs to render it, matching the
-      # shape of chat's own thread-message serializer. Public so the controller
-      # can echo a just-posted message straight back to the sender for immediate
-      # rendering, instead of making them wait for the MessageBus round-trip.
-      def serialize_message(message)
-        author = message.user
-        {
-          id: message.id,
-          cooked: message.cooked,
-          created_at: message.created_at,
-          user: {
-            id: author&.id,
-            username: author&.username,
-            name: author&.name,
-            avatar_template: author&.avatar_template,
-          },
-        }
-      end
-
       private
-
-      def templated?(room)
-        room.chat_thread_title_template.present?
-      end
 
       def ensure_channel!(room)
         room.chat_channel ||
@@ -185,103 +138,62 @@ module Resenha
       end
 
       # Serializes the read-modify-write of a room's session so two near
-      # simultaneous messages can't, say, each open a thread from the same lone
-      # root message.
+      # simultaneous panel opens can't each start their own thread.
       def with_session_lock(room, &blk)
         DistributedMutex.synchronize("#{KEY_NAMESPACE}:#{room.id}:chat_lock", &blk)
       end
 
-      # --- templated rooms -----------------------------------------------------
+      # Opens the session's thread from its first message. In a templated room
+      # (e.g. "Team meeting at {time}") the system posts the interpolated
+      # template as the thread's starter message and +message+ becomes the
+      # first reply; in a plain room +message+ itself roots the thread. Either
+      # way the thread is titled with the same text, and the change is
+      # published so every open panel picks the new thread up.
+      def open_session_thread!(room, channel, user, message)
+        # Bail before posting: if the channel can't hold a thread, thread
+        # creation would be rejected and leave the starter (or the message)
+        # orphaned as a loose channel message (re-posted on every retry).
+        ensure_threading_enabled!(channel)
 
-      def post_templated!(room, channel, user, message)
-        thread = ensure_template_thread!(room, channel)
-        instance =
+        title = title_for(room)
+        root_guardian = templated?(room) ? Discourse.system_user.guardian : user.guardian
+        root_text = templated?(room) ? title : message
+
+        root = create_message!(guardian: root_guardian, channel_id: channel.id, message: root_text)
+        thread = open_thread!(channel, root, title: title)
+        # Record the thread and tell the panels before posting the templated
+        # reply: if that reply is rejected (e.g. a duplicate), the session must
+        # already point at the real thread so a retry continues it instead of
+        # opening another one.
+        store_thread(room, thread.id)
+        publish_state(room)
+
+        if templated?(room)
           create_message!(
             guardian: user.guardian,
             channel_id: channel.id,
             message: message,
             thread_id: thread.id,
           )
-        store_thread(room, thread.id)
-        instance
-      end
+        end
 
-      # Opens (or reuses) the templated session: the system posts the interpolated
-      # template as a starter message and a thread is created from it, titled with
-      # the same text.
-      def ensure_template_thread!(room, channel)
-        existing = live_thread_id(room)
-        return ::Chat::Thread.find(existing) if existing
-
-        # Bail before posting the starter: if the channel can't hold a thread,
-        # thread creation would be rejected and leave the starter orphaned as a
-        # loose channel message (re-posted on every retry).
-        ensure_threading_enabled!(channel)
-
-        text = title_for(room)
-        starter =
-          create_message!(
-            guardian: Discourse.system_user.guardian,
-            channel_id: channel.id,
-            message: text,
-          )
-        thread = open_thread!(channel, starter, title: text)
-        store_thread(room, thread.id)
         thread
       end
 
-      # --- plain rooms ---------------------------------------------------------
-
-      def post_plain!(room, channel, user, message)
-        thread_id = live_thread_id(room)
-        if thread_id
-          instance =
-            create_message!(
-              guardian: user.guardian,
-              channel_id: channel.id,
-              message: message,
-              thread_id: thread_id,
-            )
-          store_thread(room, thread_id)
-          return instance
-        end
-
-        root = pending_root_message(room, channel)
-        if root
-          # Second message: promote the lone first message to the start of a
-          # thread, then post this message as the first reply. Record the thread
-          # *before* posting the reply so that if the reply is rejected (e.g. a
-          # duplicate) the session already points at the real thread — the next
-          # message continues it instead of re-promoting the same root.
-          ensure_threading_enabled!(channel)
-          thread = open_thread!(channel, root, user: user)
-          store_thread(room, thread.id)
-          instance =
-            create_message!(
-              guardian: user.guardian,
-              channel_id: channel.id,
-              message: message,
-              thread_id: thread.id,
-            )
-          return instance
-        end
-
-        # First message: a regular channel message, remembered as the pending
-        # root in case someone replies.
-        instance =
-          create_message!(guardian: user.guardian, channel_id: channel.id, message: message)
-        store_root(room, instance.id)
-        instance
+      def templated?(room)
+        room.chat_thread_title_template.present?
       end
 
       # --- chat plumbing -------------------------------------------------------
 
-      def open_thread!(channel, original_message, title: nil, user: nil)
-        guardian = (user || Discourse.system_user).guardian
-        params = { channel_id: channel.id, original_message_id: original_message.id }
-        params[:title] = title.truncate(::Chat::Thread::MAX_TITLE_LENGTH) if title.present?
+      def open_thread!(channel, original_message, title:)
+        params = {
+          channel_id: channel.id,
+          original_message_id: original_message.id,
+          title: title.truncate(::Chat::Thread::MAX_TITLE_LENGTH),
+        }
 
-        result = ::Chat::CreateThread.call(guardian: guardian, params: params)
+        result = ::Chat::CreateThread.call(guardian: Discourse.system_user.guardian, params: params)
         raise_unless_chat_success(result)
         result.thread
       end
@@ -313,9 +225,9 @@ module Resenha
       end
 
       # Best-effort, user-facing reason a chat service failed — the validation
-      # error on the rejected message/thread (e.g. "You posted an identical
-      # message too recently."), else the failing policy's reason, else a
-      # generic fallback. Used verbatim in the 422 the controller returns.
+      # error on the rejected message/thread, else the failing policy's reason,
+      # else a generic fallback. Used verbatim in the 422 the controller
+      # returns.
       def chat_failure_message(result)
         record = result.message_instance || result.thread
         if record.respond_to?(:errors) && record.errors.present?
@@ -358,8 +270,8 @@ module Resenha
         return nil unless thread
         # If the thread's original message has been deleted the thread can no
         # longer be loaded by participants, so treat the session as gone and let
-        # the next message start a fresh one. (Chat::Message is soft-deleted, so
-        # this existence check excludes trashed rows.)
+        # the next panel open start a fresh one. (Chat::Message is soft-deleted,
+        # so this existence check excludes trashed rows.)
         unless ::Chat::Message.exists?(
                  id: thread.original_message_id,
                  chat_channel_id: room.chat_channel_id,
@@ -369,30 +281,8 @@ module Resenha
         id
       end
 
-      def live_root_id(room)
-        id = redis.get(root_key(room.id)).to_i
-        return nil if id <= 0
-        return nil unless ::Chat::Message.exists?(id: id, chat_channel_id: room.chat_channel_id)
-        id
-      end
-
-      # The pending lone first message of a plain-mode session, or nil if it was
-      # never set or has since been deleted (in which case the caller treats the
-      # incoming message as a fresh first message).
-      def pending_root_message(room, channel)
-        id = redis.get(root_key(room.id)).to_i
-        return nil if id <= 0
-        ::Chat::Message.find_by(id: id, chat_channel_id: channel.id)
-      end
-
       def store_thread(room, thread_id)
         redis.set(thread_key(room.id), thread_id, ex: SAFETY_TTL)
-        redis.del(root_key(room.id))
-      end
-
-      def store_root(room, message_id)
-        redis.del(thread_key(room.id))
-        redis.set(root_key(room.id), message_id, ex: SAFETY_TTL)
       end
 
       # A session is stale once it has been both idle (no messages) and empty (no
@@ -415,25 +305,11 @@ module Resenha
       end
 
       # Timestamp of the session's most recent (non-deleted) chat message, read
-      # straight from the messages — the active thread's latest reply, or the
-      # pending plain-mode root before a thread exists.
+      # straight from the thread's messages.
       def last_message_at(room)
         thread_id = redis.get(thread_key(room.id)).to_i
-        if thread_id > 0
-          latest = ::Chat::Message.where(thread_id: thread_id).maximum(:created_at)
-          return latest if latest
-        end
-
-        root_id = redis.get(root_key(room.id)).to_i
-        if root_id > 0
-          return(
-            ::Chat::Message.where(id: root_id, chat_channel_id: room.chat_channel_id).maximum(
-              :created_at,
-            )
-          )
-        end
-
-        nil
+        return nil if thread_id <= 0
+        ::Chat::Message.where(thread_id: thread_id).maximum(:created_at)
       end
 
       def title_for(room)
@@ -452,10 +328,6 @@ module Resenha
 
       def thread_key(room_id)
         "#{KEY_NAMESPACE}:#{room_id}:chat_thread"
-      end
-
-      def root_key(room_id)
-        "#{KEY_NAMESPACE}:#{room_id}:chat_root"
       end
 
       def seen_key(room_id)

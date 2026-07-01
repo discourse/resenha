@@ -9,6 +9,7 @@ Resenha::Engine.routes.draw do
       get :participants
       post :signal
       get :chat_session
+      post :chat_session, action: :ensure_chat_session, as: :ensure_chat_session
       post :chat_message
       post :toggle_mute
       post :state
