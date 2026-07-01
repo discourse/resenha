@@ -152,6 +152,15 @@ RSpec.describe Resenha::ChatSession do
       expect(described_class.state(room)[:root_message_id]).to be_nil
     end
 
+    it "broadcasts nothing when .start! is a plain-room no-op" do
+      published = []
+      allow(MessageBus).to receive(:publish) { |ch, data, opts| published << [ch, data, opts] }
+
+      described_class.start!(room, user)
+
+      expect(published.select { |ch, _, _| ch == Resenha.room_chat_channel(room.id) }).to be_empty
+    end
+
     it "treats a deleted pending root as a fresh first message" do
       first = described_class.post_message!(room, user, "first")
       ::Chat::Message.find(first.id).trash!(Discourse.system_user)
@@ -177,6 +186,56 @@ RSpec.describe Resenha::ChatSession do
     it "auto-follows the poster to the channel" do
       described_class.post_message!(room, user, "hi")
       expect(channel.membership_for(user)).to be_present
+    end
+
+    it "surfaces the chat plugin's own error when a message is rejected" do
+      described_class.post_message!(room, user, "dup")
+
+      # The chat plugin blocks an identical message posted seconds apart; that
+      # reason must reach the caller, not be masked as a generic access error.
+      expect { described_class.post_message!(room, user, "dup") }.to raise_error(
+        Resenha::ChatSession::Error,
+        /identical message/i,
+      )
+    end
+
+    it "keeps a usable thread when the promoting reply is rejected" do
+      root = described_class.post_message!(room, user, "dup")
+
+      # The second (identical) message is rejected, but the thread promotion it
+      # triggered must leave a real, reusable thread rather than an orphan whose
+      # root the next message would promote all over again.
+      expect { described_class.post_message!(room, user, "dup") }.to raise_error(
+        Resenha::ChatSession::Error,
+      )
+
+      thread_id = described_class.active_thread_id(room)
+      expect(thread_id).to be_present
+      expect(::Chat::Thread.find(thread_id).original_message_id).to eq(root.id)
+
+      later = described_class.post_message!(room, other, "carry on")
+      expect(later.thread_id).to eq(thread_id)
+    end
+  end
+
+  describe "MessageBus broadcast" do
+    # publish_state's audience is the room's (anyone who can see the voice
+    # room), which can be broader than who's authorized for the linked chat
+    # channel — so the payload itself must never carry message content or
+    # thread/channel identifiers. Clients re-fetch through the guarded
+    # chat_session endpoint instead, which re-checks channel access per user.
+    it "never publishes message content or thread/channel identifiers" do
+      published = []
+      allow(MessageBus).to receive(:publish) do |channel, data, opts|
+        published << [channel, data, opts]
+      end
+
+      described_class.post_message!(room, user, "sensitive content")
+
+      chat_events =
+        published.select { |channel, _, _| channel == Resenha.room_chat_channel(room.id) }
+      expect(chat_events).to be_present
+      chat_events.each { |_, data, _| expect(data).to eq({ type: "updated" }) }
     end
   end
 
@@ -220,6 +279,30 @@ RSpec.describe Resenha::ChatSession do
       thread = ::Chat::Thread.find(thread_id)
       expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
       expect(thread.original_message.message).to start_with("Team Meeting at ")
+    end
+
+    it "does not rebroadcast when .start! finds an already-live thread" do
+      described_class.post_message!(room, user, "hi")
+
+      published = []
+      allow(MessageBus).to receive(:publish) { |ch, data, opts| published << [ch, data, opts] }
+
+      described_class.start!(room, user)
+
+      expect(published.select { |ch, _, _| ch == Resenha.room_chat_channel(room.id) }).to be_empty
+    end
+
+    it "raises a clear error without orphaning a starter when threading is off" do
+      channel.update!(threading_enabled: false)
+
+      expect { described_class.post_message!(room, user, "hello") }.to raise_error(
+        Resenha::ChatSession::Error,
+        /threading/i,
+      )
+
+      # The starter must not be left behind as a loose channel message.
+      expect(channel.chat_messages.count).to eq(0)
+      expect(described_class.active_thread_id(room)).to be_nil
     end
   end
 end

@@ -27,6 +27,13 @@ module Resenha
   # to a fresh thread once both have been quiet longer than the room's configured
   # timeout — i.e. it has been idle (no messages) AND empty (no one present).
   class ChatSession
+    # Raised when an underlying chat operation is rejected for a reason worth
+    # showing the poster (a duplicate or too-long message, threading disabled,
+    # etc.) rather than masking it behind a generic "not permitted" error. The
+    # controller renders it as a 422 carrying the real message.
+    class Error < StandardError
+    end
+
     KEY_NAMESPACE = "resenha:room"
     SAFETY_TTL = 1.day.to_i
 
@@ -98,8 +105,16 @@ module Resenha
         channel = ensure_channel!(room)
         with_session_lock(room) do
           roll_over_if_stale!(room)
-          ensure_template_thread!(room, channel) if templated?(room)
-          publish_state(room)
+          # Only templated rooms can start a session without a participant
+          # message (the system posts the starter); a plain room has nothing to
+          # root a thread on yet. Broadcast only when a thread is actually
+          # opened — otherwise a blank request would be a free way to trigger a
+          # fan-out refetch on every open panel without changing anything.
+          if templated?(room)
+            had_thread = live_thread_id(room).present?
+            ensure_template_thread!(room, channel)
+            publish_state(room) unless had_thread
+          end
         end
         nil
       end
@@ -137,7 +152,13 @@ module Resenha
 
       def ensure_channel!(room)
         room.chat_channel ||
-          raise(Discourse::InvalidAccess.new(I18n.t("resenha.errors.chat_unavailable")))
+          raise(
+            Discourse::InvalidAccess.new(
+              :resenha_chat_unavailable,
+              nil,
+              custom_message: "resenha.errors.chat_unavailable",
+            ),
+          )
       end
 
       def roll_over_if_stale!(room)
@@ -173,7 +194,11 @@ module Resenha
         existing = live_thread_id(room)
         return ::Chat::Thread.find(existing) if existing
 
-        enable_threading!(channel)
+        # Bail before posting the starter: if the channel can't hold a thread,
+        # thread creation would be rejected and leave the starter orphaned as a
+        # loose channel message (re-posted on every retry).
+        ensure_threading_enabled!(channel)
+
         text = title_for(room)
         starter =
           create_message!(
@@ -205,9 +230,13 @@ module Resenha
         root = pending_root_message(room, channel)
         if root
           # Second message: promote the lone first message to the start of a
-          # thread, then post this message as the first reply.
-          enable_threading!(channel)
+          # thread, then post this message as the first reply. Record the thread
+          # *before* posting the reply so that if the reply is rejected (e.g. a
+          # duplicate) the session already points at the real thread — the next
+          # message continues it instead of re-promoting the same root.
+          ensure_threading_enabled!(channel)
           thread = open_thread!(channel, root, user: user)
+          store_thread(room, thread.id)
           instance =
             create_message!(
               guardian: user.guardian,
@@ -215,7 +244,6 @@ module Resenha
               message: message,
               thread_id: thread.id,
             )
-          store_thread(room, thread.id)
           return instance
         end
 
@@ -252,22 +280,42 @@ module Resenha
         result.message_instance
       end
 
+      def ensure_threading_enabled!(channel)
+        return if channel.threading_enabled?
+        raise Error, I18n.t("resenha.errors.chat_threading_disabled")
+      end
+
       def raise_unless_chat_success(result)
         return if result.success?
         Rails.logger.warn(
           "[resenha] chat operation failed: #{Service::StepsInspector.new(result).inspect}",
         )
-        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.chat_unavailable"))
+        raise Error, chat_failure_message(result)
       end
 
-      def enable_threading!(channel)
-        channel.update!(threading_enabled: true) unless channel.threading_enabled?
+      # Best-effort, user-facing reason a chat service failed — the validation
+      # error on the rejected message/thread (e.g. "You posted an identical
+      # message too recently."), else the failing policy's reason, else a
+      # generic fallback. Used verbatim in the 422 the controller returns.
+      def chat_failure_message(result)
+        record = result.message_instance || result.thread
+        if record.respond_to?(:errors) && record.errors.present?
+          return record.errors.full_messages.to_sentence
+        end
+        Service::StepsInspector.new(result).error.presence ||
+          I18n.t("resenha.errors.chat_unavailable")
       end
 
+      # Publishes a content-free "something changed" signal, not the state
+      # itself: `room.message_bus_targets` is the room's audience, which can be
+      # broader than who is actually authorized to see the linked chat channel
+      # (e.g. a public room linked to a restricted channel). Clients react by
+      # re-fetching through the chat_session endpoint, which re-checks
+      # `available_for?` for the requesting user on every call.
       def publish_state(room)
         MessageBus.publish(
           Resenha.room_chat_channel(room.id),
-          state(room),
+          { type: "updated" },
           **message_bus_targets(room),
         )
       end

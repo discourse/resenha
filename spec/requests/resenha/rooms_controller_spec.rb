@@ -740,12 +740,45 @@ RSpec.describe Resenha::RoomsController do
         expect(response.status).to eq(403)
       end
 
-      it "returns 403 when signed in but not present in the voice room" do
+      it "returns 403 with the room's own message when signed in but not present" do
         sign_in(user)
 
         post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hi" }
 
         expect(response.status).to eq(403)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t("resenha.errors.chat_requires_presence"),
+        )
+      end
+
+      it "does not bypass chat's per-user flood limit" do
+        RateLimiter.enable
+        SiteSetting.chat_allowed_messages_for_other_trust_levels = 1
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "one" }
+        expect(response.status).to eq(200)
+
+        # A second message within the window would be free if this endpoint
+        # skipped chat's limiter; it must be capped like normal chat.
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "two" }
+        expect(response.status).to eq(429)
+      end
+
+      it "surfaces the chat plugin's rejection reason as a 422, not a generic 403" do
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "dup" }
+        expect(response.status).to eq(200)
+
+        # An identical message seconds later is blocked by chat; the real reason
+        # must reach the client instead of the misleading "not permitted" error.
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "dup" }
+
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].join).to match(/identical message/i)
       end
 
       context "without a thread template (plain room)" do

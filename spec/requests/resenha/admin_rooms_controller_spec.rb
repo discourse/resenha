@@ -21,6 +21,7 @@ RSpec.describe Resenha::AdminRoomsController do
   fab!(:moderator)
   fab!(:user)
   fab!(:room) { Fabricate(:resenha_room, creator: admin, public: true, name: "Test Room") }
+  fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
 
   before { SiteSetting.resenha_enabled = true }
 
@@ -60,7 +61,7 @@ RSpec.describe Resenha::AdminRoomsController do
 
     it "includes the chat settings so the edit form can prefill them" do
       room.update!(
-        chat_channel_id: 6,
+        chat_channel_id: channel.id,
         chat_idle_minutes: 2,
         chat_thread_title_template: "Team meeting at {time} on {date}",
       )
@@ -69,7 +70,7 @@ RSpec.describe Resenha::AdminRoomsController do
       get "/admin/plugins/resenha/rooms/#{room.id}.json"
 
       expect(response.status).to eq(200)
-      expect(response.parsed_body["room"]["chat_channel_id"]).to eq(6)
+      expect(response.parsed_body["room"]["chat_channel_id"]).to eq(channel.id)
       expect(response.parsed_body["room"]["chat_idle_minutes"]).to eq(2)
       expect(response.parsed_body["room"]["chat_thread_title_template"]).to eq(
         "Team meeting at {time} on {date}",
@@ -168,21 +169,21 @@ RSpec.describe Resenha::AdminRoomsController do
       put "/admin/plugins/resenha/rooms/#{room.id}.json",
           params: {
             room: {
-              chat_channel_id: 6,
+              chat_channel_id: channel.id,
               chat_idle_minutes: 2,
               chat_thread_title_template: "Team meeting at {time} on {date}",
             },
           }
 
       expect(response.status).to eq(200)
-      expect(response.parsed_body["room"]["chat_channel_id"]).to eq(6)
+      expect(response.parsed_body["room"]["chat_channel_id"]).to eq(channel.id)
       expect(response.parsed_body["room"]["chat_idle_minutes"]).to eq(2)
       expect(response.parsed_body["room"]["chat_thread_title_template"]).to eq(
         "Team meeting at {time} on {date}",
       )
 
       room.reload
-      expect(room.chat_channel_id).to eq(6)
+      expect(room.chat_channel_id).to eq(channel.id)
       expect(room.chat_idle_minutes).to eq(2)
       expect(room.chat_thread_title_template).to eq("Team meeting at {time} on {date}")
     end

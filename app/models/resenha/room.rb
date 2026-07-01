@@ -28,6 +28,7 @@ module Resenha
                 greater_than_or_equal_to: 2,
                 less_than_or_equal_to: 1440,
               }
+    validate :chat_channel_must_support_threading, if: :chat_channel_id_changed?
 
     before_validation :ensure_slug
     before_save :cook_description
@@ -93,6 +94,21 @@ module Resenha
     def ensure_creator_membership
       room_memberships.find_or_create_by!(user: creator) do |membership|
         membership.role = Resenha::RoomMembership::ROLE_MODERATOR
+      end
+    end
+
+    # Resenha never edits chat channels itself (that would silently change a
+    # setting for everyone else using it, on behalf of a user who may not have
+    # permission to edit that channel at all) — a channel has to already have
+    # threading enabled before it can be linked.
+    def chat_channel_must_support_threading
+      return if chat_channel_id.blank? || !defined?(::Chat)
+
+      channel = chat_channel
+      if channel.nil?
+        errors.add(:chat_channel_id, "must reference an existing chat channel")
+      elsif !channel.threading_enabled?
+        errors.add(:chat_channel_id, "must have threading enabled")
       end
     end
   end

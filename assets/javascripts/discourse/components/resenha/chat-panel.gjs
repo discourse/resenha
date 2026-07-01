@@ -118,6 +118,10 @@ export default class ResenhaChatPanel extends Component {
   @action
   async loadSession() {
     this.#subscribeSession();
+    await this.#fetchSession();
+  }
+
+  async #fetchSession() {
     try {
       const data = await ajax(`/resenha/rooms/${this.room.id}/chat_session`);
       await this.#applyState(data);
@@ -190,8 +194,8 @@ export default class ResenhaChatPanel extends Component {
   }
 
   @action
-  onSessionMessage(data) {
-    this.#applyState(data);
+  onSessionMessage() {
+    this.#fetchSession();
   }
 
   #subscribe() {

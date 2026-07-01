@@ -52,4 +52,40 @@ RSpec.describe Resenha::Room do
       expect(room.chat_idle_seconds).to eq(5 * 60)
     end
   end
+
+  describe "chat_channel_id validation" do
+    fab!(:threaded_channel) { Fabricate(:chat_channel, threading_enabled: true) }
+    fab!(:unthreaded_channel) { Fabricate(:chat_channel, threading_enabled: false) }
+
+    it "allows linking a channel that already has threading enabled" do
+      room.chat_channel_id = threaded_channel.id
+      expect(room).to be_valid
+    end
+
+    it "rejects linking a channel without threading enabled" do
+      room.chat_channel_id = unthreaded_channel.id
+      expect(room).not_to be_valid
+      expect(room.errors[:chat_channel_id]).to be_present
+    end
+
+    it "rejects linking a channel id that doesn't exist" do
+      room.chat_channel_id = unthreaded_channel.id + 100_000
+      expect(room).not_to be_valid
+      expect(room.errors[:chat_channel_id]).to be_present
+    end
+
+    it "allows clearing the channel back to none" do
+      room.update!(chat_channel_id: threaded_channel.id)
+      room.chat_channel_id = nil
+      expect(room).to be_valid
+    end
+
+    it "does not re-validate on an unrelated save once linked, even if the channel's threading is later disabled" do
+      room.update!(chat_channel_id: threaded_channel.id)
+      threaded_channel.update!(threading_enabled: false)
+
+      room.name = "Renamed"
+      expect(room).to be_valid
+    end
+  end
 end

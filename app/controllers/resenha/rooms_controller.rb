@@ -317,10 +317,19 @@ module Resenha
       if text.blank?
         Resenha::ChatSession.start!(@room, current_user)
       else
+        # We post through Chat::CreateMessage directly, which bypasses the
+        # per-user flood limit + auto-silence that chat enforces in its own
+        # controller — apply it here so this endpoint isn't a way around it.
+        ::Chat::MessageRateLimiter.run!(current_user)
         Resenha::ChatSession.post_message!(@room, current_user, text)
       end
 
       render json: Resenha::ChatSession.state(@room)
+    rescue Resenha::ChatSession::Error => e
+      # The chat plugin rejected the message for a reason worth showing (a
+      # duplicate, a too-long message, threading disabled, …) — surface it
+      # instead of the generic 403 that an access error would produce.
+      render_json_error(e.message, status: 422)
     end
 
     private
@@ -328,10 +337,18 @@ module Resenha
     def ensure_chat_available!
       guardian.ensure_can_join_resenha_room!(@room)
       unless Resenha::ChatSession.available_for?(@room, guardian)
-        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.chat_unavailable"))
+        raise Discourse::InvalidAccess.new(
+                :resenha_chat_unavailable,
+                nil,
+                custom_message: "resenha.errors.chat_unavailable",
+              )
       end
       if Resenha::ParticipantTracker.user_ids(@room.id).exclude?(current_user.id)
-        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.chat_requires_presence"))
+        raise Discourse::InvalidAccess.new(
+                :resenha_chat_requires_presence,
+                nil,
+                custom_message: "resenha.errors.chat_requires_presence",
+              )
       end
     end
 
