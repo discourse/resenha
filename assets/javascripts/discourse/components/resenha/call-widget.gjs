@@ -4,6 +4,7 @@ import { concat, fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
+import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
@@ -11,6 +12,7 @@ import DButton from "discourse/components/d-button";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
+import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
@@ -44,6 +46,7 @@ export default class ResenhaCallWidget extends Component {
   @tracked posTop = null;
   @tracked dragging = false;
   @tracked resizing = false;
+  @tracked chatOpen = false;
 
   resizeCorners = RESIZE_CORNERS;
 
@@ -218,6 +221,16 @@ export default class ResenhaCallWidget extends Component {
 
   get openRoomTitle() {
     return i18n("resenha.room.open_page");
+  }
+
+  get chatAvailable() {
+    return !!this.room?.chat_available;
+  }
+
+  get chatToggleTitle() {
+    return this.chatOpen
+      ? i18n("resenha.chat.close")
+      : i18n("resenha.chat.open");
   }
 
   get resized() {
@@ -512,6 +525,21 @@ export default class ResenhaCallWidget extends Component {
   }
 
   @action
+  toggleChat() {
+    this.chatOpen = !this.chatOpen;
+  }
+
+  @action
+  closeChat() {
+    this.chatOpen = false;
+  }
+
+  @action
+  resetChatOnRoomChange() {
+    this.chatOpen = false;
+  }
+
+  @action
   noopAspect() {}
 
   @action
@@ -558,6 +586,7 @@ export default class ResenhaCallWidget extends Component {
         aria-label={{i18n "resenha.widget.title" room=this.room.name}}
         {{didInsert this.registerWidget}}
         {{didInsert this.watchWidgetRoom this.room.id}}
+        {{didUpdate this.resetChatOnRoomChange this.room.id}}
         {{on "pointermove" this.dragWidget}}
         {{on "pointerup" this.stopDrag}}
         {{on "pointercancel" this.stopDrag}}
@@ -576,17 +605,23 @@ export default class ResenhaCallWidget extends Component {
           </div>
         </header>
 
-        <div class="resenha-call-widget__tiles">
-          {{#each this.tiles key="participant.id" as |tile|}}
-            <ResenhaVideoTile
-              @room={{this.room}}
-              @participant={{tile.participant}}
-              @isSelf={{tile.isSelf}}
-              @showVideo={{tile.showVideo}}
-              @onAspect={{this.noopAspect}}
-            />
-          {{/each}}
-        </div>
+        {{#if this.chatOpen}}
+          <div class="resenha-call-widget__chat">
+            <ResenhaChatPanel @room={{this.room}} @onClose={{this.closeChat}} />
+          </div>
+        {{else}}
+          <div class="resenha-call-widget__tiles">
+            {{#each this.tiles key="participant.id" as |tile|}}
+              <ResenhaVideoTile
+                @room={{this.room}}
+                @participant={{tile.participant}}
+                @isSelf={{tile.isSelf}}
+                @showVideo={{tile.showVideo}}
+                @onAspect={{this.noopAspect}}
+              />
+            {{/each}}
+          </div>
+        {{/if}}
 
         <footer class="resenha-call-widget__controls">
           <DButton
@@ -634,6 +669,23 @@ export default class ResenhaCallWidget extends Component {
               {{on "click" this.toggleScreenShare}}
             >
               {{dIcon "display"}}
+            </button>
+          {{/if}}
+          {{#if this.chatAvailable}}
+            <button
+              type="button"
+              class={{dConcatClass
+                "btn btn-icon no-text"
+                (if this.chatOpen "--active")
+              }}
+              title={{this.chatToggleTitle}}
+              aria-label={{this.chatToggleTitle}}
+              {{on "click" this.toggleChat}}
+            >
+              {{dIcon "far-comment"}}
+              {{! Zero-width space: matches DButton so an icon-only button keeps
+                  full button height and aligns with its DButton siblings. }}
+              <span aria-hidden="true">&#8203;</span>
             </button>
           {{/if}}
           <DButton

@@ -22,6 +22,12 @@ module Resenha
                 greater_than_or_equal_to: 2,
                 less_than_or_equal_to: ->(r) { r.stage? ? 200 : 50 },
               }
+    validates :chat_idle_minutes,
+              numericality: {
+                only_integer: true,
+                greater_than_or_equal_to: 2,
+                less_than_or_equal_to: 1440,
+              }
 
     before_validation :ensure_slug
     before_save :cook_description
@@ -71,7 +77,7 @@ module Resenha
     end
 
     def chat_idle_seconds
-      [chat_idle_minutes || 15, 1].max * 60
+      [chat_idle_minutes || 15, 2].max * 60
     end
 
     private

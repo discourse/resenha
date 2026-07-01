@@ -49,6 +49,18 @@
     overflow: auto;
   }
 
+  &__chat {
+    display: flex;
+    flex-direction: column;
+    min-height: 12rem;
+    max-height: 20rem;
+
+    .resenha-chat {
+      border: none;
+      border-radius: 0;
+    }
+  }
+
   .resenha-video-tile {
     width: 100%;
     height: auto;
@@ -86,7 +98,8 @@
   &.--resized {
     max-height: none;
 
-    .resenha-call-widget__tiles {
+    .resenha-call-widget__tiles,
+    .resenha-call-widget__chat {
       flex: 1;
       max-height: none;
     }

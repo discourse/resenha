@@ -1,7 +1,6 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
-import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { service } from "@ember/service";
 import BackButton from "discourse/components/back-button";
@@ -11,6 +10,7 @@ import { i18n } from "discourse-i18n";
 
 export default class ResenhaRoomForm extends Component {
   @service siteSettings;
+  @service chatApi;
 
   @tracked isSaving = false;
   @tracked chatChannels = [];
@@ -60,9 +60,11 @@ export default class ResenhaRoomForm extends Component {
       return;
     }
     try {
-      const collection = getOwner(this).lookup("service:chat-api").channels();
+      const collection = this.chatApi.channels();
       await collection.load();
-      this.chatChannels = collection.items ?? [];
+      this.chatChannels = (collection.items ?? []).filter(
+        (channel) => channel.threadingEnabled
+      );
     } catch (e) {
       popupAjaxError(e);
     }
@@ -134,36 +136,38 @@ export default class ResenhaRoomForm extends Component {
         @data={{this.formData}}
         @onSubmit={{this.handleSubmit}}
         class="resenha-room-form__form"
-        as |form|
+        as |form data|
       >
         <form.Field
+          @type="input"
           @name="name"
           @title={{i18n "resenha.admin.room.name"}}
           @format="full"
           @validation="required|length:1,80"
+          @placeholder={{i18n "resenha.admin.room.name_placeholder"}}
           as |field|
         >
-          <field.Input
-            placeholder={{i18n "resenha.admin.room.name_placeholder"}}
-          />
+          <field.Control />
         </form.Field>
 
         <form.Field
+          @type="textarea"
           @name="description"
           @title={{i18n "resenha.admin.room.description"}}
           @format="full"
           as |field|
         >
-          <field.Textarea />
+          <field.Control />
         </form.Field>
 
         <form.Field
+          @type="radio-group"
           @name="room_type"
           @title={{i18n "resenha.admin.room.room_type"}}
           @format="full"
           as |field|
         >
-          <field.RadioGroup as |radioGroup|>
+          <field.Control as |radioGroup|>
             {{#each this.roomTypeOptions as |option|}}
               <radioGroup.Radio @value={{option.id}}>
                 <strong>{{option.name}}</strong>
@@ -171,45 +175,48 @@ export default class ResenhaRoomForm extends Component {
                 {{option.description}}
               </radioGroup.Radio>
             {{/each}}
-          </field.RadioGroup>
+          </field.Control>
         </form.Field>
 
-        {{#if (this.isStageType form.data.room_type)}}
+        {{#if (this.isStageType data.room_type)}}
           <div class="resenha-room-form__stage-hint">
             {{i18n "resenha.room.type_stage_hint"}}
           </div>
         {{/if}}
 
         <form.Field
+          @type="toggle"
           @name="public"
           @title={{i18n "resenha.admin.room.public"}}
           @helpText={{i18n "resenha.admin.room.public_help"}}
           as |field|
         >
-          <field.Toggle />
+          <field.Control />
         </form.Field>
 
         {{#if this.showVideoToggle}}
-          {{#unless (this.isStageType form.data.room_type)}}
+          {{#unless (this.isStageType data.room_type)}}
             <form.Field
+              @type="toggle"
               @name="video_enabled"
               @title={{i18n "resenha.admin.room.video_enabled"}}
               @helpText={{i18n "resenha.admin.room.video_enabled_help"}}
               as |field|
             >
-              <field.Toggle />
+              <field.Control />
             </form.Field>
           {{/unless}}
         {{/if}}
 
         <form.Field
+          @type="input-number"
           @name="max_participants"
           @title={{i18n "resenha.admin.room.max_participants"}}
           @description={{i18n "resenha.admin.room.max_participants_help"}}
           @validation={{this.maxParticipantsValidation}}
           as |field|
         >
-          <field.Input @type="number" />
+          <field.Control />
         </form.Field>
 
         {{#if this.showChatSettings}}
@@ -218,55 +225,63 @@ export default class ResenhaRoomForm extends Component {
             {{didInsert this.loadChatChannels}}
           >
             <form.Field
+              @type="select"
               @name="chat_channel_id"
               @title={{i18n "resenha.admin.room.chat_channel"}}
               @description={{i18n "resenha.admin.room.chat_channel_help"}}
               @format="full"
               as |field|
             >
-              <field.Select as |select|>
+              <field.Control as |select|>
                 {{#each this.chatChannels as |channel|}}
                   <select.Option
                     @value={{channel.id}}
                   >{{channel.title}}</select.Option>
                 {{/each}}
-              </field.Select>
+              </field.Control>
             </form.Field>
 
-            {{#if form.data.chat_channel_id}}
+            {{#unless this.chatChannels.length}}
+              <div class="resenha-room-form__chat-empty">
+                {{i18n "resenha.admin.room.chat_channel_none"}}
+              </div>
+            {{/unless}}
+
+            {{#if data.chat_channel_id}}
               <form.Field
+                @type="input-number"
                 @name="chat_idle_minutes"
                 @title={{i18n "resenha.admin.room.chat_idle_minutes"}}
                 @description={{i18n
                   "resenha.admin.room.chat_idle_minutes_help"
                 }}
-                @validation="integer|number:1,1440"
+                @validation="integer|number:2,1440"
                 as |field|
               >
-                <field.Input @type="number" />
+                <field.Control />
               </form.Field>
 
               <form.Field
+                @type="input"
                 @name="chat_thread_title_template"
                 @title={{i18n "resenha.admin.room.chat_thread_title_template"}}
                 @description={{i18n
                   "resenha.admin.room.chat_thread_title_template_help"
                 }}
                 @format="full"
+                @placeholder={{i18n
+                  "resenha.admin.room.chat_thread_title_placeholder"
+                }}
                 as |field|
               >
-                <field.Input
-                  placeholder={{i18n
-                    "resenha.admin.room.chat_thread_title_placeholder"
-                  }}
-                />
+                <field.Control />
               </form.Field>
 
               <div class="resenha-room-form__chat-preview">
-                {{#if form.data.chat_thread_title_template}}
+                {{#if data.chat_thread_title_template}}
                   {{i18n "resenha.admin.room.chat_thread_title_preview"}}
                   <strong>{{this.threadTitlePreview
-                      form.data.chat_thread_title_template
+                      data.chat_thread_title_template
                     }}</strong>
                 {{else}}
                   {{i18n "resenha.admin.room.chat_no_template_hint"}}
