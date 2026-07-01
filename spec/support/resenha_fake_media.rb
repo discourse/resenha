@@ -188,6 +188,33 @@ module ResenhaFakeMedia
       waitForTracks();
     JS
   end
+
+  def resenha_media_track_live?(selector, kind: :video, timeout: 5)
+    page.evaluate_async_script(<<~JS, selector, kind.to_s, timeout * 1000)
+      const [selector, kind, timeoutMs, done] = arguments;
+      const startedAt = performance.now();
+      const trackLive = () => {
+        const stream = document.querySelector(selector)?.srcObject;
+        if (!stream?.active) {
+          return false;
+        }
+
+        const tracks =
+          kind === "audio" ? stream.getAudioTracks() : stream.getVideoTracks();
+        return tracks.some((track) => track.readyState === "live" && track.enabled);
+      };
+      const waitForLiveTrack = () => {
+        if (trackLive()) {
+          done(true);
+        } else if (performance.now() - startedAt > timeoutMs) {
+          done(false);
+        } else {
+          requestAnimationFrame(waitForLiveTrack);
+        }
+      };
+      waitForLiveTrack();
+    JS
+  end
 end
 
 RSpec.configure { |config| config.include ResenhaFakeMedia, type: :system }

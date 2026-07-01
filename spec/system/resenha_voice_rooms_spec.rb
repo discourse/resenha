@@ -11,7 +11,11 @@ describe "Resenha voice rooms", type: :system do
   end
 
   def click_call_widget_open_page_button
-    within(".resenha-call-widget__controls") { all(".btn-icon").last.click }
+    within(".resenha-call-widget__controls") { find(".d-icon-expand").ancestor("button").click }
+  end
+
+  def click_call_widget_leave_button
+    within(".resenha-call-widget__controls") { find(".resenha-call-widget__leave").click }
   end
 
   fab!(:user)
@@ -117,7 +121,6 @@ describe "Resenha voice rooms", type: :system do
 
         expect(page).to have_css(".resenha-call-widget", text: room.name)
         expect(page).to have_button(I18n.t("js.resenha.video.camera_off"))
-        expect(page).to have_button(I18n.t("js.resenha.room.leave"))
 
         widget_video_selector =
           ".resenha-call-widget .resenha-video-tile.--video[data-user-id='#{user.id}'] video.resenha-video-tile__video"
@@ -148,7 +151,7 @@ describe "Resenha voice rooms", type: :system do
         expect(page).to have_button(I18n.t("js.resenha.video.camera_on"))
         expect(page).to have_no_css(".resenha-call-widget .resenha-video-tile.--video")
 
-        within(".resenha-call-widget") { click_button(I18n.t("js.resenha.room.leave")) }
+        click_call_widget_leave_button
 
         expect(page).to have_no_css(".resenha-call-widget")
       end
@@ -205,6 +208,58 @@ describe "Resenha voice rooms", type: :system do
             ".resenha-video-tile.--video[data-user-id='#{other_user.id}'] video.resenha-video-tile__video"
           expect(page).to have_css(remote_video_selector, wait: 10)
           expect(resenha_media_track_count(remote_video_selector, timeout: 10)).to eq(1)
+        end
+      end
+
+      it "keeps remote video attached in widget mode" do
+        SiteSetting.resenha_video_enabled = true
+        other_user.activate
+        other_user.update!(trust_level: TrustLevel[2])
+        Group.refresh_automatic_groups!
+
+        using_session(:alice) do
+          sign_in(user)
+          install_resenha_fake_media
+          visit("/resenha/r/#{room.slug}")
+          click_button(I18n.t("js.resenha.room.join"))
+          click_room_page_widget_mode_button
+
+          expect(page).to have_css(".resenha-call-widget", text: room.name)
+          expect(page).to have_current_path("/latest")
+        end
+
+        using_session(:bob) do
+          sign_in(other_user)
+          install_resenha_fake_media(
+            video_feeds: [
+              {
+                label: "Bob widget camera",
+                width: 640,
+                height: 360,
+                color: "#16a34a",
+                accent: "#7c3aed",
+              },
+            ],
+          )
+          visit("/resenha/r/#{room.slug}")
+          click_button(I18n.t("js.resenha.room.join"))
+          click_button(I18n.t("js.resenha.video.camera_on"))
+
+          local_video_selector =
+            ".resenha-video-tile.--video[data-user-id='#{other_user.id}'] video.resenha-video-tile__video"
+          expect(page).to have_css(local_video_selector)
+          expect(resenha_media_track_count(local_video_selector)).to eq(1)
+        end
+
+        using_session(:alice) do
+          remote_tile_selector =
+            ".resenha-call-widget .resenha-video-tile[data-user-id='#{other_user.id}']"
+          remote_video_selector = "#{remote_tile_selector}.--video video.resenha-video-tile__video"
+
+          expect(page).to have_css(remote_tile_selector, wait: 10)
+          expect(page).to have_css(remote_video_selector, wait: 10)
+          expect(resenha_media_track_count(remote_video_selector, timeout: 10)).to eq(1)
+          expect(resenha_media_track_live?(remote_video_selector, timeout: 10)).to eq(true)
         end
       end
     end
