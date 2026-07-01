@@ -12,6 +12,7 @@ import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { prioritizeNameInUx } from "discourse/lib/settings";
+import DConditionalLoadingSpinner from "discourse/ui-kit/d-conditional-loading-spinner";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 
@@ -49,10 +50,6 @@ export default class ResenhaChatPanel extends Component {
 
   get hasThread() {
     return !!this.threadId;
-  }
-
-  get showStart() {
-    return !this.hasThread && !!this.room?.chat_thread_title_template;
   }
 
   get hasMessages() {
@@ -301,11 +298,6 @@ export default class ResenhaChatPanel extends Component {
   }
 
   @action
-  async startChat() {
-    await this.#post("");
-  }
-
-  @action
   async send() {
     if (this.sendDisabled) {
       return;
@@ -399,7 +391,9 @@ export default class ResenhaChatPanel extends Component {
         {{didUpdate this.onMessagesChanged this.messageCount}}
         {{on "scroll" this.trackScroll}}
       >
-        {{#if this.hasMessages}}
+        {{#if this.loading}}
+          <DConditionalLoadingSpinner @condition={{true}} />
+        {{else if this.hasMessages}}
           {{#each this.groups key="key" as |group|}}
             <div
               class={{if
@@ -439,15 +433,6 @@ export default class ResenhaChatPanel extends Component {
             <p class="resenha-chat__empty-body">
               {{i18n "resenha.chat.empty_body"}}
             </p>
-            {{#if this.showStart}}
-              <button
-                type="button"
-                class="btn btn-default resenha-chat__start"
-                {{on "click" this.startChat}}
-              >
-                {{i18n "resenha.chat.start"}}
-              </button>
-            {{/if}}
           </div>
         {{/if}}
       </div>

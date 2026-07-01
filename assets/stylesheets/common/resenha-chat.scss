@@ -43,6 +43,13 @@
     padding: var(--space-3);
     overflow-y: auto;
     overscroll-behavior: contain;
+
+    .loading-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
   }
 
   &__group {
@@ -124,10 +131,6 @@
     flex: 0 0 auto;
     font-size: var(--font-down-3);
     color: var(--primary-medium);
-  }
-
-  &__start {
-    margin-top: var(--space-2);
   }
 
   &__empty {

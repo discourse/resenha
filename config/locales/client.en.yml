@@ -36,15 +36,13 @@ en:
         empty: "No one is here yet — join to get things started."
       widget:
         title: "Active voice room: %{room}"
+        open_chat: "Open room chat"
       chat:
         title: "Chat"
         open: "Open chat"
         close: "Close chat"
-        toggle: "Toggle chat"
-        default_thread_title: "Voice chat at {time}"
         empty_title: "No chat yet"
         empty_body: "Send a message to get the conversation started."
-        start: "Start chat"
         composer_placeholder: "Message the room…"
         send: "Send"
         open_in_chat: "Open in chat"

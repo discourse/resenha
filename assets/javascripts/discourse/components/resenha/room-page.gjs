@@ -38,7 +38,7 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridGap = 0;
   @tracked tileAspects = new Map();
   @tracked gridFullscreen = false;
-  @tracked chatOpen = false;
+  @tracked chatOpen = !!this.args.openChat;
 
   gridElement = null;
 
@@ -263,12 +263,17 @@ export default class ResenhaRoomPage extends Component {
 
   @action
   toggleChat() {
-    this.chatOpen = !this.chatOpen;
+    this.setChatOpen(!this.chatOpen);
   }
 
   @action
   closeChat() {
-    this.chatOpen = false;
+    this.setChatOpen(false);
+  }
+
+  setChatOpen(open) {
+    this.chatOpen = open;
+    this.router.transitionTo({ queryParams: { chat: open } });
   }
 
   @action
