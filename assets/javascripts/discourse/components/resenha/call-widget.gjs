@@ -4,7 +4,6 @@ import { concat, fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
@@ -16,13 +15,13 @@ import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
 const WIDGET_VIEWPORT_MARGIN = 16;
-const WIDGET_MIN_WIDTH = 240;
+const WIDGET_MIN_WIDTH = 300;
 const WIDGET_MIN_HEIGHT = 180;
 const WIDGET_MAX_WIDTH_RATIO = 0.5;
 const WIDGET_MAX_HEIGHT_RATIO = 0.5;
 const WIDGET_SIZE_KEY = "resenha-widget-size";
 const DRAG_THRESHOLD = 3;
-const RESIZE_CORNERS = ["nw", "ne", "sw", "se"];
+const RESIZE_CORNERS = ["nw", "ne", "sw"];
 
 function clamp(value, min, max) {
   if (max < min) {
@@ -558,7 +557,7 @@ export default class ResenhaCallWidget extends Component {
         data-room-id={{this.room.id}}
         aria-label={{i18n "resenha.widget.title" room=this.room.name}}
         {{didInsert this.registerWidget}}
-        {{didUpdate this.watchWidgetRoom this.room.id}}
+        {{didInsert this.watchWidgetRoom this.room.id}}
         {{on "pointermove" this.dragWidget}}
         {{on "pointerup" this.stopDrag}}
         {{on "pointercancel" this.stopDrag}}
