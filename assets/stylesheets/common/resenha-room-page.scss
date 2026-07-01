@@ -3,12 +3,17 @@
   inset-inline-end: max(1rem, env(safe-area-inset-right));
   inset-block-end: max(1rem, env(safe-area-inset-bottom));
   z-index: 1040;
+
+  // border-box so the inline width/height set during resize match the
+  // border-box geometry the resize math measures (getBoundingClientRect);
+  // otherwise padding + border push the rendered box past the viewport.
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
   width: min(24rem, calc(100vw - 2rem));
   max-height: min(60vh, 32rem);
-  padding: 0.75rem;
+  padding: var(--space-3);
   border: 1px solid var(--primary-low);
   border-radius: 0.75rem;
   background: var(--secondary);
@@ -18,12 +23,9 @@
     min-width: 0;
   }
 
-  &.--dragging &__room {
-    cursor: grabbing;
-  }
-
   &__room {
     width: 100%;
+    min-width: 0;
     cursor: grab;
     touch-action: none;
     user-select: none;
@@ -41,7 +43,7 @@
   &__tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
-    gap: 0.5rem;
+    gap: var(--space-2);
     min-height: 5rem;
     max-height: 18rem;
     overflow: auto;
@@ -78,15 +80,66 @@
       color: var(--tertiary);
     }
   }
+
+  // Once the user sets an explicit widget height, drop the default tile cap so
+  // the video tiles can use the resized vertical space.
+  &.--resized {
+    max-height: none;
+
+    .resenha-call-widget__tiles {
+      flex: 1;
+      max-height: none;
+    }
+  }
+
+  &.--resizing {
+    user-select: none;
+  }
+
+  &.--dragging {
+    user-select: none;
+
+    .resenha-call-widget__room {
+      cursor: grabbing;
+    }
+  }
+
+  // Corner hit targets for resizing. Dragging a corner moves that corner while
+  // the diagonal corner stays anchored in place.
+  &__resize {
+    position: absolute;
+    z-index: 2;
+    width: 16px;
+    height: 16px;
+    touch-action: none;
+
+    &.--nw {
+      inset-block-start: -5px;
+      inset-inline-start: -5px;
+      cursor: nwse-resize;
+    }
+
+    &.--ne {
+      inset-block-start: -5px;
+      inset-inline-end: -5px;
+      cursor: nesw-resize;
+    }
+
+    &.--sw {
+      inset-block-end: -5px;
+      inset-inline-start: -5px;
+      cursor: nesw-resize;
+    }
+  }
 }
 
-@media (max-width: 700px) {
-  .resenha-call-widget {
-    inset-inline: 0.5rem;
-    inset-block-end: 0.5rem;
-    width: auto;
-    max-height: 45vh;
-  }
+// On touch devices the widget is a full-width bottom dock: corner resize is
+// hidden (component-side) and the header only drags it vertically, since
+// free positioning and tiny corner handles are awkward with a finger.
+html.discourse-touch .resenha-call-widget {
+  inset-inline: 0.5rem;
+  width: auto;
+  max-height: 45vh;
 }
 
 .resenha-room-page {

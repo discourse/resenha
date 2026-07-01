@@ -1,9 +1,9 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
+import { concat, fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
@@ -15,8 +15,13 @@ import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
 const WIDGET_VIEWPORT_MARGIN = 16;
-const DRAG_AXIS_THRESHOLD = 4;
-const DRAG_HOLD_DELAY_MS = 250;
+const WIDGET_MIN_WIDTH = 300;
+const WIDGET_MIN_HEIGHT = 180;
+const WIDGET_MAX_WIDTH_RATIO = 0.5;
+const WIDGET_MAX_HEIGHT_RATIO = 0.5;
+const WIDGET_SIZE_KEY = "resenha-widget-size";
+const DRAG_THRESHOLD = 3;
+const RESIZE_CORNERS = ["nw", "ne", "sw"];
 
 function clamp(value, min, max) {
   if (max < min) {
@@ -26,23 +31,90 @@ function clamp(value, min, max) {
 }
 
 export default class ResenhaCallWidget extends Component {
+  @service capabilities;
   @service currentUser;
   @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
+  @service keyValueStore;
 
-  @tracked dockEdge = "bottom";
-  @tracked dockOffset = null;
+  @tracked widgetWidth = null;
+  @tracked widgetHeight = null;
+  @tracked posLeft = null;
+  @tracked posTop = null;
   @tracked dragging = false;
+  @tracked resizing = false;
+
+  resizeCorners = RESIZE_CORNERS;
 
   widgetElement = null;
   dragState = null;
-  dragHoldTimer = null;
+  resizeState = null;
+
+  constructor() {
+    super(...arguments);
+    this.#loadSize();
+  }
 
   willDestroy() {
     super.willDestroy(...arguments);
+    this.#removeResizeListeners();
+    this.#removeDragListeners();
     window.clearTimeout(this.dragHoldTimer);
     this.stopWatchingWidgetRoom();
+  }
+
+  #loadSize() {
+    const raw = this.keyValueStore.get(WIDGET_SIZE_KEY);
+    if (!raw) {
+      return;
+    }
+    try {
+      const { width, height } = JSON.parse(raw);
+      this.widgetWidth = this.#clampWidth(width);
+      this.widgetHeight = this.#clampHeight(height);
+    } catch {
+      this.widgetWidth = null;
+      this.widgetHeight = null;
+    }
+  }
+
+  #saveSize() {
+    this.keyValueStore.set({
+      key: WIDGET_SIZE_KEY,
+      value: JSON.stringify({
+        width: this.widgetWidth,
+        height: this.widgetHeight,
+      }),
+    });
+  }
+
+  #clampWidth(width) {
+    if (!width) {
+      return null;
+    }
+    return clamp(
+      width,
+      WIDGET_MIN_WIDTH,
+      Math.min(
+        window.innerWidth * WIDGET_MAX_WIDTH_RATIO,
+        window.innerWidth - WIDGET_VIEWPORT_MARGIN * 2
+      )
+    );
+  }
+
+  #clampHeight(height) {
+    if (!height) {
+      return null;
+    }
+    return clamp(
+      height,
+      WIDGET_MIN_HEIGHT,
+      Math.min(
+        window.innerHeight * WIDGET_MAX_HEIGHT_RATIO,
+        window.innerHeight - WIDGET_VIEWPORT_MARGIN * 2
+      )
+    );
   }
 
   get room() {
@@ -148,20 +220,67 @@ export default class ResenhaCallWidget extends Component {
     return i18n("resenha.room.open_page");
   }
 
+  get resized() {
+    return !!(this.widgetWidth && this.widgetHeight);
+  }
+
   get widgetStyle() {
-    if (this.dockOffset === null) {
-      return null;
+    const parts = [];
+
+    if (this.capabilities.touch) {
+      if (this.posTop !== null) {
+        const h = this.widgetElement?.offsetHeight ?? 0;
+        const top = clamp(
+          this.posTop,
+          WIDGET_VIEWPORT_MARGIN,
+          Math.max(
+            WIDGET_VIEWPORT_MARGIN,
+            window.innerHeight - h - WIDGET_VIEWPORT_MARGIN
+          )
+        );
+        parts.push(`inset-block-start: ${top}px;`, "inset-block-end: auto;");
+      }
+      return parts.length ? htmlSafe(parts.join(" ")) : null;
     }
 
-    if (this.dockEdge === "right") {
-      return htmlSafe(
-        `inset-block-start: ${this.dockOffset}px; inset-block-end: auto; inset-inline-start: auto; inset-inline-end: ${WIDGET_VIEWPORT_MARGIN}px;`
+    const width = this.#clampWidth(this.widgetWidth);
+    const height = this.#clampHeight(this.widgetHeight);
+
+    if (width) {
+      parts.push(`width: ${width}px;`);
+    }
+    if (height) {
+      parts.push(`height: ${height}px; max-height: ${height}px;`);
+    }
+
+    if (this.posLeft !== null && this.posTop !== null) {
+      const w = width ?? this.widgetElement?.offsetWidth ?? 0;
+      const h = height ?? this.widgetElement?.offsetHeight ?? 0;
+      const left = clamp(
+        this.posLeft,
+        WIDGET_VIEWPORT_MARGIN,
+        Math.max(
+          WIDGET_VIEWPORT_MARGIN,
+          window.innerWidth - w - WIDGET_VIEWPORT_MARGIN
+        )
+      );
+      const top = clamp(
+        this.posTop,
+        WIDGET_VIEWPORT_MARGIN,
+        Math.max(
+          WIDGET_VIEWPORT_MARGIN,
+          window.innerHeight - h - WIDGET_VIEWPORT_MARGIN
+        )
+      );
+      parts.push(
+        `inset-inline-start: ${left}px;`,
+        "inset-inline-end: auto;",
+        `inset-block-start: ${top}px;`,
+        "inset-block-end: auto;"
       );
     }
 
-    return htmlSafe(
-      `inset-inline-start: ${this.dockOffset}px; inset-inline-end: auto; inset-block-start: auto; inset-block-end: ${WIDGET_VIEWPORT_MARGIN}px;`
-    );
+    return parts.length ? htmlSafe(parts.join(" ")) : null;
   }
 
   @action
@@ -169,6 +288,202 @@ export default class ResenhaCallWidget extends Component {
     if (this.room?.slug) {
       this.router.transitionTo("resenha-room", this.room.slug);
     }
+  }
+
+  @action
+  startDrag(event) {
+    if (event.type === "mousedown" && event.button !== 0) {
+      return;
+    }
+    if (!this.widgetElement) {
+      return;
+    }
+
+    const point = this.#eventPoint(event);
+    if (!point) {
+      return;
+    }
+
+    const rect = this.widgetElement.getBoundingClientRect();
+    this.dragState = {
+      startX: point.x,
+      startY: point.y,
+      originLeft: rect.left,
+      originTop: rect.top,
+      width: rect.width,
+      height: rect.height,
+      armed: false,
+    };
+
+    window.addEventListener("mousemove", this.dragWidget);
+    window.addEventListener("touchmove", this.dragWidget, { passive: false });
+    window.addEventListener("mouseup", this.stopDrag);
+    window.addEventListener("touchend", this.stopDrag);
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+  }
+
+  @action
+  dragWidget(event) {
+    const state = this.dragState;
+    if (!state) {
+      return;
+    }
+
+    const point = this.#eventPoint(event);
+    if (!point) {
+      return;
+    }
+
+    const dx = point.x - state.startX;
+    const dy = point.y - state.startY;
+
+    if (!state.armed) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < DRAG_THRESHOLD) {
+        return;
+      }
+      state.armed = true;
+      this.dragging = true;
+    }
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+
+    this.posTop = clamp(
+      state.originTop + dy,
+      WIDGET_VIEWPORT_MARGIN,
+      window.innerHeight - state.height - WIDGET_VIEWPORT_MARGIN
+    );
+
+    if (!this.capabilities.touch) {
+      this.posLeft = clamp(
+        state.originLeft + dx,
+        WIDGET_VIEWPORT_MARGIN,
+        window.innerWidth - state.width - WIDGET_VIEWPORT_MARGIN
+      );
+    }
+  }
+
+  @action
+  stopDrag() {
+    this.#removeDragListeners();
+    this.dragState = null;
+    this.dragging = false;
+  }
+
+  @action
+  startResize(corner, event) {
+    if (event.type === "mousedown" && event.button !== 0) {
+      return;
+    }
+    if (!this.widgetElement) {
+      return;
+    }
+
+    const rect = this.widgetElement.getBoundingClientRect();
+    const onLeft = corner === "nw" || corner === "sw";
+    const onTop = corner === "nw" || corner === "ne";
+
+    this.resizeState = {
+      onLeft,
+      onTop,
+      anchorX: onLeft ? rect.right : rect.left,
+      anchorY: onTop ? rect.bottom : rect.top,
+    };
+    this.resizing = true;
+
+    window.addEventListener("mousemove", this.resizeWidget);
+    window.addEventListener("touchmove", this.resizeWidget, { passive: false });
+    window.addEventListener("mouseup", this.stopResize);
+    window.addEventListener("touchend", this.stopResize);
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+    event.stopPropagation();
+  }
+
+  @action
+  resizeWidget(event) {
+    const state = this.resizeState;
+    if (!state) {
+      return;
+    }
+
+    const point = this.#eventPoint(event);
+    if (!point) {
+      return;
+    }
+
+    const maxWidth = Math.min(
+      window.innerWidth * WIDGET_MAX_WIDTH_RATIO,
+      state.onLeft
+        ? state.anchorX - WIDGET_VIEWPORT_MARGIN
+        : window.innerWidth - state.anchorX - WIDGET_VIEWPORT_MARGIN
+    );
+    const maxHeight = Math.min(
+      window.innerHeight * WIDGET_MAX_HEIGHT_RATIO,
+      state.onTop
+        ? state.anchorY - WIDGET_VIEWPORT_MARGIN
+        : window.innerHeight - state.anchorY - WIDGET_VIEWPORT_MARGIN
+    );
+
+    const width = clamp(
+      Math.abs(point.x - state.anchorX),
+      WIDGET_MIN_WIDTH,
+      maxWidth
+    );
+    const height = clamp(
+      Math.abs(point.y - state.anchorY),
+      WIDGET_MIN_HEIGHT,
+      maxHeight
+    );
+
+    this.widgetWidth = width;
+    this.widgetHeight = height;
+    this.posLeft = state.onLeft ? state.anchorX - width : state.anchorX;
+    this.posTop = state.onTop ? state.anchorY - height : state.anchorY;
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+  }
+
+  @action
+  stopResize() {
+    if (!this.resizeState) {
+      return;
+    }
+
+    this.#removeResizeListeners();
+    this.resizeState = null;
+    this.resizing = false;
+    this.#saveSize();
+  }
+
+  #removeResizeListeners() {
+    window.removeEventListener("mousemove", this.resizeWidget);
+    window.removeEventListener("touchmove", this.resizeWidget);
+    window.removeEventListener("mouseup", this.stopResize);
+    window.removeEventListener("touchend", this.stopResize);
+  }
+
+  #removeDragListeners() {
+    window.removeEventListener("mousemove", this.dragWidget);
+    window.removeEventListener("touchmove", this.dragWidget);
+    window.removeEventListener("mouseup", this.stopDrag);
+    window.removeEventListener("touchend", this.stopDrag);
+  }
+
+  #eventPoint(event) {
+    const touch =
+      event.touches?.[0] ||
+      event.changedTouches?.[0] ||
+      (event.clientX != null ? event : null);
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
   }
 
   @action
@@ -228,110 +543,21 @@ export default class ResenhaCallWidget extends Component {
     }
   }
 
-  @action
-  startDrag(event) {
-    if (event.button !== 0 || !this.widgetElement) {
-      return;
-    }
-
-    const rect = this.widgetElement.getBoundingClientRect();
-    this.dragState = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      rect,
-      axis: null,
-      armed: false,
-    };
-    this.widgetElement.setPointerCapture?.(event.pointerId);
-    this.dragHoldTimer = window.setTimeout(() => {
-      if (this.dragState?.pointerId === event.pointerId) {
-        this.dragState.armed = true;
-        this.dragging = true;
-      }
-    }, DRAG_HOLD_DELAY_MS);
-    event.preventDefault();
-  }
-
-  @action
-  dragWidget(event) {
-    if (!this.dragState || event.pointerId !== this.dragState.pointerId) {
-      return;
-    }
-
-    const deltaX = event.clientX - this.dragState.startX;
-    const deltaY = event.clientY - this.dragState.startY;
-
-    if (!this.dragState.armed) {
-      if (
-        Math.abs(deltaX) >= DRAG_AXIS_THRESHOLD ||
-        Math.abs(deltaY) >= DRAG_AXIS_THRESHOLD
-      ) {
-        window.clearTimeout(this.dragHoldTimer);
-        this.dragHoldTimer = null;
-      }
-      return;
-    }
-
-    let axis = this.dragState.axis;
-
-    if (!axis) {
-      if (
-        Math.abs(deltaX) < DRAG_AXIS_THRESHOLD &&
-        Math.abs(deltaY) < DRAG_AXIS_THRESHOLD
-      ) {
-        return;
-      }
-      axis = Math.abs(deltaX) >= Math.abs(deltaY) ? "x" : "y";
-      this.dragState.axis = axis;
-    }
-
-    const { rect } = this.dragState;
-    if (axis === "y") {
-      this.dockEdge = "right";
-      this.dockOffset = clamp(
-        rect.top + deltaY,
-        WIDGET_VIEWPORT_MARGIN,
-        window.innerHeight - rect.height - WIDGET_VIEWPORT_MARGIN
-      );
-    } else {
-      this.dockEdge = "bottom";
-      this.dockOffset = clamp(
-        rect.left + deltaX,
-        WIDGET_VIEWPORT_MARGIN,
-        window.innerWidth - rect.width - WIDGET_VIEWPORT_MARGIN
-      );
-    }
-
-    event.preventDefault();
-  }
-
-  @action
-  stopDrag(event) {
-    if (!this.dragState || event.pointerId !== this.dragState.pointerId) {
-      return;
-    }
-
-    window.clearTimeout(this.dragHoldTimer);
-    this.dragHoldTimer = null;
-    this.widgetElement?.releasePointerCapture?.(event.pointerId);
-    this.dragState = null;
-    this.dragging = false;
-  }
-
   <template>
-    {{! template-lint-disable no-pointer-down-event-binding }}
+    {{! template-lint-disable no-pointer-down-event-binding no-invalid-interactive }}
     {{#if this.shouldRender}}
       <section
         class={{dConcatClass
           "resenha-call-widget"
+          (if this.resizing "--resizing")
           (if this.dragging "--dragging")
+          (if this.resized "--resized")
         }}
         style={{this.widgetStyle}}
         data-room-id={{this.room.id}}
         aria-label={{i18n "resenha.widget.title" room=this.room.name}}
         {{didInsert this.registerWidget}}
-        {{didUpdate this.watchWidgetRoom this.room.id}}
+        {{didInsert this.watchWidgetRoom this.room.id}}
         {{on "pointermove" this.dragWidget}}
         {{on "pointerup" this.stopDrag}}
         {{on "pointercancel" this.stopDrag}}
@@ -341,7 +567,8 @@ export default class ResenhaCallWidget extends Component {
             class="resenha-call-widget__room"
             role="heading"
             aria-level="2"
-            {{on "pointerdown" this.startDrag}}
+            {{on "mousedown" this.startDrag}}
+            {{on "touchstart" this.startDrag}}
           >
             <span
               class="resenha-call-widget__room-name"
@@ -421,6 +648,20 @@ export default class ResenhaCallWidget extends Component {
             class="btn-danger resenha-call-widget__leave"
           />
         </footer>
+
+        {{#unless this.capabilities.touch}}
+          {{#each this.resizeCorners as |corner|}}
+            <div
+              class={{dConcatClass
+                "resenha-call-widget__resize"
+                (concat "--" corner)
+              }}
+              aria-hidden="true"
+              {{on "mousedown" (fn this.startResize corner)}}
+              {{on "touchstart" (fn this.startResize corner)}}
+            ></div>
+          {{/each}}
+        {{/unless}}
       </section>
     {{/if}}
   </template>
