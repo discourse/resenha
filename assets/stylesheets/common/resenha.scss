@@ -264,6 +264,16 @@
   .resenha-room-form__form {
     max-width: 600px;
   }
+
+  // `.form-kit` spaces its own direct children with a flex gap; wrapping the
+  // chat fields in this container opts them out of that, so it needs the same
+  // treatment to keep a consistent rhythm with the rest of the form.
+  .resenha-room-form__chat {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5em;
+    align-items: flex-start;
+  }
 }
 
 .resenha-create-room-modal {
