@@ -21,7 +21,7 @@ const WIDGET_MAX_WIDTH_RATIO = 0.5;
 const WIDGET_MAX_HEIGHT_RATIO = 0.5;
 const WIDGET_SIZE_KEY = "resenha-widget-size";
 const DRAG_THRESHOLD = 3;
-const RESIZE_CORNERS = ["nw", "ne", "sw"];
+const RESIZE_CORNERS = ["nw", "ne", "sw", "se"];
 
 function clamp(value, min, max) {
   if (max < min) {
