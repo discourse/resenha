@@ -676,11 +676,19 @@ RSpec.describe Resenha::RoomsController do
       room.update!(chat_channel_id: channel.id)
     end
 
-    after { Resenha::ChatSession.clear(room.id) }
+    after do
+      Resenha::ChatSession.clear(room.id)
+      Resenha::ParticipantTracker.clear(room.id)
+    end
+
+    def join_room!(joining_user)
+      Resenha::ParticipantTracker.add(room.id, joining_user.id)
+    end
 
     describe "#chat_session" do
       it "returns the channel and an empty session before any chat" do
         sign_in(user)
+        join_room!(user)
 
         get "/resenha/rooms/#{room.id}/chat_session.json"
 
@@ -693,6 +701,7 @@ RSpec.describe Resenha::RoomsController do
       it "returns 403 when chat is disabled site-wide" do
         SiteSetting.chat_enabled = false
         sign_in(user)
+        join_room!(user)
 
         get "/resenha/rooms/#{room.id}/chat_session.json"
 
@@ -701,6 +710,15 @@ RSpec.describe Resenha::RoomsController do
 
       it "returns 403 when the room has no linked channel" do
         room.update!(chat_channel_id: nil)
+        sign_in(user)
+        join_room!(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "returns 403 when signed in but not present in the voice room" do
         sign_in(user)
 
         get "/resenha/rooms/#{room.id}/chat_session.json"
@@ -722,9 +740,18 @@ RSpec.describe Resenha::RoomsController do
         expect(response.status).to eq(403)
       end
 
+      it "returns 403 when signed in but not present in the voice room" do
+        sign_in(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hi" }
+
+        expect(response.status).to eq(403)
+      end
+
       context "without a thread template (plain room)" do
         it "posts the first message to the channel without opening a thread" do
           sign_in(user)
+          join_room!(user)
 
           post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello everyone" }
 
@@ -741,10 +768,12 @@ RSpec.describe Resenha::RoomsController do
 
         it "opens a thread from the first message once a second arrives" do
           sign_in(user)
+          join_room!(user)
           post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "first" }
           root_id = response.parsed_body["root_message_id"]
 
           sign_in(other_participant)
+          join_room!(other_participant)
           post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "second" }
 
           expect(response.status).to eq(200)
@@ -763,6 +792,7 @@ RSpec.describe Resenha::RoomsController do
 
         it "opens a thread with a system starter and posts the message as a reply" do
           sign_in(user)
+          join_room!(user)
 
           post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello everyone" }
 

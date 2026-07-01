@@ -30,6 +30,7 @@ en:
       video_not_allowed: "Video is not enabled in this room."
       video_publisher_limit: "The maximum number of simultaneous video streams for this room has been reached."
       chat_unavailable: "Chat is not available for this room."
+      chat_requires_presence: "Join the voice room to use its chat."
   badges:
     mic_check:
       name: "Mic Check"

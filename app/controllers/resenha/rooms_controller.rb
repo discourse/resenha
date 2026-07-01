@@ -330,6 +330,9 @@ module Resenha
       unless Resenha::ChatSession.available_for?(@room, guardian)
         raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.chat_unavailable"))
       end
+      if Resenha::ParticipantTracker.user_ids(@room.id).exclude?(current_user.id)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.chat_requires_presence"))
+      end
     end
 
     def refresh_participant_statuses(room)

@@ -255,6 +255,10 @@ export default class ResenhaRoomPage extends Component {
     return this.room.chat_available;
   }
 
+  get chatVisible() {
+    return this.chatOpen && this.joined && this.chatAvailable;
+  }
+
   get chatToggleTitle() {
     return this.chatOpen
       ? i18n("resenha.chat.close")
@@ -300,7 +304,7 @@ export default class ResenhaRoomPage extends Component {
     <section
       class={{dConcatClass
         "resenha-room-page"
-        (if this.chatOpen "--chat-open")
+        (if this.chatVisible "--chat-open")
       }}
       {{didInsert this.watchRoom}}
     >
@@ -350,7 +354,7 @@ export default class ResenhaRoomPage extends Component {
           {{/if}}
         </div>
 
-        {{#if this.chatOpen}}
+        {{#if this.chatVisible}}
           <aside class="resenha-room-page__sidebar">
             <ResenhaChatPanel @room={{this.room}} @onClose={{this.closeChat}} />
           </aside>
@@ -415,7 +419,7 @@ export default class ResenhaRoomPage extends Component {
               type="button"
               class={{dConcatClass
                 "btn btn-icon no-text resenha-room-page__chat-toggle"
-                (if this.chatOpen "--active")
+                (if this.chatVisible "--active")
               }}
               title={{this.chatToggleTitle}}
               aria-label={{this.chatToggleTitle}}
