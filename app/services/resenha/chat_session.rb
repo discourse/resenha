@@ -161,20 +161,30 @@ module Resenha
 
         root = create_message!(guardian: root_guardian, channel_id: channel.id, message: root_text)
         thread = open_thread!(channel, root, title: title)
-        # Record the thread and tell the panels before posting the templated
-        # reply: if that reply is rejected (e.g. a duplicate), the session must
-        # already point at the real thread so a retry continues it instead of
-        # opening another one.
+        # Record the thread before posting the templated reply: if that reply
+        # is rejected (e.g. a duplicate), the session must already point at the
+        # real thread so a retry continues it instead of opening another one.
         store_thread(room, thread.id)
-        publish_state(room)
 
         if templated?(room)
-          create_message!(
-            guardian: user.guardian,
-            channel_id: channel.id,
-            message: message,
-            thread_id: thread.id,
-          )
+          begin
+            create_message!(
+              guardian: user.guardian,
+              channel_id: channel.id,
+              message: message,
+              thread_id: thread.id,
+            )
+          ensure
+            # Publish only once the sender's reply — and with it their thread
+            # membership — exists: a panel reacting to this signal anchors its
+            # message load on that membership's last-read pointer, and reacting
+            # before the reply lands makes chat serve only messages AFTER it,
+            # skipping the system starter. `ensure` keeps a rejected reply from
+            # hiding the freshly created thread.
+            publish_state(room)
+          end
+        else
+          publish_state(room)
         end
 
         thread

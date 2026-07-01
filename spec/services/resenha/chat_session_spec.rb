@@ -137,6 +137,25 @@ RSpec.describe Resenha::ChatSession do
       expect(reply.user_id).to eq(user.id)
     end
 
+    # A panel reacting to the broadcast anchors its message load on the
+    # sender's thread membership; if the broadcast goes out before the
+    # templated reply exists, chat serves only messages AFTER that membership's
+    # last-read pointer and the system starter never renders.
+    it "broadcasts a templated session only after the sender's reply exists" do
+      room.update!(chat_thread_title_template: "Team Meeting at {time}")
+
+      reply_existed_at_publish = nil
+      allow(MessageBus).to receive(:publish) do |ch, _data, _opts|
+        if ch == Resenha.room_chat_channel(room.id)
+          reply_existed_at_publish = ::Chat::Message.where(user_id: user.id).exists?
+        end
+      end
+
+      described_class.post_message!(room, user, "hello everyone")
+
+      expect(reply_existed_at_publish).to eq(true)
+    end
+
     it "delivers to the live thread instead of spawning a competing one" do
       first = described_class.post_message!(room, user, "first")
 
