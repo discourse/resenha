@@ -36,15 +36,11 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridWidth = 0;
   @tracked gridHeight = 0;
   @tracked gridGap = 0;
-  @tracked stageWidth = 0;
-  @tracked stageHeight = 0;
-  @tracked stageGap = 0;
   @tracked tileAspects = new Map();
   @tracked gridFullscreen = false;
   @tracked chatOpen = !!this.args.openChat;
 
   gridElement = null;
-  controlsElement = null;
 
   trackGridSize = trackGridSize;
   trackFullscreen = trackFullscreen;
@@ -114,20 +110,8 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
-  updateStageSize(width, height, gap) {
-    this.stageWidth = width;
-    this.stageHeight = height;
-    this.stageGap = gap;
-  }
-
-  @action
   registerGrid(element) {
     this.gridElement = element;
-  }
-
-  @action
-  registerControls(element) {
-    this.controlsElement = element;
   }
 
   @action
@@ -174,23 +158,7 @@ export default class ResenhaRoomPage extends Component {
   }
 
   get gridStyle() {
-    // The grid hugs its rows so the controls can sit right below the videos;
-    // tile size is computed from the stage (the space the grid MAY use: stage
-    // minus the controls), except in fullscreen where the grid itself is the
-    // sized box again.
-    let width, height;
-    if (this.gridFullscreen) {
-      width = this.gridWidth;
-      height = this.gridHeight;
-    } else {
-      width = this.stageWidth;
-      height =
-        this.stageHeight -
-        (this.controlsElement?.offsetHeight ?? 0) -
-        this.stageGap;
-    }
-
-    if (!this.tiles.length || !width || height <= 0) {
+    if (!this.tiles.length || !this.gridWidth || !this.gridHeight) {
       return null;
     }
 
@@ -198,7 +166,12 @@ export default class ResenhaRoomPage extends Component {
       (tile) => this.tileAspects.get(tile.participant.id) ?? DEFAULT_TILE_ASPECT
     );
 
-    const rowHeight = bestRowHeight(width, height, aspects, this.gridGap);
+    const rowHeight = bestRowHeight(
+      this.gridWidth,
+      this.gridHeight,
+      aspects,
+      this.gridGap
+    );
 
     if (rowHeight <= 0) {
       return null;
@@ -346,10 +319,7 @@ export default class ResenhaRoomPage extends Component {
             {{/if}}
           </header>
 
-          <div
-            class="resenha-room-page__stage"
-            {{this.trackGridSize this.updateStageSize}}
-          >
+          <div class="resenha-room-page__stage">
             {{#if this.tiles.length}}
               <div
                 class="resenha-room-page__grid"
@@ -383,10 +353,7 @@ export default class ResenhaRoomPage extends Component {
                 {{i18n "resenha.room_page.empty"}}
               </div>
             {{/if}}
-            <footer
-              class="resenha-room-page__controls"
-              {{didInsert this.registerControls}}
-            >
+            <footer class="resenha-room-page__controls">
               {{#if this.joined}}
                 <DButton
                   @action={{this.toggleMute}}

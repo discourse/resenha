@@ -32,6 +32,16 @@
 
   &__close {
     margin-inline-start: auto;
+
+    // The chat toggle in the room's control bar is the close affordance; only
+    // the narrow-viewport layout needs an X of its own, because there the
+    // panel becomes a drawer overlaying that control bar. Breakpoint matches
+    // the sidebar drawer in resenha-room-page.scss.
+    display: none;
+
+    @media (max-width: 700px) {
+      display: inline-flex;
+    }
   }
 
   &__body {

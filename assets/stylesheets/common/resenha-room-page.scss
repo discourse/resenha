@@ -190,21 +190,21 @@ html.discourse-touch .resenha-call-widget {
     }
   }
 
-  // Centers the video grid and the control bar together, so the controls sit
-  // right below the videos instead of pinned to the bottom of the page. Tile
-  // size is computed from this box (minus the controls) — see gridStyle.
+  // Meet-style column: the video grid fills the space with tiles centered,
+  // and the control bar sits on the bottom row, level with the chat panel's
+  // composer next door.
   &__stage {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    align-items: stretch;
-    justify-content: center;
     row-gap: 0.75em;
   }
 
   &__grid {
     position: relative;
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-wrap: wrap;
     gap: 0.5em;
@@ -244,10 +244,10 @@ html.discourse-touch .resenha-call-widget {
   }
 
   &__empty {
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding-block: var(--space-6);
     color: var(--primary-medium);
   }
 
