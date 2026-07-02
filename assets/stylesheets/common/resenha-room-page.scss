@@ -2,7 +2,7 @@
   position: fixed;
   inset-inline-end: max(1rem, env(safe-area-inset-right));
   inset-block-end: max(1rem, env(safe-area-inset-bottom));
-  z-index: 1040;
+  z-index: z("footer-nav");
 
   // border-box so the inline width/height set during resize match the
   // border-box geometry the resize math measures (getBoundingClientRect);
