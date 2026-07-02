@@ -36,6 +36,7 @@ en:
         empty: "No one is here yet — join to get things started."
       widget:
         title: "Active voice room: %{room}"
+        expand: "Expand call widget"
       video:
         camera_on: "Turn on camera"
         camera_off: "Turn off camera"
