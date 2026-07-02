@@ -32,6 +32,7 @@ en:
         listeners_cannot_unmute: "Only speakers can unmute in this room."
         open_page: "Show full room view"
         widget_mode: "Show widget view"
+        settings: "Call settings"
       room_page:
         empty: "No one is here yet — join to get things started."
       widget:
@@ -74,13 +75,22 @@ en:
       status:
         auto_update_on: "Auto-update status"
         auto_update_off: "Auto-update status"
+      devices:
+        system_default: "System default"
+        unknown_device: "Device %{index}"
+      video_settings:
+        title: "Video settings"
+        camera: "Camera"
+        background_blur: "Blur my background"
+        blur_amount: "Blur amount"
+        blur_failed: "Background blur couldn't be started, so it was turned off."
+        camera_error: "We couldn't access your camera. Check your browser permissions."
+        not_supported: "Background blur isn't supported by this browser."
       voice_settings:
         title: "Voice settings"
         open: "Voice settings"
         input_device: "Input device"
         output_device: "Output device"
-        system_default: "System default"
-        unknown_device: "Device %{index}"
         mic_test: "Microphone test"
         mic_test_hint: "Speak into your microphone — the bar shows your input level."
         mic_error: "We couldn't access your microphone. Check your browser permissions and device selection."

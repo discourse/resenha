@@ -1,5 +1,6 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
+import { fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
@@ -8,7 +9,9 @@ import { cancel, next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
+import DMenu from "discourse/float-kit/components/d-menu";
 import discourseLater from "discourse/lib/later";
+import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
@@ -21,6 +24,7 @@ import {
   DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
+import ResenhaVideoSettingsModal from "../modal/resenha-video-settings";
 import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
 import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
@@ -334,8 +338,15 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
-  openVoiceSettings() {
+  openVoiceSettings(closeMenu) {
+    closeMenu?.();
     this.modal.show(ResenhaVoiceSettingsModal);
+  }
+
+  @action
+  openVideoSettings(closeMenu) {
+    closeMenu?.();
+    this.modal.show(ResenhaVideoSettingsModal);
   }
 
   <template>
@@ -465,12 +476,42 @@ export default class ResenhaRoomPage extends Component {
                     <span aria-hidden="true">&#8203;</span>
                   </button>
                 {{/if}}
-                <DButton
-                  @action={{this.openVoiceSettings}}
-                  @icon="gear"
-                  @title="resenha.voice_settings.title"
-                  @ariaLabel="resenha.voice_settings.title"
-                />
+                {{#if this.videoAllowed}}
+                  <DMenu
+                    @identifier="resenha-call-settings"
+                    @icon="gear"
+                    @title={{i18n "resenha.room.settings"}}
+                    @ariaLabel={{i18n "resenha.room.settings"}}
+                    @modalForMobile={{true}}
+                    as |menu|
+                  >
+                    <DDropdownMenu as |dropdown|>
+                      <dropdown.item>
+                        <DButton
+                          @action={{fn this.openVoiceSettings menu.close}}
+                          @icon="microphone-lines"
+                          @label="resenha.voice_settings.title"
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                      <dropdown.item>
+                        <DButton
+                          @action={{fn this.openVideoSettings menu.close}}
+                          @icon="video"
+                          @label="resenha.video_settings.title"
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                    </DDropdownMenu>
+                  </DMenu>
+                {{else}}
+                  <DButton
+                    @action={{this.openVoiceSettings}}
+                    @icon="gear"
+                    @title="resenha.voice_settings.title"
+                    @ariaLabel="resenha.voice_settings.title"
+                  />
+                {{/if}}
                 <DButton
                   @action={{this.dockRoom}}
                   @icon="compress"

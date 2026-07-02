@@ -136,7 +136,7 @@ export default class ResenhaVoiceSettingsModal extends Component {
 
     const defaultOption = {
       id: SYSTEM_DEFAULT_DEVICE_ID,
-      name: i18n("resenha.voice_settings.system_default"),
+      name: i18n("resenha.devices.system_default"),
     };
     this.inputDevices = [defaultOption, ...inputs];
     this.outputDevices = [defaultOption, ...outputs];
