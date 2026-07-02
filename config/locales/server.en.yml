@@ -19,6 +19,7 @@ en:
       watercooler_description: "Join for casual drop-in voice chats with other community members."
     chat:
       default_thread_title: "Voice chat at {time}"
+      back_link: "Back to the %{room_name} voice room"
     errors:
       not_enabled: "Resenha voice rooms are disabled."
       not_authorized: "You are not allowed to perform that action for this room."

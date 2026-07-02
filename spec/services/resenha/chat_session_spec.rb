@@ -129,12 +129,25 @@ RSpec.describe Resenha::ChatSession do
 
       thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
       expect(thread.title).to start_with("Team Meeting at ")
-      expect(thread.original_message.message).to eq(thread.title)
+      expect(thread.original_message.message).to start_with(thread.title)
       expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
+
+      # Thread titles are plain text, so the starter carries the clickable
+      # link back to the voice room instead.
+      expect(thread.original_message.message).to include("(/resenha/r/#{room.slug})")
 
       reply = thread.replies.last
       expect(reply.message).to eq("hello everyone")
       expect(reply.user_id).to eq(user.id)
+    end
+
+    it "posts a system backlink reply in a plain room's thread" do
+      thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
+
+      expect(thread.original_message.message).to eq("hello everyone")
+      backlink = thread.replies.last
+      expect(backlink.user_id).to eq(Discourse.system_user.id)
+      expect(backlink.message).to include("(/resenha/r/#{room.slug})")
     end
 
     # A panel reacting to the broadcast anchors its message load on the

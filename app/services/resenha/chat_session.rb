@@ -149,6 +149,10 @@ module Resenha
       # first reply; in a plain room +message+ itself roots the thread. Either
       # way the thread is titled with the same text, and the change is
       # published so every open panel picks the new thread up.
+      #
+      # Thread titles are plain text in chat, so the clickable link back to the
+      # voice room lives in a cooked message instead: appended to the templated
+      # starter, or posted by the system as the first reply in a plain room.
       def open_session_thread!(room, channel, user, message)
         # Bail before posting: if the channel can't hold a thread, thread
         # creation would be rejected and leave the starter (or the message)
@@ -157,7 +161,7 @@ module Resenha
 
         title = title_for(room)
         root_guardian = templated?(room) ? Discourse.system_user.guardian : user.guardian
-        root_text = templated?(room) ? title : message
+        root_text = templated?(room) ? "#{title}\n\n#{voice_room_link(room)}" : message
 
         root = create_message!(guardian: root_guardian, channel_id: channel.id, message: root_text)
         thread = open_thread!(channel, root, title: title)
@@ -184,10 +188,27 @@ module Resenha
             publish_state(room)
           end
         else
-          publish_state(room)
+          begin
+            create_message!(
+              guardian: Discourse.system_user.guardian,
+              channel_id: channel.id,
+              message: voice_room_link(room),
+              thread_id: thread.id,
+            )
+          rescue Error
+            # The backlink is identical text every session, so chat's duplicate
+            # check can reject it (e.g. two sessions in quick succession) — the
+            # user's message must never fail on account of the garnish.
+          ensure
+            publish_state(room)
+          end
         end
 
         thread
+      end
+
+      def voice_room_link(room)
+        "[#{I18n.t("resenha.chat.back_link", room_name: room.name)}](/resenha/r/#{room.slug})"
       end
 
       def templated?(room)

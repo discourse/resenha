@@ -876,7 +876,7 @@ RSpec.describe Resenha::RoomsController do
 
         thread = Chat::Thread.find(response.parsed_body["thread_id"])
         expect(thread.title).to start_with("Team meeting at ")
-        expect(thread.original_message.message).to eq(thread.title)
+        expect(thread.original_message.message).to start_with(thread.title)
         expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
         expect(thread.replies.last.message).to eq("hello")
         expect(thread.replies.last.user_id).to eq(user.id)
