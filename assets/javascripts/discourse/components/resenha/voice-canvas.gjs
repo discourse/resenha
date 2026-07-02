@@ -15,6 +15,10 @@ export default class ResenhaVoiceCanvas extends Component {
     return this.resenhaWebrtc.remoteStreams;
   }
 
+  get remoteScreenAudioStreams() {
+    return this.resenhaWebrtc.remoteScreenAudioStreams;
+  }
+
   <template>
     <section class="resenha-voice-canvas">
       {{#if this.localStream}}
@@ -31,6 +35,15 @@ export default class ResenhaVoiceCanvas extends Component {
       {{/if}}
 
       {{#each this.remoteStreams key="id" as |stream|}}
+        <audio
+          {{didInsert (fn this.resenhaWebrtc.attachStream stream)}}
+          {{didUpdate (fn this.resenhaWebrtc.attachStream stream) stream}}
+          autoplay
+          playsinline
+        />
+      {{/each}}
+
+      {{#each this.remoteScreenAudioStreams key="id" as |stream|}}
         <audio
           {{didInsert (fn this.resenhaWebrtc.attachStream stream)}}
           {{didUpdate (fn this.resenhaWebrtc.attachStream stream) stream}}

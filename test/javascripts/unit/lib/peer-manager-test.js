@@ -26,6 +26,7 @@ class FakeRTCPeerConnection {
       },
     };
     const transceiver = {
+      mid: null,
       direction: "sendrecv",
       sender,
       receiver: { track: { kind } },
@@ -147,6 +148,118 @@ module("Resenha | Unit | Lib | peer-manager", function (hooks) {
       PeerManager.videoTransceiverFor(pc),
       associated,
       "videoTransceiverFor prefers the negotiated transceiver"
+    );
+  });
+
+  test("alignScreenAudioTransceiverForAnswer adopts the negotiated m-line and migrates the orphaned track", async function (assert) {
+    const screenAudioTrack = { id: "screen-audio", kind: "audio" };
+
+    const manager = new PeerManager({
+      getIceServers: () => [],
+      getLocalStream: () => null,
+      getLocalScreenAudioTrack: () => screenAudioTrack,
+      sendSignal: () => Promise.resolve(),
+      flushQueuedSignals: () => Promise.resolve(),
+      onTrack: () => {},
+      clearSignalQueue: () => {},
+      onPeerDestroyed: () => {},
+    });
+
+    const pc = await manager.create(1, 2);
+    await Promise.resolve();
+
+    const preAllocated = PeerManager.screenAudioTransceiverFor(pc);
+    assert.strictEqual(
+      preAllocated.sender.track,
+      screenAudioTrack,
+      "attaches the local screen audio track at peer setup"
+    );
+
+    // Simulate applying a remote offer: fresh recvonly transceivers appear
+    // for each m-line the pre-allocated ones couldn't be reused for.
+    const makeSender = (track = null) => ({
+      track,
+      async replaceTrack(newTrack) {
+        this.track = newTrack;
+      },
+    });
+    const micTransceiver = {
+      mid: "0",
+      direction: "recvonly",
+      sender: makeSender(),
+      receiver: { track: { kind: "audio" } },
+    };
+    const negotiated = {
+      mid: "2",
+      direction: "recvonly",
+      sender: makeSender(),
+      receiver: { track: { kind: "audio" } },
+    };
+    pc.getTransceivers().push(micTransceiver, negotiated);
+
+    PeerManager.alignScreenAudioTransceiverForAnswer(pc);
+    await Promise.resolve();
+
+    assert.strictEqual(
+      negotiated.direction,
+      "sendrecv",
+      "flips the negotiated transceiver to sendrecv before the answer"
+    );
+    assert.strictEqual(
+      negotiated.sender.track,
+      screenAudioTrack,
+      "moves the screen audio track onto the negotiated transceiver"
+    );
+    assert.strictEqual(
+      preAllocated.sender.track,
+      null,
+      "detaches the track from the orphaned transceiver"
+    );
+    assert.strictEqual(
+      micTransceiver.direction,
+      "recvonly",
+      "leaves the mic m-line alone"
+    );
+    assert.strictEqual(
+      PeerManager.screenAudioTransceiverFor(pc),
+      negotiated,
+      "screenAudioTransceiverFor returns the negotiated transceiver"
+    );
+  });
+
+  test("alignScreenAudioTransceiverForAnswer leaves single-audio offers from older clients alone", async function (assert) {
+    const manager = new PeerManager({
+      getIceServers: () => [],
+      getLocalStream: () => null,
+      sendSignal: () => Promise.resolve(),
+      flushQueuedSignals: () => Promise.resolve(),
+      onTrack: () => {},
+      clearSignalQueue: () => {},
+      onPeerDestroyed: () => {},
+    });
+
+    const pc = await manager.create(1, 2);
+    const preAllocated = PeerManager.screenAudioTransceiverFor(pc);
+
+    const micTransceiver = {
+      mid: "0",
+      direction: "recvonly",
+      sender: { track: null },
+      receiver: { track: { kind: "audio" } },
+    };
+    pc.getTransceivers().push(micTransceiver);
+
+    PeerManager.alignScreenAudioTransceiverForAnswer(pc);
+
+    assert.strictEqual(
+      micTransceiver.direction,
+      "recvonly",
+      "does not adopt the mic m-line as the screen audio slot"
+    );
+    assert.strictEqual(
+      PeerManager.screenAudioTransceiverFor(pc),
+      preAllocated,
+      "keeps the pre-allocated transceiver as the screen audio slot"
     );
   });
 });

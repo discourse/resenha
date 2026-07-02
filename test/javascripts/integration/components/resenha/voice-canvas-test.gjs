@@ -9,6 +9,7 @@ import ResenhaVoiceCanvas from "discourse/plugins/resenha/discourse/components/r
 class ResenhaWebrtcStub extends Service {
   @tracked localStream = null;
   @tracked remoteStreams = [];
+  @tracked remoteScreenAudioStreams = [];
   attachCalls = [];
 
   @action
@@ -45,5 +46,28 @@ module("Integration | Component | resenha/voice-canvas", function (hooks) {
     assert.strictEqual(this.resenhaWebrtc.attachCalls.length, 2);
     assert.strictEqual(this.resenhaWebrtc.attachCalls[1].stream, secondStream);
     assert.strictEqual(this.resenhaWebrtc.attachCalls[1].element, element);
+  });
+
+  test("renders a dedicated sink for each remote screen audio stream", async function (assert) {
+    const voiceStream = { id: "voice-stream" };
+    const screenAudioStream = { id: "screen-audio-stream" };
+
+    this.resenhaWebrtc.remoteStreams = [voiceStream];
+
+    await render(<template><ResenhaVoiceCanvas /></template>);
+
+    assert.strictEqual(this.resenhaWebrtc.attachCalls.length, 1);
+
+    this.resenhaWebrtc.remoteScreenAudioStreams = [screenAudioStream];
+    await settled();
+
+    assert.strictEqual(this.resenhaWebrtc.attachCalls.length, 2);
+    assert.strictEqual(
+      this.resenhaWebrtc.attachCalls[1].stream,
+      screenAudioStream
+    );
+    assert
+      .dom(".resenha-voice-canvas audio")
+      .exists({ count: 2 }, "keeps the voice sink alongside the screen sink");
   });
 });
