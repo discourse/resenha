@@ -13,6 +13,7 @@ Resenha is a Discourse plugin that adds Discord-style voice rooms powered by Web
 - **Audio cues** — synthesized tones for connect/disconnect, user join/leave, and mute/deafen toggles.
 - **Noise suppression** — optional DTLN-based background noise filtering via WebAssembly. See [Noise Suppression](#noise-suppression).
 - **Video and screen sharing** — optional, off by default. Each room gets a full page at `/resenha/r/<slug>` with a tile grid; camera and screen share toggle without renegotiation, and senders only encode toward peers who are actually watching the page. Rooms can opt out individually. See [Video](#video).
+- **Video settings with background blur** — a per-room video settings modal with a live preview, camera device picker, and MediaPipe-powered background blur with an adjustable strength slider. See [Background Blur](#background-blur).
 - **Pure browser WebRTC** — signaling through Discourse + MessageBus; media stays peer-to-peer, no SFU/MCU required.
 
 ## Installation
@@ -35,6 +36,7 @@ The plugin seeds a default "Watercooler" room on first enable.
 | `resenha_noise_suppression`          | Allow users to opt into DTLN noise suppression.                                      |
 | `resenha_video_enabled`              | Allow camera video and screen sharing (default off). Rooms can opt out individually. |
 | `resenha_video_max_publishers`       | Max simultaneous video/screen publishers per room (default 8).                       |
+| `resenha_video_background_blur_enabled` | Allow users to blur their camera background (default on; requires video).        |
 | `resenha_stun_servers`               | STUN server addresses (pipe-separated).                                              |
 | `resenha_turn_servers`               | TURN server addresses for NAT traversal.                                             |
 
@@ -56,6 +58,26 @@ Screen sharing has more environmental dependencies than the camera, and failures
 - **Linux on Wayland**: capture goes through `xdg-desktop-portal` + PipeWire. If the picker never appears and the error is instant, check `systemctl --user is-active graphical-session.target xdg-desktop-portal` — a compositor session that isn't wired into systemd (common on minimal window manager setups) leaves the portal unable to start. The camera is unaffected, which makes this easy to misread as an application bug.
 - **macOS Firefox**: needs Screen Recording permission in System Settings, and only picks it up after a full browser restart.
 - **Insecure dev origins**: `getDisplayMedia` hard-requires a secure context. Firefox's `about:config` overrides that unlock `getUserMedia` on plain-http dev hosts do **not** extend to screen capture — use `https://` or a `localhost` origin.
+
+## Background Blur
+
+Camera publishers can blur their background from the video settings modal (cog menu on the room page). Person segmentation runs entirely on the publisher's device using [MediaPipe](https://github.com/google-ai-edge/mediapipe) selfie segmentation (Apache-2.0), compiled to WebAssembly — no media leaves the browser unprocessed, and viewers pay no extra cost.
+
+```
+Camera → hidden <video> → MediaPipe ImageSegmenter (person mask)
+       → canvas composite (blurred frame + sharp person cutout)
+       → canvas.captureStream() → WebRTC peers
+```
+
+The blur strength slider adjusts the composite live; the toggle swaps tracks on all peers via `replaceTrack` without renegotiation. Preferences persist per device via `localStorage`.
+
+The MediaPipe runtime, wasm binaries, and the `selfie_segmenter.tflite` model (all Apache-2.0, © Google) are vendored under `public/javascripts/mediapipe/`. To re-fetch or bump versions:
+
+```bash
+cd plugins/resenha && bash scripts/fetch-mediapipe-assets.sh
+```
+
+The script pins the `@mediapipe/tasks-vision` npm version and the model version, and verifies the model's SHA-256 checksum.
 
 ## Noise Suppression
 

@@ -5,15 +5,19 @@ import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
+import BackgroundBlurManager from "../../lib/resenha/background-blur";
 import IdleTracker from "../../lib/resenha/idle-tracker";
 import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
 import {
   applyOutputDevice,
   audioConstraints,
+  cameraConstraints,
   preferredInputDeviceId,
   preferredOutputDeviceId,
+  preferredVideoInputDeviceId,
   setPreferredInputDeviceId,
   setPreferredOutputDeviceId,
+  setPreferredVideoInputDeviceId,
 } from "../../lib/resenha/media-devices";
 import NoiseSuppressionManager from "../../lib/resenha/noise-suppression";
 import PeerManager from "../../lib/resenha/peer-manager";
@@ -56,6 +60,9 @@ export default class ResenhaWebrtcService extends Service {
   @tracked gateThreshold = 0;
   @tracked inputDeviceId;
   @tracked outputDeviceId;
+  @tracked videoBlurEnabled = BackgroundBlurManager.isPreferred();
+  @tracked videoBlurAmount = BackgroundBlurManager.storedAmount();
+  @tracked videoInputDeviceId = preferredVideoInputDeviceId();
 
   #connectingRoomIds = new Set();
   #roleChangeInProgress = new Set();
@@ -76,6 +83,16 @@ export default class ResenhaWebrtcService extends Service {
   #pendingPlaybackElements = new WeakSet();
   #rawLocalStream = null;
   #upstreamStream = null;
+  #rawLocalVideoStream = null;
+  #backgroundBlur = null;
+
+  // All async mutations of the video pipeline (blur toggle, device switch)
+  // run through this queue so they can't interleave, and each op validates
+  // the epoch after every await so a camera stop/restart during the await
+  // (which can take seconds on first model load) is detected instead of
+  // resurrecting streams that were already stopped.
+  #videoPipelineQueue = Promise.resolve();
+  #videoEpoch = 0;
 
   #signaling;
   #peerManager;
@@ -172,6 +189,7 @@ export default class ResenhaWebrtcService extends Service {
     this.localVideoStream?.getTracks().forEach((track) => track.stop());
     this.localVideoStream = null;
     this.localVideoKind = null;
+    this.#teardownVideoEffects();
 
     this.#stopLocalStream();
 
@@ -866,6 +884,231 @@ export default class ResenhaWebrtcService extends Service {
     await this.#startLocalVideo("screen");
   }
 
+  // Whether the site allows background blur; distinct from browser support
+  // so the UI can tell "turned off by admin" apart from "can't run here".
+  get videoBlurAvailable() {
+    return !!this.siteSettings.resenha_video_background_blur_enabled;
+  }
+
+  get videoBlurSupported() {
+    return BackgroundBlurManager.isSupported();
+  }
+
+  #enqueueVideoOp(operation) {
+    const run = this.#videoPipelineQueue.then(operation, operation);
+    this.#videoPipelineQueue = run.catch(() => {});
+    return run;
+  }
+
+  toggleVideoBlur() {
+    return this.#enqueueVideoOp(() => this.#toggleVideoBlurOp());
+  }
+
+  async #toggleVideoBlurOp() {
+    const enabled = !this.videoBlurEnabled;
+    this.videoBlurEnabled = enabled;
+    BackgroundBlurManager.setPreference(enabled);
+    await this.#reconcileVideoBlurOp();
+  }
+
+  // Brings the pipeline in line with the current preference: wraps or
+  // unwraps the published camera stream. A no-op when the camera is off
+  // (the preference simply applies at the next camera start) or when the
+  // pipeline already matches.
+  async #reconcileVideoBlurOp() {
+    if (this.localVideoKind !== "camera") {
+      return;
+    }
+
+    const wantBlur =
+      this.videoBlurEnabled &&
+      this.videoBlurAvailable &&
+      this.videoBlurSupported;
+
+    if (wantBlur === !!this.#backgroundBlur) {
+      return;
+    }
+
+    if (wantBlur) {
+      const raw = this.localVideoStream;
+      const epoch = this.#videoEpoch;
+      const result = await this.#createBackgroundBlur(raw);
+
+      // The camera may have been stopped or replaced, or blur toggled back
+      // off, while the model loaded.
+      if (epoch !== this.#videoEpoch || this.localVideoStream !== raw) {
+        result?.manager.teardown();
+        return;
+      }
+
+      if (!result) {
+        this.#revertVideoBlurPreference();
+        return;
+      }
+
+      if (!this.videoBlurEnabled) {
+        result.manager.teardown();
+        return;
+      }
+
+      this.#backgroundBlur = result.manager;
+      this.#rawLocalVideoStream = raw;
+      this.localVideoStream = result.processed;
+    } else {
+      this.localVideoStream = this.#rawLocalVideoStream;
+      this.#teardownVideoEffects();
+    }
+
+    const roomId = this.#firstActiveRoomId();
+    if (roomId) {
+      await this.#syncVideoSenders(roomId);
+    }
+  }
+
+  #revertVideoBlurPreference() {
+    this.videoBlurEnabled = false;
+    BackgroundBlurManager.setPreference(false);
+    this.toasts.error({
+      duration: 5000,
+      data: { message: i18n("resenha.video_settings.blur_failed") },
+    });
+  }
+
+  setVideoBlurAmount(value) {
+    const clamped = Math.max(0, Math.min(100, Math.round(value)));
+    this.videoBlurAmount = clamped;
+    BackgroundBlurManager.storeAmount(clamped);
+    this.#backgroundBlur?.setAmount(clamped);
+  }
+
+  setVideoInputDevice(deviceId) {
+    return this.#enqueueVideoOp(() => this.#setVideoInputDeviceOp(deviceId));
+  }
+
+  async #setVideoInputDeviceOp(deviceId) {
+    const previousDeviceId = this.videoInputDeviceId;
+    this.videoInputDeviceId = deviceId;
+
+    if (this.localVideoKind !== "camera") {
+      setPreferredVideoInputDeviceId(deviceId);
+      return true;
+    }
+
+    const epoch = this.#videoEpoch;
+
+    let newStream;
+    try {
+      newStream = await navigator.mediaDevices.getUserMedia({
+        video: cameraConstraints(deviceId),
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to switch camera", error);
+      this.videoInputDeviceId = previousDeviceId;
+      this.toasts.error({
+        duration: 5000,
+        data: { message: i18n("resenha.video.capture_failed") },
+      });
+      return false;
+    }
+
+    setPreferredVideoInputDeviceId(deviceId);
+
+    const track = newStream.getVideoTracks()[0];
+
+    // The camera may have been stopped while the new capture started; the
+    // preference is kept but nothing is swapped.
+    if (epoch !== this.#videoEpoch || this.localVideoKind !== "camera") {
+      newStream.getTracks().forEach((streamTrack) => streamTrack.stop());
+      return true;
+    }
+
+    if (!track) {
+      newStream.getTracks().forEach((streamTrack) => streamTrack.stop());
+      return false;
+    }
+
+    track.contentHint = "motion";
+    track.addEventListener("ended", () => this.#handleLocalVideoEnded(), {
+      once: true,
+    });
+
+    const oldStream = this.localVideoStream;
+    const oldRaw = this.#rawLocalVideoStream;
+
+    let outgoingStream = newStream;
+    let blurResult = null;
+
+    if (this.#backgroundBlur) {
+      blurResult = await this.#createBackgroundBlur(newStream);
+
+      if (
+        epoch !== this.#videoEpoch ||
+        this.localVideoKind !== "camera" ||
+        this.localVideoStream !== oldStream
+      ) {
+        blurResult?.manager.teardown();
+        newStream.getTracks().forEach((streamTrack) => streamTrack.stop());
+        return true;
+      }
+
+      if (blurResult) {
+        outgoingStream = blurResult.processed;
+      } else {
+        this.#revertVideoBlurPreference();
+      }
+    }
+
+    this.#backgroundBlur?.teardown();
+    this.#backgroundBlur = blurResult?.manager ?? null;
+    this.#rawLocalVideoStream = blurResult ? newStream : null;
+    this.localVideoStream = outgoingStream;
+
+    oldStream?.getTracks().forEach((streamTrack) => streamTrack.stop());
+    if (oldRaw && oldRaw !== oldStream) {
+      oldRaw.getTracks().forEach((streamTrack) => streamTrack.stop());
+    }
+
+    const roomId = this.#firstActiveRoomId();
+    if (roomId) {
+      await this.#syncVideoSenders(roomId);
+    }
+
+    return true;
+  }
+
+  // Builds the blur pipeline without touching service state, so callers can
+  // validate that the world hasn't changed across the await before wiring
+  // the result in. Returns null when the effect can't start (asset fetch
+  // failed, GPU unavailable, …).
+  async #createBackgroundBlur(rawStream) {
+    const manager = new BackgroundBlurManager();
+    try {
+      const processed = await manager.setup(rawStream, this.videoBlurAmount);
+      processed.getVideoTracks().forEach((track) => {
+        track.contentHint = "motion";
+      });
+      return { manager, processed };
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to start background blur", error);
+      manager.teardown();
+      return null;
+    }
+  }
+
+  #teardownVideoEffects() {
+    this.#backgroundBlur?.teardown();
+    this.#backgroundBlur = null;
+
+    if (this.#rawLocalVideoStream) {
+      if (this.#rawLocalVideoStream !== this.localVideoStream) {
+        this.#rawLocalVideoStream.getTracks().forEach((track) => track.stop());
+      }
+      this.#rawLocalVideoStream = null;
+    }
+  }
+
   setWatching(roomId, watching, options = {}) {
     if (watching) {
       this.watchingRoomId = roomId;
@@ -970,19 +1213,8 @@ export default class ResenhaWebrtcService extends Service {
           systemAudio: "include",
         });
       } else {
-        // Request dimensions matching the device orientation so a phone held
-        // in portrait sends an upright portrait frame rather than fighting a
-        // hardcoded landscape ideal. The grid lays out whatever aspect the
-        // camera actually delivers.
-        const portrait =
-          window.matchMedia?.("(orientation: portrait)")?.matches ?? false;
-        const [idealWidth, idealHeight] = portrait ? [720, 1280] : [1280, 720];
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: idealWidth },
-            height: { ideal: idealHeight },
-            frameRate: { max: 24 },
-          },
+          video: cameraConstraints(this.videoInputDeviceId),
         });
       }
     } catch (error) {
@@ -997,6 +1229,12 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    // The user may have left the room while the capture picker was open.
+    if (!this.#activeRoomIds.has(roomId)) {
+      stream.getTracks().forEach((streamTrack) => streamTrack.stop());
+      return;
+    }
+
     if (this.localVideoKind) {
       await this.#stopLocalVideo({ broadcast: false });
     }
@@ -1006,6 +1244,8 @@ export default class ResenhaWebrtcService extends Service {
       stream.getTracks().forEach((streamTrack) => streamTrack.stop());
       return;
     }
+
+    const epoch = ++this.#videoEpoch;
 
     track.contentHint = kind === "screen" ? "detail" : "motion";
     track.addEventListener("ended", () => this.#handleLocalVideoEnded(), {
@@ -1018,7 +1258,31 @@ export default class ResenhaWebrtcService extends Service {
       audioTrack.contentHint = "music";
     }
 
-    this.localVideoStream = stream;
+    let outgoingStream = stream;
+    if (
+      kind === "camera" &&
+      this.videoBlurEnabled &&
+      this.videoBlurAvailable &&
+      this.videoBlurSupported
+    ) {
+      const result = await this.#createBackgroundBlur(stream);
+
+      if (epoch !== this.#videoEpoch || !this.#activeRoomIds.has(roomId)) {
+        result?.manager.teardown();
+        stream.getTracks().forEach((streamTrack) => streamTrack.stop());
+        return;
+      }
+
+      if (result) {
+        this.#backgroundBlur = result.manager;
+        this.#rawLocalVideoStream = stream;
+        outgoingStream = result.processed;
+      } else {
+        this.#revertVideoBlurPreference();
+      }
+    }
+
+    this.localVideoStream = outgoingStream;
     this.localVideoKind = kind;
 
     try {
@@ -1030,9 +1294,16 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     await this.#syncVideoSenders(roomId);
+
+    // Applies any blur preference change that raced this startup (e.g. the
+    // toggle was flipped while the model loaded for the initial wrap).
+    this.#enqueueVideoOp(() => this.#reconcileVideoBlurOp());
   }
 
   async #stopLocalVideo({ broadcast = true } = {}) {
+    // Invalidates any queued pipeline op that is mid-await on this session.
+    this.#videoEpoch++;
+
     const roomId = this.#firstActiveRoomId();
     const stream = this.localVideoStream;
 
@@ -1040,6 +1311,7 @@ export default class ResenhaWebrtcService extends Service {
     this.localVideoKind = null;
 
     stream?.getTracks().forEach((track) => track.stop());
+    this.#teardownVideoEffects();
 
     if (roomId) {
       await this.#syncVideoSenders(roomId);

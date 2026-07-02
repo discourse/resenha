@@ -13,6 +13,7 @@ en:
     resenha_afk_disconnect_threshold_minutes: "Minutes of inactivity before a voice room participant is automatically disconnected. Set to 0 to disable."
     resenha_video_enabled: "Enable camera video and screen sharing in voice rooms. Rooms can individually opt out via their room settings."
     resenha_video_max_publishers: "Maximum number of participants who can share video or their screen at the same time in a room. Media stays peer-to-peer, so higher values increase CPU and bandwidth load for everyone watching."
+    resenha_video_background_blur_enabled: "Allow participants to blur their camera background. Segmentation runs on the publisher's device via MediaPipe, which increases CPU/GPU load while their camera is on."
     resenha_chat_enabled: "Allow voice rooms to be linked to a chat channel. Each chat session opens a thread in that channel; messages are real chat messages, so participants can also follow along in the chat UI."
   resenha:
     defaults:

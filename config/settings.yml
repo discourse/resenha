@@ -42,6 +42,9 @@ plugins:
     min: 2
     max: 16
     client: true
+  resenha_video_background_blur_enabled:
+    default: true
+    client: true
   resenha_idle_threshold_minutes:
     default: 5
     min: 0
