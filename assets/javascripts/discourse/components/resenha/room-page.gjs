@@ -20,6 +20,7 @@ import {
   DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
+import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
 import ResenhaVideoTile from "./video-tile";
 
 const MOBILE_VIDEO_TILE_BUDGET = 4;
@@ -27,6 +28,7 @@ const MOBILE_VIDEO_TILE_BUDGET = 4;
 export default class ResenhaRoomPage extends Component {
   @service capabilities;
   @service currentUser;
+  @service modal;
   @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
@@ -269,6 +271,11 @@ export default class ResenhaRoomPage extends Component {
     this.resenhaWebrtc.toggleScreenShare();
   }
 
+  @action
+  openVoiceSettings() {
+    this.modal.show(ResenhaVoiceSettingsModal);
+  }
+
   <template>
     <section class="resenha-room-page" {{didInsert this.watchRoom}}>
       <header class="resenha-room-page__header">
@@ -367,6 +374,12 @@ export default class ResenhaRoomPage extends Component {
               {{dIcon "display"}}
             </button>
           {{/if}}
+          <DButton
+            @action={{this.openVoiceSettings}}
+            @icon="gear"
+            @title="resenha.voice_settings.title"
+            @ariaLabel="resenha.voice_settings.title"
+          />
           <DButton
             @action={{this.dockRoom}}
             @icon="compress"

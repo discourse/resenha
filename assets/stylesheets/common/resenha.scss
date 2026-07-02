@@ -719,3 +719,86 @@
     }
   }
 }
+
+.resenha-voice-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+
+    .combo-box {
+      width: 100%;
+    }
+  }
+
+  &__label {
+    font-weight: bold;
+    margin-bottom: 0;
+  }
+
+  &__output-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+
+    .combo-box {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  &__choose-output-btn {
+    flex: 1;
+    justify-content: flex-start;
+  }
+
+  &__meter {
+    position: relative;
+    height: 0.75rem;
+    border-radius: 0.375rem;
+    background: var(--primary-low);
+
+    &.--open .resenha-voice-settings__meter-fill {
+      background: var(--success);
+    }
+  }
+
+  &__meter-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: inherit;
+    background: var(--primary-medium);
+    transition: width 0.05s linear;
+  }
+
+  &__meter-threshold {
+    position: absolute;
+    top: -0.15rem;
+    bottom: -0.15rem;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--tertiary);
+  }
+
+  &__sensitivity-slider {
+    width: 100%;
+    cursor: pointer;
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: var(--font-down-1);
+    color: var(--primary-medium);
+  }
+
+  &__mic-error {
+    margin: 0;
+    color: var(--danger);
+  }
+}
