@@ -68,6 +68,7 @@ class ResenhaWebrtcStub extends Service {
 
 class RouterStub extends Service {
   @tracked currentURL = "/latest";
+  @tracked currentRoute = null;
 
   transitionTo() {}
 }
@@ -95,6 +96,9 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
         slug: "test-room",
         name: "Test Room",
         video_enabled: true,
+        // Makes the chat button eligible, so the extra-minimized test's exact
+        // control count guards against it leaking into that mode.
+        chat_available: true,
         active_participants: [
           {
             id: this.currentUser.id,
@@ -160,6 +164,31 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
       { roomId: 1, watching: false, options: { keepVideo: true } },
       "clears the widget watch state when the widget is removed"
     );
+  });
+
+  test("hides on the room's own page even when the URL carries extra query params", async function (assert) {
+    const router = this.owner.lookup("service:router");
+
+    await render(<template><ResenhaCallWidget /></template>);
+    assert.dom(".resenha-call-widget").exists("shows while docked elsewhere");
+
+    router.currentRoute = {
+      name: "resenha-room",
+      params: { slug: "test-room" },
+      queryParams: { chat: "true" },
+    };
+    await settled();
+
+    assert
+      .dom(".resenha-call-widget")
+      .doesNotExist("hides on the room's own page, regardless of query params");
+
+    router.currentRoute = { name: "discovery.latest", params: {} };
+    await settled();
+
+    assert
+      .dom(".resenha-call-widget")
+      .exists("shows again once navigated away from the room page");
   });
 
   test("resizing below the widget threshold enters extra minimized mode", async function (assert) {

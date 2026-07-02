@@ -143,7 +143,11 @@ export default class ResenhaCallWidget extends Component {
   }
 
   get onActiveRoomPage() {
-    return this.router.currentURL === `/resenha/r/${this.room?.slug}`;
+    const currentRoute = this.router.currentRoute;
+    return (
+      currentRoute?.name === "resenha-room" &&
+      currentRoute?.params?.slug === this.room?.slug
+    );
   }
 
   get participants() {
@@ -226,6 +230,14 @@ export default class ResenhaCallWidget extends Component {
 
   get openRoomTitle() {
     return i18n("resenha.room.open_page");
+  }
+
+  get chatAvailable() {
+    return !!this.room?.chat_available;
+  }
+
+  get chatTitle() {
+    return i18n("resenha.widget.open_chat");
   }
 
   get expandWidgetTitle() {
@@ -547,6 +559,15 @@ export default class ResenhaCallWidget extends Component {
   }
 
   @action
+  openChat() {
+    if (this.room?.slug) {
+      this.router.transitionTo("resenha-room", this.room.slug, {
+        queryParams: { chat: true },
+      });
+    }
+  }
+
+  @action
   noopAspect() {}
 
   @action
@@ -691,6 +712,13 @@ export default class ResenhaCallWidget extends Component {
               @icon="expand"
               @translatedTitle={{this.openRoomTitle}}
             />
+            {{#if this.chatAvailable}}
+              <DButton
+                @action={{this.openChat}}
+                @icon="far-comment"
+                @translatedTitle={{this.chatTitle}}
+              />
+            {{/if}}
           {{/if}}
           <DButton
             @action={{this.leaveRoom}}

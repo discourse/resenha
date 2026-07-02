@@ -17,6 +17,10 @@ module ::Resenha
     "#{ROOM_CHANNEL_PREFIX}/#{room_id}"
   end
 
+  def self.room_chat_channel(room_id)
+    "#{ROOM_CHANNEL_PREFIX}/#{room_id}/chat"
+  end
+
   def self.room_index_channel
     ROOM_INDEX_CHANNEL
   end

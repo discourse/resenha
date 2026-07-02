@@ -20,7 +20,11 @@ module Resenha
                :description_excerpt,
                :visit_count,
                :video_enabled,
-               :video_allowed
+               :video_allowed,
+               :chat_channel_id,
+               :chat_idle_minutes,
+               :chat_thread_title_template,
+               :chat_available
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
 
@@ -40,15 +44,12 @@ module Resenha
     end
 
     def active_participants
-      all_metadata = Resenha::ParticipantTracker.get_all_metadata(object.id)
-      Resenha::ParticipantTracker
-        .list(object.id)
-        .map do |user|
-          BasicUserSerializer
-            .new(user, scope: scope, root: false)
-            .as_json
-            .merge(all_metadata[user.id] || {})
-        end
+      tracked_participants.map do |user|
+        BasicUserSerializer
+          .new(user, scope: scope, root: false)
+          .as_json
+          .merge(participant_metadata[user.id] || {})
+      end
     end
 
     def room_type
@@ -56,7 +57,8 @@ module Resenha
     end
 
     def can_manage
-      scope.can_manage_resenha_room?(object)
+      return @can_manage if defined?(@can_manage)
+      @can_manage = scope.can_manage_resenha_room?(object)
     end
 
     def description_excerpt
@@ -73,6 +75,47 @@ module Resenha
 
     def video_allowed
       object.video_allowed?
+    end
+
+    def chat_available
+      return @chat_available if defined?(@chat_available)
+      @chat_available = Resenha::ChatSession.available_for?(object, scope)
+    end
+
+    # The room's chat wiring isn't for general consumption: whether chat is
+    # usable only matters to someone actually in the room (or managing it),
+    # and the channel link plus session settings are only edited by managers.
+    # Everyone else — including the anonymously-scoped directory broadcasts —
+    # gets a room without chat fields; the client preserves the ones it
+    # already knows across those broadcasts.
+    def include_chat_available?
+      can_manage || participating?
+    end
+
+    def include_chat_channel_id?
+      can_manage
+    end
+
+    def include_chat_idle_minutes?
+      can_manage
+    end
+
+    def include_chat_thread_title_template?
+      can_manage
+    end
+
+    private
+
+    def tracked_participants
+      @tracked_participants ||= Resenha::ParticipantTracker.list(object.id)
+    end
+
+    def participant_metadata
+      @participant_metadata ||= Resenha::ParticipantTracker.get_all_metadata(object.id)
+    end
+
+    def participating?
+      scope.user.present? && tracked_participants.any? { |user| user.id == scope.user.id }
     end
   end
 end

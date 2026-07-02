@@ -22,6 +22,13 @@ module Resenha
                 greater_than_or_equal_to: 2,
                 less_than_or_equal_to: ->(r) { r.stage? ? 200 : 50 },
               }
+    validates :chat_idle_minutes,
+              numericality: {
+                only_integer: true,
+                greater_than_or_equal_to: 2,
+                less_than_or_equal_to: 1440,
+              }
+    validate :chat_channel_must_support_threading, if: :chat_channel_id_changed?
 
     before_validation :ensure_slug
     before_save :cook_description
@@ -61,6 +68,31 @@ module Resenha
       end
     end
 
+    def chat_linked?
+      chat_channel_id.present?
+    end
+
+    # Memoized (keyed on the current id, so an in-flight reassignment isn't
+    # served a stale channel): serialization consults the channel several
+    # times per room, which would otherwise be a query each.
+    def chat_channel
+      return nil unless chat_channel_id && defined?(::Chat)
+      if @chat_channel_for_id != chat_channel_id
+        @chat_channel_for_id = chat_channel_id
+        @chat_channel = ::Chat::Channel.find_by(id: chat_channel_id)
+      end
+      @chat_channel
+    end
+
+    def reload(...)
+      @chat_channel_for_id = @chat_channel = nil
+      super
+    end
+
+    def chat_idle_seconds
+      [chat_idle_minutes || 15, 2].max * 60
+    end
+
     private
 
     def ensure_slug
@@ -76,6 +108,21 @@ module Resenha
         membership.role = Resenha::RoomMembership::ROLE_MODERATOR
       end
     end
+
+    # Resenha never edits chat channels itself (that would silently change a
+    # setting for everyone else using it, on behalf of a user who may not have
+    # permission to edit that channel at all) — a channel has to already have
+    # threading enabled before it can be linked.
+    def chat_channel_must_support_threading
+      return if chat_channel_id.blank? || !defined?(::Chat)
+
+      channel = chat_channel
+      if channel.nil?
+        errors.add(:chat_channel_id, "must reference an existing chat channel")
+      elsif !channel.threading_enabled?
+        errors.add(:chat_channel_id, "must have threading enabled")
+      end
+    end
   end
 end
 
@@ -83,23 +130,27 @@ end
 #
 # Table name: resenha_rooms
 #
-#  id                 :bigint           not null, primary key
-#  cooked_description :text
-#  description        :text
-#  max_participants   :integer
-#  name               :string           not null
-#  public             :boolean          default(FALSE), not null
-#  room_type          :integer          default(0), not null
-#  slug               :string           not null
-#  video_enabled      :boolean          default(TRUE), not null
-#  created_at         :datetime         not null
-#  updated_at         :datetime         not null
-#  creator_id         :bigint           not null
+#  id                         :bigint           not null, primary key
+#  chat_idle_minutes          :integer          default(15), not null
+#  chat_thread_title_template :string
+#  cooked_description         :text
+#  description                :text
+#  max_participants           :integer
+#  name                       :string           not null
+#  public                     :boolean          default(FALSE), not null
+#  room_type                  :integer          default(0), not null
+#  slug                       :string           not null
+#  video_enabled              :boolean          default(TRUE), not null
+#  created_at                 :datetime         not null
+#  updated_at                 :datetime         not null
+#  chat_channel_id            :bigint
+#  creator_id                 :bigint           not null
 #
 # Indexes
 #
-#  index_resenha_rooms_on_creator_id  (creator_id)
-#  index_resenha_rooms_on_slug        (slug) UNIQUE
+#  index_resenha_rooms_on_chat_channel_id  (chat_channel_id)
+#  index_resenha_rooms_on_creator_id       (creator_id)
+#  index_resenha_rooms_on_slug             (slug) UNIQUE
 #
 # Foreign Keys
 #

@@ -4,10 +4,11 @@ import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import { next } from "@ember/runloop";
+import { cancel, next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
+import discourseLater from "discourse/lib/later";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
@@ -21,6 +22,7 @@ import {
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
 import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
+import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
 
 const MOBILE_VIDEO_TILE_BUDGET = 4;
@@ -39,14 +41,17 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridGap = 0;
   @tracked tileAspects = new Map();
   @tracked gridFullscreen = false;
+  @tracked chatOpen = !!this.args.openChat;
+  @tracked chatClosing = false;
 
   gridElement = null;
-
   trackGridSize = trackGridSize;
   trackFullscreen = trackFullscreen;
+  #chatCloseFallback = null;
 
   willDestroy() {
     super.willDestroy(...arguments);
+    cancel(this.#chatCloseFallback);
     const resenhaWebrtc = this.resenhaWebrtc;
     const roomId = this.args.room.id;
     const keepVideo = resenhaWebrtc.isActiveRoom(roomId);
@@ -251,6 +256,63 @@ export default class ResenhaRoomPage extends Component {
     this.router.transitionTo("discovery.latest");
   }
 
+  get chatAvailable() {
+    return this.room.chat_available;
+  }
+
+  get chatVisible() {
+    return this.chatOpen && this.joined && this.chatAvailable;
+  }
+
+  get chatToggleTitle() {
+    return this.chatOpen
+      ? i18n("resenha.chat.close")
+      : i18n("resenha.chat.open");
+  }
+
+  @action
+  toggleChat() {
+    this.setChatOpen(!this.chatOpen);
+  }
+
+  @action
+  closeChat() {
+    this.setChatOpen(false);
+  }
+
+  setChatOpen(open) {
+    cancel(this.#chatCloseFallback);
+    if (open) {
+      this.chatClosing = false;
+    } else if (this.chatVisible) {
+      // Keep the panel mounted while its exit animation plays; unmounting is
+      // deferred to chatAnimationEnded. If the animation never runs (a theme
+      // or user stylesheet can disable it outright), don't leave the panel
+      // mounted forever.
+      this.chatClosing = true;
+      this.#chatCloseFallback = discourseLater(() => {
+        this.chatClosing = false;
+      }, 500);
+    }
+    this.chatOpen = open;
+    this.router.transitionTo({ queryParams: { chat: open } });
+  }
+
+  get chatRendered() {
+    return this.chatVisible || this.chatClosing;
+  }
+
+  @action
+  chatAnimationEnded(event) {
+    if (
+      event.target === event.currentTarget &&
+      event.animationName.endsWith("-out")
+    ) {
+      cancel(this.#chatCloseFallback);
+      this.chatClosing = false;
+    }
+  }
+
   @action
   toggleMute() {
     this.resenhaWebrtc.toggleMute();
@@ -277,131 +339,175 @@ export default class ResenhaRoomPage extends Component {
   }
 
   <template>
-    <section class="resenha-room-page" {{didInsert this.watchRoom}}>
-      <header class="resenha-room-page__header">
-        <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
-        {{#if this.room.description_excerpt}}
-          <p class="resenha-room-page__description">
-            {{this.room.description_excerpt}}
-          </p>
-        {{/if}}
-      </header>
+    <section
+      class={{dConcatClass
+        "resenha-room-page"
+        (if this.chatVisible "--chat-open")
+      }}
+      {{didInsert this.watchRoom}}
+    >
+      <div class="resenha-room-page__body">
+        <div class="resenha-room-page__main">
+          <header class="resenha-room-page__header">
+            <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
+            {{#if this.room.description_excerpt}}
+              <p class="resenha-room-page__description">
+                {{this.room.description_excerpt}}
+              </p>
+            {{/if}}
+          </header>
 
-      {{#if this.tiles.length}}
-        <div
-          class="resenha-room-page__grid"
-          style={{this.gridStyle}}
-          {{didInsert this.registerGrid}}
-          {{this.trackGridSize this.updateGridSize}}
-          {{this.trackFullscreen this.setGridFullscreen}}
-        >
-          <button
-            type="button"
-            class="btn btn-icon no-text resenha-room-page__fullscreen"
-            title={{this.gridFullscreenTitle}}
-            aria-label={{this.gridFullscreenTitle}}
-            {{on "click" this.toggleGridFullscreen}}
-          >
-            {{dIcon (if this.gridFullscreen "compress" "expand")}}
-          </button>
+          <div class="resenha-room-page__stage">
+            {{#if this.tiles.length}}
+              <div
+                class="resenha-room-page__grid"
+                style={{this.gridStyle}}
+                {{didInsert this.registerGrid}}
+                {{this.trackGridSize this.updateGridSize}}
+                {{this.trackFullscreen this.setGridFullscreen}}
+              >
+                <button
+                  type="button"
+                  class="btn btn-icon no-text resenha-room-page__fullscreen"
+                  title={{this.gridFullscreenTitle}}
+                  aria-label={{this.gridFullscreenTitle}}
+                  {{on "click" this.toggleGridFullscreen}}
+                >
+                  {{dIcon (if this.gridFullscreen "compress" "expand")}}
+                </button>
 
-          {{#each this.tiles key="participant.id" as |tile|}}
-            <ResenhaVideoTile
-              @room={{this.room}}
-              @participant={{tile.participant}}
-              @isSelf={{tile.isSelf}}
-              @showVideo={{tile.showVideo}}
-              @onAspect={{this.reportTileAspect}}
-            />
-          {{/each}}
-        </div>
-      {{else}}
-        <div class="resenha-room-page__empty">
-          {{i18n "resenha.room_page.empty"}}
-        </div>
-      {{/if}}
-
-      <footer class="resenha-room-page__controls">
-        {{#if this.joined}}
-          <DButton
-            @action={{this.toggleMute}}
-            @icon={{if
-              this.resenhaWebrtc.audioEnabled
-              "microphone"
-              "microphone-slash"
-            }}
-            @translatedTitle={{this.micTitle}}
-            @disabled={{this.resenhaWebrtc.pttEnabled}}
-            class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
-          />
-          <DButton
-            @action={{this.toggleDeafen}}
-            @icon={{if this.resenhaWebrtc.deafened "volume-xmark" "ear-listen"}}
-            @translatedTitle={{this.deafenTitle}}
-            class={{if this.resenhaWebrtc.deafened "--off" ""}}
-          />
-          {{! Capture buttons are plain <button>s on purpose: DButton defers
+                {{#each this.tiles key="participant.id" as |tile|}}
+                  <ResenhaVideoTile
+                    @room={{this.room}}
+                    @participant={{tile.participant}}
+                    @isSelf={{tile.isSelf}}
+                    @showVideo={{tile.showVideo}}
+                    @onAspect={{this.reportTileAspect}}
+                  />
+                {{/each}}
+              </div>
+            {{else}}
+              <div class="resenha-room-page__empty">
+                {{i18n "resenha.room_page.empty"}}
+              </div>
+            {{/if}}
+            <footer class="resenha-room-page__controls">
+              {{#if this.joined}}
+                <DButton
+                  @action={{this.toggleMute}}
+                  @icon={{if
+                    this.resenhaWebrtc.audioEnabled
+                    "microphone"
+                    "microphone-slash"
+                  }}
+                  @translatedTitle={{this.micTitle}}
+                  @disabled={{this.resenhaWebrtc.pttEnabled}}
+                  class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
+                />
+                <DButton
+                  @action={{this.toggleDeafen}}
+                  @icon={{if
+                    this.resenhaWebrtc.deafened
+                    "volume-xmark"
+                    "ear-listen"
+                  }}
+                  @translatedTitle={{this.deafenTitle}}
+                  class={{if this.resenhaWebrtc.deafened "--off" ""}}
+                />
+                {{! Capture buttons are plain <button>s on purpose: DButton defers
               its action via next(), which lands outside the click event
               dispatch — Firefox only allows getDisplayMedia during the
               actual dispatch, so a deferred call throws NotAllowedError. }}
-          {{#if this.videoAllowed}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.cameraActive "--active")
-              }}
-              title={{this.cameraTitle}}
-              aria-label={{this.cameraTitle}}
-              disabled={{this.cameraDisabled}}
-              {{on "click" this.toggleCamera}}
-            >
-              {{dIcon (if this.cameraActive "video" "video-slash")}}
-            </button>
-          {{/if}}
-          {{#if this.showScreenShare}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.screenShareActive "--active")
-              }}
-              title={{this.screenShareTitle}}
-              aria-label={{this.screenShareTitle}}
-              disabled={{this.screenShareDisabled}}
-              {{on "click" this.toggleScreenShare}}
-            >
-              {{dIcon "display"}}
-            </button>
-          {{/if}}
-          <DButton
-            @action={{this.openVoiceSettings}}
-            @icon="gear"
-            @title="resenha.voice_settings.title"
-            @ariaLabel="resenha.voice_settings.title"
-          />
-          <DButton
-            @action={{this.dockRoom}}
-            @icon="compress"
-            @ariaLabel="resenha.room.widget_mode"
-          />
-          <DButton
-            @action={{this.leaveRoom}}
-            @icon="phone-slash"
-            @label="resenha.room.leave"
-            class="btn-danger resenha-room-page__leave"
-          />
-        {{else}}
-          <DButton
-            @action={{this.joinRoom}}
-            @icon="phone"
-            @label="resenha.room.join"
-            @disabled={{this.connecting}}
-            @isLoading={{this.connecting}}
-            class="btn-primary resenha-room-page__join"
-          />
+                {{#if this.videoAllowed}}
+                  <button
+                    type="button"
+                    class={{dConcatClass
+                      "btn btn-icon no-text"
+                      (if this.cameraActive "--active")
+                    }}
+                    title={{this.cameraTitle}}
+                    aria-label={{this.cameraTitle}}
+                    disabled={{this.cameraDisabled}}
+                    {{on "click" this.toggleCamera}}
+                  >
+                    {{dIcon (if this.cameraActive "video" "video-slash")}}
+                  </button>
+                {{/if}}
+                {{#if this.showScreenShare}}
+                  <button
+                    type="button"
+                    class={{dConcatClass
+                      "btn btn-icon no-text"
+                      (if this.screenShareActive "--active")
+                    }}
+                    title={{this.screenShareTitle}}
+                    aria-label={{this.screenShareTitle}}
+                    disabled={{this.screenShareDisabled}}
+                    {{on "click" this.toggleScreenShare}}
+                  >
+                    {{dIcon "display"}}
+                  </button>
+                {{/if}}
+                {{#if this.chatAvailable}}
+                  <button
+                    type="button"
+                    class={{dConcatClass
+                      "btn btn-icon no-text resenha-room-page__chat-toggle"
+                      (if this.chatVisible "--active")
+                    }}
+                    title={{this.chatToggleTitle}}
+                    aria-label={{this.chatToggleTitle}}
+                    {{on "click" this.toggleChat}}
+                  >
+                    {{dIcon "far-comment"}}
+                    {{! Zero-width space: matches DButton so an icon-only button keeps
+                  full button height and aligns with its DButton siblings. }}
+                    <span aria-hidden="true">&#8203;</span>
+                  </button>
+                {{/if}}
+                <DButton
+                  @action={{this.openVoiceSettings}}
+                  @icon="gear"
+                  @title="resenha.voice_settings.title"
+                  @ariaLabel="resenha.voice_settings.title"
+                />
+                <DButton
+                  @action={{this.dockRoom}}
+                  @icon="compress"
+                  @ariaLabel="resenha.room.widget_mode"
+                />
+                <DButton
+                  @action={{this.leaveRoom}}
+                  @icon="phone-slash"
+                  @label="resenha.room.leave"
+                  class="btn-danger resenha-room-page__leave"
+                />
+              {{else}}
+                <DButton
+                  @action={{this.joinRoom}}
+                  @icon="phone"
+                  @label="resenha.room.join"
+                  @disabled={{this.connecting}}
+                  @isLoading={{this.connecting}}
+                  class="btn-primary resenha-room-page__join"
+                />
+              {{/if}}
+            </footer>
+          </div>
+        </div>
+
+        {{#if this.chatRendered}}
+          <aside
+            class={{dConcatClass
+              "resenha-room-page__sidebar"
+              (if this.chatClosing "--closing")
+            }}
+            {{on "animationend" this.chatAnimationEnded}}
+          >
+            <ResenhaChatPanel @room={{this.room}} @onClose={{this.closeChat}} />
+          </aside>
         {{/if}}
-      </footer>
+      </div>
     </section>
   </template>
 }

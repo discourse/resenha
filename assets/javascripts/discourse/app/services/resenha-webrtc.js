@@ -392,6 +392,12 @@ export default class ResenhaWebrtcService extends Service {
     );
 
     const joinedRoom = response?.room;
+    if (joinedRoom) {
+      // The join response is serialized as the (now participating) user, so
+      // it carries the per-user chat fields the directory payloads gate off —
+      // fold it in so the room page sees them.
+      this.resenhaRooms?.upsertRoom?.(joinedRoom);
+    }
     const isStageListener =
       joinedRoom?.room_type === "stage" && !this.#canSpeakInRoom(joinedRoom);
 

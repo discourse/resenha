@@ -2,6 +2,7 @@
 require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
+require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
 
 RSpec.describe Resenha::RoomsController do
   before do
@@ -11,9 +12,12 @@ RSpec.describe Resenha::RoomsController do
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
         AddVideoEnabledToResenhaRooms.new.change
-        Resenha::Room.reset_column_information
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :chat_channel_id)
+        AddChatSettingsToResenhaRooms.new.change
       end
     end
+    Resenha::Room.reset_column_information
   end
 
   fab!(:staff, :admin)
@@ -664,6 +668,259 @@ RSpec.describe Resenha::RoomsController do
         "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
       )
       expect(candidate_payload[2][:user_ids]).to eq([other_participant.id])
+    end
+  end
+
+  describe "chat" do
+    fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
+
+    before do
+      SiteSetting.chat_enabled = true
+      SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:everyone]
+      room.update!(chat_channel_id: channel.id)
+    end
+
+    after do
+      Resenha::ChatSession.clear(room.id)
+      Resenha::ParticipantTracker.clear(room.id)
+    end
+
+    def join_room!(joining_user)
+      Resenha::ParticipantTracker.add(room.id, joining_user.id)
+    end
+
+    describe "chat fields in the serialized room" do
+      # Below the create-rooms group threshold, so not a manager of anything.
+      fab!(:viewer) { Fabricate(:user, trust_level: TrustLevel[1]) }
+
+      it "hides all chat fields from a signed-in non-participant" do
+        sign_in(viewer)
+
+        get "/resenha/rooms/#{room.id}.json"
+
+        room_json = response.parsed_body["room"]
+        expect(room_json.keys).not_to include(
+          "chat_available",
+          "chat_channel_id",
+          "chat_idle_minutes",
+          "chat_thread_title_template",
+        )
+      end
+
+      it "hides all chat fields from the anonymously-scoped directory broadcast" do
+        json = Resenha::RoomSerializer.new(room, scope: Guardian.new(nil), root: false).as_json
+
+        expect(json.keys).not_to include(
+          :chat_available,
+          :chat_channel_id,
+          :chat_idle_minutes,
+          :chat_thread_title_template,
+        )
+      end
+
+      it "exposes availability — but not the settings — to a present participant" do
+        sign_in(viewer)
+        join_room!(viewer)
+
+        get "/resenha/rooms/#{room.id}.json"
+
+        room_json = response.parsed_body["room"]
+        expect(room_json["chat_available"]).to eq(true)
+        expect(room_json.keys).not_to include(
+          "chat_channel_id",
+          "chat_idle_minutes",
+          "chat_thread_title_template",
+        )
+      end
+
+      it "exposes the chat settings to a manager" do
+        room.update!(chat_thread_title_template: "Team meeting at {time}")
+        sign_in(staff)
+
+        get "/resenha/rooms/#{room.id}.json"
+
+        room_json = response.parsed_body["room"]
+        expect(room_json["chat_available"]).to eq(true)
+        expect(room_json["chat_channel_id"]).to eq(channel.id)
+        expect(room_json["chat_idle_minutes"]).to eq(15)
+        expect(room_json["chat_thread_title_template"]).to eq("Team meeting at {time}")
+      end
+    end
+
+    describe "#chat_session" do
+      it "returns the channel and an empty session before any chat" do
+        sign_in(user)
+        join_room!(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["channel_id"]).to eq(channel.id)
+        expect(response.parsed_body["thread_id"]).to be_nil
+      end
+
+      it "returns 403 when chat is disabled site-wide" do
+        SiteSetting.chat_enabled = false
+        sign_in(user)
+        join_room!(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "returns 403 when the room has no linked channel" do
+        room.update!(chat_channel_id: nil)
+        sign_in(user)
+        join_room!(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "returns 403 when signed in but not present in the voice room" do
+        sign_in(user)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "requires authentication" do
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+    end
+
+    describe "#ensure_chat_session" do
+      it "requires authentication" do
+        post "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+      end
+
+      it "returns 403 with the room's own message when signed in but not present" do
+        sign_in(user)
+
+        post "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(403)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t("resenha.errors.chat_requires_presence"),
+        )
+      end
+
+      it "follows the caller on the channel without creating a thread" do
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_session.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["channel_id"]).to eq(channel.id)
+        expect(response.parsed_body["thread_id"]).to be_nil
+        expect(Chat::Thread.where(channel_id: channel.id).count).to eq(0)
+
+        # Followed, so chat's own message endpoints accept the user's posts.
+        membership = channel.membership_for(user)
+        expect(membership).to be_present
+        expect(membership.following).to eq(true)
+      end
+    end
+
+    describe "#chat_message" do
+      it "requires authentication" do
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hi" }
+
+        expect(response.status).to eq(403)
+      end
+
+      it "returns 403 with the room's own message when signed in but not present" do
+        sign_in(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hi" }
+
+        expect(response.status).to eq(403)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t("resenha.errors.chat_requires_presence"),
+        )
+      end
+
+      it "opens a thread rooted on the message and exposes it via GET" do
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello everyone" }
+
+        expect(response.status).to eq(200)
+        thread_id = response.parsed_body["thread_id"]
+        expect(thread_id).to be_present
+
+        thread = Chat::Thread.find(thread_id)
+        expect(thread.channel_id).to eq(channel.id)
+        expect(thread.original_message.message).to eq("hello everyone")
+        expect(thread.original_message.user_id).to eq(user.id)
+
+        get "/resenha/rooms/#{room.id}/chat_session.json"
+        expect(response.parsed_body["thread_id"]).to eq(thread_id)
+      end
+
+      it "opens a templated room's thread with a system starter and the message as a reply" do
+        room.update!(chat_thread_title_template: "Team meeting at {time}")
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello" }
+
+        thread = Chat::Thread.find(response.parsed_body["thread_id"])
+        expect(thread.title).to start_with("Team meeting at ")
+        expect(thread.original_message.message).to eq(thread.title)
+        expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
+        expect(thread.replies.last.message).to eq("hello")
+        expect(thread.replies.last.user_id).to eq(user.id)
+      end
+
+      it "delivers a racing message to the live thread instead of a new one" do
+        sign_in(user)
+        join_room!(user)
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "first" }
+        thread_id = response.parsed_body["thread_id"]
+
+        sign_in(other_participant)
+        join_room!(other_participant)
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "second" }
+
+        expect(response.parsed_body["thread_id"]).to eq(thread_id)
+        expect(Chat::Thread.find(thread_id).replies.last.message).to eq("second")
+      end
+
+      it "does not bypass chat's per-user flood limit" do
+        RateLimiter.enable
+        SiteSetting.chat_allowed_messages_for_other_trust_levels = 1
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "one" }
+        expect(response.status).to eq(200)
+
+        # A second message within the window would be free if this endpoint
+        # skipped chat's limiter; it must be capped like normal chat.
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "two" }
+        expect(response.status).to eq(429)
+      end
+
+      it "surfaces the chat plugin's rejection reason as a 422, not a generic 403" do
+        channel.update!(threading_enabled: false)
+        sign_in(user)
+        join_room!(user)
+
+        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello" }
+
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].join).to match(/threading/i)
+      end
     end
   end
 end

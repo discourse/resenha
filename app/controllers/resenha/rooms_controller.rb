@@ -15,6 +15,9 @@ module Resenha
                     leave
                     participants
                     signal
+                    chat_session
+                    ensure_chat_session
+                    chat_message
                     kick
                     heartbeat
                     toggle_mute
@@ -144,6 +147,10 @@ module Resenha
       end
 
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
+
+      # Keep an in-progress chat session alive while someone is present, so it
+      # only rolls over to a new thread once the room is idle AND empty.
+      Resenha::ChatSession.touch!(@room)
 
       # Detect and broadcast any drift (idle change, or a participant whose TTL
       # lapsed after an abrupt disconnect) now that metadata is persisted.
@@ -297,7 +304,61 @@ module Resenha
       head :no_content
     end
 
+    # Returns the room's current live chat session (linked channel and active
+    # thread) so the panel can render it. Does not create or change anything.
+    def chat_session
+      ensure_chat_available!
+      render json: Resenha::ChatSession.state(@room)
+    end
+
+    # Prepares the room's chat session for the caller: rolls a stale session
+    # over and follows them on the linked channel so chat's own message
+    # endpoints accept their posts. Never creates a thread — that only happens
+    # with the session's first message (see #chat_message); every later message
+    # goes through chat's regular API, not through Resenha.
+    def ensure_chat_session
+      ensure_chat_available!
+      render json: Resenha::ChatSession.start!(@room, current_user)
+    end
+
+    # Posts the session's opening message, creating the thread it roots. Only
+    # called by a panel that sees no live thread; once one exists, messages go
+    # through chat's own API instead.
+    def chat_message
+      ensure_chat_available!
+
+      text = params.require(:message).to_s
+      # We post through Chat::CreateMessage directly, which bypasses the
+      # per-user flood limit + auto-silence that chat enforces in its own
+      # controller — apply it here so this endpoint isn't a way around it.
+      ::Chat::MessageRateLimiter.run!(current_user)
+      render json: Resenha::ChatSession.post_message!(@room, current_user, text)
+    rescue Resenha::ChatSession::Error => e
+      # The chat plugin rejected the message for a reason worth showing (a
+      # duplicate, a too-long message, threading disabled, …) — surface it
+      # instead of the generic 403 that an access error would produce.
+      render_json_error(e.message, status: 422)
+    end
+
     private
+
+    def ensure_chat_available!
+      guardian.ensure_can_join_resenha_room!(@room)
+      unless Resenha::ChatSession.available_for?(@room, guardian)
+        raise Discourse::InvalidAccess.new(
+                :resenha_chat_unavailable,
+                nil,
+                custom_message: "resenha.errors.chat_unavailable",
+              )
+      end
+      if Resenha::ParticipantTracker.user_ids(@room.id).exclude?(current_user.id)
+        raise Discourse::InvalidAccess.new(
+                :resenha_chat_requires_presence,
+                nil,
+                custom_message: "resenha.errors.chat_requires_presence",
+              )
+      end
+    end
 
     def refresh_participant_statuses(room)
       Resenha::ParticipantTracker
@@ -339,6 +400,9 @@ module Resenha
           :max_participants,
           :room_type,
           :video_enabled,
+          :chat_channel_id,
+          :chat_idle_minutes,
+          :chat_thread_title_template,
         )
       if permitted.key?(:room_type)
         permitted[:room_type] = Resenha::Room::ROOM_TYPES[permitted[:room_type].to_s] ||
