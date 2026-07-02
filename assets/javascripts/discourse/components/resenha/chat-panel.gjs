@@ -266,7 +266,7 @@ export default class ResenhaChatPanel extends Component {
         {{#if this.canOpenInChat}}
           <button
             type="button"
-            class="btn btn-icon no-text resenha-chat__open-in-chat"
+            class="btn btn-transparent btn-icon no-text resenha-chat__open-in-chat"
             title={{i18n "resenha.chat.open_in_chat"}}
             aria-label={{i18n "resenha.chat.open_in_chat"}}
             {{on "click" this.openInChat}}

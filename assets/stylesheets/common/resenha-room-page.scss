@@ -146,7 +146,11 @@ html.discourse-touch .resenha-call-widget {
   display: flex;
   flex-direction: column;
   gap: 1em;
-  min-height: calc(100dvh - var(--header-offset, 4em) - 6em);
+
+  // A definite height (not just a floor) so the flex chain below actually
+  // constrains: without it a transiently oversized video tile stretches the
+  // whole page and pushes the control bar below the fold.
+  height: calc(100dvh - var(--header-offset, 4em) - 6em);
 
   &__title {
     margin: 0;
@@ -182,14 +186,27 @@ html.discourse-touch .resenha-call-widget {
     width: 22rem;
     min-height: 0;
     display: flex;
+    overflow: hidden;
 
-    // Opening the panel kicks off a layout reflow and a couple of loading
-    // swaps inside it; easing the panel in hides that as one motion instead
-    // of a flicker.
-    animation: resenha-sidebar-in 0.2s ease-out;
+    // Animating the width (not just fading in place) makes the whole layout
+    // ease — the video column and controls resize smoothly instead of
+    // jumping the moment the panel claims its space.
+    animation: resenha-sidebar-in 0.25s ease-out;
 
+    &.--closing {
+      animation: resenha-sidebar-out 0.2s ease-in forwards;
+    }
+
+    // The panel keeps its full-width layout and gets revealed/clipped by the
+    // animating box, rather than squishing and rewrapping every frame.
+    .resenha-chat {
+      min-width: 22rem;
+    }
+
+    // A (near) zero duration rather than none: leaving the closing state
+    // waits on animationend, which `animation: none` would never fire.
     @media (prefers-reduced-motion: reduce) {
-      animation: none;
+      animation-duration: 0.01s;
     }
   }
 
@@ -220,6 +237,11 @@ html.discourse-touch .resenha-call-widget {
     align-content: center;
     align-items: center;
     justify-content: center;
+
+    // While the sidebar animates, tiles rewrap faster than their height
+    // recomputes — clip the transient overflow so it can't spill over the
+    // control bar below.
+    overflow: hidden;
 
     &:fullscreen {
       background: #000;
@@ -284,6 +306,15 @@ html.discourse-touch .resenha-call-widget {
     flex: none;
     width: auto;
     background: var(--secondary);
+    animation-name: resenha-drawer-in;
+
+    &.--closing {
+      animation-name: resenha-drawer-out;
+    }
+
+    .resenha-chat {
+      min-width: 0;
+    }
   }
 }
 
@@ -296,6 +327,16 @@ html.discourse-touch .resenha-call-widget {
   // its measured video, so portrait and landscape feeds coexist without
   // cropping. The fallback height covers first paint before measurement.
   height: var(--resenha-tile-height, 12em);
+
+  // The computed height always lags the layout by a beat (resize observer →
+  // re-render); the hard cap keeps a stale value from ever growing the tile
+  // past the grid box, and the transition hides the catch-up step.
+  max-height: 100%;
+  transition: height 0.2s ease-out;
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
   width: auto;
   max-width: 100%;
   border-radius: 0.5em;
@@ -402,12 +443,50 @@ html.discourse-touch .resenha-call-widget {
 
 @keyframes resenha-sidebar-in {
   from {
+    flex-basis: 0;
+    width: 0;
     opacity: 0;
-    transform: translateX(0.75rem);
   }
 
   to {
+    flex-basis: 22rem;
+    width: 22rem;
     opacity: 1;
+  }
+}
+
+@keyframes resenha-sidebar-out {
+  from {
+    flex-basis: 22rem;
+    width: 22rem;
+    opacity: 1;
+  }
+
+  to {
+    flex-basis: 0;
+    width: 0;
+    opacity: 0;
+  }
+}
+
+// The narrow-viewport drawer overlays the page instead of participating in
+// its layout, so it slides over from the edge rather than animating width.
+@keyframes resenha-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
     transform: none;
+  }
+}
+
+@keyframes resenha-drawer-out {
+  from {
+    transform: none;
+  }
+
+  to {
+    transform: translateX(100%);
   }
 }

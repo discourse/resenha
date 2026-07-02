@@ -1,4 +1,8 @@
 .resenha-chat {
+  // border-box so the 22rem min-width (set by the room sidebar) includes the
+  // borders — content-box would make the panel 2px wider than the sidebar,
+  // whose overflow: hidden then clips the right border off.
+  box-sizing: border-box;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -25,13 +29,6 @@
 
   &__open-in-chat {
     margin-inline-start: auto;
-    border: 1px solid var(--primary-low-mid);
-    background: transparent;
-
-    &:hover,
-    &:focus-visible {
-      background: var(--primary-very-low);
-    }
   }
 
   &__close {

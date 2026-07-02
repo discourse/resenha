@@ -30,6 +30,8 @@ describe "Resenha room chat panel", type: :system do
 
     visit("/resenha/r/#{room.slug}?chat=true")
     click_button(I18n.t("js.resenha.room.join"))
+    # The panel slides in; typing into it mid-animation can miss the composer.
+    wait_for_animation(find(".resenha-room-page__sidebar"))
 
     # The real chat thread component, not a re-implementation.
     expect(page).to have_css(".resenha-chat .chat-thread")
@@ -40,9 +42,14 @@ describe "Resenha room chat panel", type: :system do
     find(".resenha-chat .chat-composer__input").send_keys(:enter)
 
     expect(page).to have_css(".resenha-chat .chat-message-text", text: "hello from the room")
-    expect(Chat::Message.where(chat_channel_id: channel.id).order(:created_at).last.message).to eq(
-      "hello from the room",
-    )
+
+    # The message renders staged before the create request lands — wait for
+    # the server to actually persist it.
+    try_until_success do
+      expect(
+        Chat::Message.where(chat_channel_id: channel.id).order(:created_at).last&.message,
+      ).to eq("hello from the room")
+    end
   end
 
   it "shows the system starter right away on a templated room's first send" do
@@ -50,6 +57,8 @@ describe "Resenha room chat panel", type: :system do
 
     visit("/resenha/r/#{room.slug}?chat=true")
     click_button(I18n.t("js.resenha.room.join"))
+    # The panel slides in; typing into it mid-animation can miss the composer.
+    wait_for_animation(find(".resenha-room-page__sidebar"))
 
     find(".resenha-chat__input").fill_in(with: "kicking things off")
     find(".resenha-chat__input").send_keys(:enter)
@@ -63,6 +72,8 @@ describe "Resenha room chat panel", type: :system do
   it "opens the session thread from the first message sent through the starter composer" do
     visit("/resenha/r/#{room.slug}?chat=true")
     click_button(I18n.t("js.resenha.room.join"))
+    # The panel slides in; typing into it mid-animation can miss the composer.
+    wait_for_animation(find(".resenha-room-page__sidebar"))
 
     # No thread yet: the panel offers the starter composer, not the thread UI.
     expect(page).to have_css(".resenha-chat__input")

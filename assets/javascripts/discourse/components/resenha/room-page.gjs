@@ -4,10 +4,11 @@ import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import { next } from "@ember/runloop";
+import { cancel, next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
+import discourseLater from "discourse/lib/later";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
@@ -39,14 +40,16 @@ export default class ResenhaRoomPage extends Component {
   @tracked tileAspects = new Map();
   @tracked gridFullscreen = false;
   @tracked chatOpen = !!this.args.openChat;
+  @tracked chatClosing = false;
 
   gridElement = null;
-
   trackGridSize = trackGridSize;
   trackFullscreen = trackFullscreen;
+  #chatCloseFallback = null;
 
   willDestroy() {
     super.willDestroy(...arguments);
+    cancel(this.#chatCloseFallback);
     const resenhaWebrtc = this.resenhaWebrtc;
     const roomId = this.args.room.id;
     const keepVideo = resenhaWebrtc.isActiveRoom(roomId);
@@ -276,8 +279,36 @@ export default class ResenhaRoomPage extends Component {
   }
 
   setChatOpen(open) {
+    cancel(this.#chatCloseFallback);
+    if (open) {
+      this.chatClosing = false;
+    } else if (this.chatVisible) {
+      // Keep the panel mounted while its exit animation plays; unmounting is
+      // deferred to chatAnimationEnded. If the animation never runs (a theme
+      // or user stylesheet can disable it outright), don't leave the panel
+      // mounted forever.
+      this.chatClosing = true;
+      this.#chatCloseFallback = discourseLater(() => {
+        this.chatClosing = false;
+      }, 500);
+    }
     this.chatOpen = open;
     this.router.transitionTo({ queryParams: { chat: open } });
+  }
+
+  get chatRendered() {
+    return this.chatVisible || this.chatClosing;
+  }
+
+  @action
+  chatAnimationEnded(event) {
+    if (
+      event.target === event.currentTarget &&
+      event.animationName.endsWith("-out")
+    ) {
+      cancel(this.#chatCloseFallback);
+      this.chatClosing = false;
+    }
   }
 
   @action
@@ -452,8 +483,14 @@ export default class ResenhaRoomPage extends Component {
           </div>
         </div>
 
-        {{#if this.chatVisible}}
-          <aside class="resenha-room-page__sidebar">
+        {{#if this.chatRendered}}
+          <aside
+            class={{dConcatClass
+              "resenha-room-page__sidebar"
+              (if this.chatClosing "--closing")
+            }}
+            {{on "animationend" this.chatAnimationEnded}}
+          >
             <ResenhaChatPanel @room={{this.room}} @onClose={{this.closeChat}} />
           </aside>
         {{/if}}
