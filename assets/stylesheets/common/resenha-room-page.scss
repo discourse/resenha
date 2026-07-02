@@ -168,6 +168,13 @@ html.discourse-touch .resenha-call-widget {
     position: relative;
     flex: 1;
     min-height: 0;
+
+    // The tile height is computed from this element's measured size, so its
+    // own size must never derive from the tiles: after exiting fullscreen the
+    // still-huge tiles would inflate the grid (the page only has a
+    // min-height), the remeasure would see that inflated box, and the layout
+    // would lock there instead of shrinking back.
+    contain: size;
     display: flex;
     flex-wrap: wrap;
     gap: 0.5em;
