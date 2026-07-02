@@ -42,6 +42,6 @@ acceptance("Resenha anon sidebar", function (needs) {
       .hasText("Public room", "the public room link is rendered");
     assert
       .dom("[data-link-name='resenha-participant-1-2']")
-      .hasText("Jane", "public room participants are rendered");
+      .hasText("jane", "public room participants are rendered");
   });
 });
