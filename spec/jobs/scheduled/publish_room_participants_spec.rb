@@ -43,7 +43,32 @@ RSpec.describe Jobs::PublishRoomParticipants do
     expect(room_messages.first.data[:participants].map { |p| p[:id] }).to contain_exactly(user1.id)
   end
 
-  it "does not publish for rooms without participants" do
+  it "does not publish for rooms without recent membership activity" do
+    messages = MessageBus.track_publish { subject.execute({}) }
+
+    expect(messages).to be_empty
+  end
+
+  it "publishes an empty list for rooms that recently emptied" do
+    Resenha::ParticipantTracker.add(room.id, user1.id)
+    Resenha::ParticipantTracker.remove(room.id, user1.id)
+
+    messages = MessageBus.track_publish { subject.execute({}) }
+
+    room_messages = messages.select { |m| m.channel == Resenha.room_channel(room.id) }
+    expect(room_messages.size).to eq(1)
+    expect(room_messages.first.data[:participants]).to be_empty
+  end
+
+  it "stops publishing once a room's last activity leaves the safety window" do
+    Resenha::ParticipantTracker.add(room.id, user1.id)
+    Resenha::ParticipantTracker.remove(room.id, user1.id)
+    Discourse.redis.zadd(
+      Resenha::ParticipantTracker::RECENTLY_ACTIVE_ROOMS_KEY,
+      1.hour.ago.to_f,
+      room.id,
+    )
+
     messages = MessageBus.track_publish { subject.execute({}) }
 
     expect(messages).to be_empty

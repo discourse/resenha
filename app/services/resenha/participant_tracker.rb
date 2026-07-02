@@ -3,6 +3,7 @@
 module Resenha
   class ParticipantTracker
     KEY_NAMESPACE = "resenha:room".freeze
+    RECENTLY_ACTIVE_ROOMS_KEY = "resenha:recently_active_rooms".freeze
     SAFETY_TTL = 30.minutes.to_i
 
     class << self
@@ -12,6 +13,7 @@ module Resenha
         redis.zadd(key(room_id), Time.now.to_f, user_id)
         redis.expire(key(room_id), SAFETY_TTL)
         redis.expire(metadata_key(room_id), SAFETY_TTL)
+        touch_recently_active(room_id)
       rescue Redis::CommandError => e
         raise if e.message.exclude?("WRONGTYPE") || migrated
         redis.del(key(room_id))
@@ -21,6 +23,7 @@ module Resenha
       def remove(room_id, user_id)
         redis.zrem(key(room_id), user_id)
         redis.hdel(metadata_key(room_id), user_id)
+        touch_recently_active(room_id)
       end
 
       def list(room_id)
@@ -92,6 +95,20 @@ module Resenha
       def update_fingerprint(room_id, fingerprint = nil)
         fingerprint ||= participants_fingerprint(room_id)
         redis.set(fingerprint_key(room_id), fingerprint, ex: SAFETY_TTL)
+      end
+
+      def touch_recently_active(room_id)
+        redis.zadd(RECENTLY_ACTIVE_ROOMS_KEY, Time.now.to_f, room_id)
+      end
+
+      # Rooms whose membership changed within the safety window. This includes
+      # rooms that have since emptied — whose participants key no longer exists
+      # in Redis — so the republish backstop can keep re-asserting their empty
+      # state to clients that missed the final leave broadcast.
+      def recently_active_room_ids
+        cutoff = Time.now.to_f - SAFETY_TTL
+        redis.zremrangebyscore(RECENTLY_ACTIVE_ROOMS_KEY, "-inf", "(#{cutoff}")
+        redis.zrangebyscore(RECENTLY_ACTIVE_ROOMS_KEY, cutoff, "+inf").map(&:to_i)
       end
 
       private
