@@ -59,9 +59,15 @@
 
     // The chat plugin sizes .chat-thread to the viewport via its chat-height()
     // mixin (including mobile/footer-nav variants); inside the room panel the
-    // panel itself is the bounding box.
+    // panel itself is the bounding box. The fade eases the loading-state →
+    // thread swap so it doesn't read as a flicker.
     .chat-thread {
       height: 100% !important;
+      animation: resenha-chat-fade-in 0.15s ease-out;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+      }
     }
 
     // A thread freshly created from the starter composer holds only that one
@@ -142,5 +148,15 @@
 
   &__send {
     flex: 0 0 auto;
+  }
+}
+
+@keyframes resenha-chat-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
