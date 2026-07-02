@@ -13,6 +13,7 @@ module Resenha
                :created_at,
                :updated_at,
                :member_count,
+               :message_bus_last_id,
                :active_participants,
                :creator_id,
                :can_manage,
@@ -29,6 +30,13 @@ module Resenha
 
     def member_count
       object.room_memberships.size
+    end
+
+    # Read before active_participants (attributes serialize in declaration
+    # order) so clients subscribing from this position replay, at worst,
+    # broadcasts already reflected in the snapshot — never a gap.
+    def message_bus_last_id
+      MessageBus.last_id(Resenha.room_channel(object.id))
     end
 
     def active_participants
