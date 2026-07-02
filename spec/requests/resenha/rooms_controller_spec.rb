@@ -41,6 +41,15 @@ RSpec.describe Resenha::RoomsController do
       expect(response.parsed_body["rooms"]).to be_present
     end
 
+    it "returns message-bus positions for gap-free subscriptions" do
+      sign_in(user)
+
+      get "/resenha/rooms.json"
+
+      expect(response.parsed_body["index_message_bus_last_id"]).to be_a(Integer)
+      expect(response.parsed_body["rooms"].first["message_bus_last_id"]).to be_a(Integer)
+    end
+
     context "when anonymous" do
       fab!(:private_room) { Fabricate(:resenha_room, creator: staff, public: false) }
 
@@ -87,26 +96,21 @@ RSpec.describe Resenha::RoomsController do
       expect(json["room"]["active_participants"].map { |p| p["id"] }).to include(user.id)
     end
 
-    it "targets participant broadcasts to all active room participants" do
+    it "broadcasts participants untargeted when access is open to everyone" do
       sign_in(user)
       Resenha::ParticipantTracker.add(room.id, other_participant.id)
 
-      published = []
-      allow(MessageBus).to receive(:publish) do |channel, data, opts|
-        published << [channel, data, opts]
-      end
-
-      post "/resenha/rooms/#{room.id}/join.json"
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/join.json"
+        end
 
       expect(response.status).to eq(200)
 
-      participants_message =
-        published.find do |channel, data, _opts|
-          channel == Resenha.room_channel(room.id) && data[:type] == "participants"
-        end
-
+      participants_message = messages.find { |message| message.data[:type] == "participants" }
       expect(participants_message).to be_present
-      expect(participants_message[2][:user_ids]).to contain_exactly(user.id, other_participant.id)
+      expect(participants_message.user_ids).to be_nil
+      expect(participants_message.group_ids).to be_nil
     end
 
     context "with user status integration" do

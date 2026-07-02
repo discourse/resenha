@@ -33,9 +33,14 @@ module Resenha
           .order(:created_at)
           .select { |room| guardian.can_see_resenha_room?(room) }
 
+      # Captured before serializing so clients subscribing from this position
+      # never miss a directory event published while the response was built.
+      index_message_bus_last_id = MessageBus.last_id(Resenha.room_index_channel)
+
       render json: {
                rooms: serialize_data(rooms, Resenha::RoomSerializer),
                can_create_room: guardian.can_manage_resenha_rooms?,
+               index_message_bus_last_id: index_message_bus_last_id,
              }
     end
 

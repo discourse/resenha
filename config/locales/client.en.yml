@@ -36,6 +36,7 @@ en:
         empty: "No one is here yet — join to get things started."
       widget:
         title: "Active voice room: %{room}"
+<<<<<<< HEAD
         open_chat: "Open room chat"
       chat:
         title: "Chat"
@@ -47,6 +48,9 @@ en:
         composer_placeholder: "Message the room…"
         send: "Send"
         open_in_chat: "Open in chat"
+=======
+        expand: "Expand call widget"
+>>>>>>> origin/main
       video:
         camera_on: "Turn on camera"
         camera_off: "Turn off camera"
@@ -73,6 +77,20 @@ en:
       status:
         auto_update_on: "Auto-update status"
         auto_update_off: "Auto-update status"
+      voice_settings:
+        title: "Voice settings"
+        open: "Voice settings"
+        input_device: "Input device"
+        output_device: "Output device"
+        system_default: "System default"
+        unknown_device: "Device %{index}"
+        mic_test: "Microphone test"
+        mic_test_hint: "Speak into your microphone — the bar shows your input level."
+        mic_error: "We couldn't access your microphone. Check your browser permissions and device selection."
+        input_sensitivity: "Input sensitivity"
+        input_sensitivity_hint: "Sound below this level won't be transmitted. Set to zero to always transmit."
+        test_output: "Test"
+        choose_output: "Choose output device"
       stage:
         promoted_to_speaker: "You've been made a speaker."
         demoted_to_listener: "You've been moved to listeners."
@@ -89,6 +107,12 @@ en:
         mute: "Mute"
         unmute: "Unmute"
         kick: "Kick from room"
+        status_speaking: "Speaking"
+        status_muted: "Muted"
+        status_deafened: "Deafened"
+        status_screen_sharing: "Sharing screen"
+        status_video: "Camera on"
+        status_ptt: "Push to talk enabled"
       room_info:
         title: "Room Info"
         status: "Status"

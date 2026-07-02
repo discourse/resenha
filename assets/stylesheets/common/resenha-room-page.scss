@@ -2,7 +2,7 @@
   position: fixed;
   inset-inline-end: max(1rem, env(safe-area-inset-right));
   inset-block-end: max(1rem, env(safe-area-inset-bottom));
-  z-index: 1040;
+  z-index: z("footer-nav");
 
   // border-box so the inline width/height set during resize match the
   // border-box geometry the resize math measures (getBoundingClientRect);
@@ -96,6 +96,17 @@
     user-select: none;
   }
 
+  &.--extra-minimized {
+    width: auto;
+    min-width: 0;
+    max-height: none;
+    padding: var(--space-2);
+
+    .resenha-call-widget__controls {
+      flex-wrap: nowrap;
+    }
+  }
+
   &.--dragging {
     user-select: none;
 
@@ -129,6 +140,12 @@
       inset-block-end: -5px;
       inset-inline-start: -5px;
       cursor: nesw-resize;
+    }
+
+    &.--se {
+      inset-block-end: -5px;
+      inset-inline-end: -5px;
+      cursor: nwse-resize;
     }
   }
 }
@@ -231,6 +248,13 @@ html.discourse-touch .resenha-call-widget {
     position: relative;
     flex: 1;
     min-height: 0;
+
+    // The tile height is computed from this element's measured size, so its
+    // own size must never derive from the tiles: after exiting fullscreen the
+    // still-huge tiles would inflate the grid (the page only has a
+    // min-height), the remeasure would see that inflated box, and the layout
+    // would lock there instead of shrinking back.
+    contain: size;
     display: flex;
     flex-wrap: wrap;
     gap: 0.5em;

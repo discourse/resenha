@@ -1,3 +1,9 @@
+// The screen-share audio m-line is pre-negotiated like the video one, but
+// both audio transceivers on a connection report kind "audio", so the screen
+// one is remembered per connection instead of being inferred from m-line
+// order at every lookup.
+const screenAudioTransceivers = new WeakMap();
+
 export default class PeerManager {
   static #maxRestartAttempts = 5;
   static #maxOfferRetries = 8;
@@ -27,6 +33,10 @@ export default class PeerManager {
       videoTransceivers.find((transceiver) => transceiver.mid !== null) ??
       videoTransceivers[0]
     );
+  }
+
+  static screenAudioTransceiverFor(pc) {
+    return screenAudioTransceivers.get(pc) || null;
   }
 
   // Per JSEP, applying a remote offer only reuses transceivers created via
@@ -65,6 +75,48 @@ export default class PeerManager {
     }
   }
 
+  // Same JSEP problem as the video m-line, for the screen-audio one: the
+  // answerer's pre-allocated transceiver is never reused, so the negotiated
+  // transceiver must be flipped to sendrecv and adopted as the screen-audio
+  // slot. The mic m-line always precedes the screen-audio m-line (the mic
+  // track is added before the pre-allocated transceivers, and fresh answerer
+  // transceivers are created in m-line order), so among the audio
+  // transceivers associated with an m-line the screen one is the last.
+  static alignScreenAudioTransceiverForAnswer(pc) {
+    const associated = pc
+      .getTransceivers()
+      .filter(
+        (transceiver) =>
+          transceiver.receiver?.track?.kind === "audio" &&
+          transceiver.mid !== null
+      );
+
+    // A single audio m-line means the remote is an older client that doesn't
+    // negotiate screen audio; leave the pre-allocated transceiver idle.
+    if (associated.length < 2) {
+      return;
+    }
+
+    const screenTransceiver = associated[associated.length - 1];
+    if (screenTransceiver.direction !== "sendrecv") {
+      screenTransceiver.direction = "sendrecv";
+    }
+
+    const orphan = screenAudioTransceivers.get(pc);
+    if (orphan && orphan !== screenTransceiver) {
+      const orphanTrack = orphan.sender?.track;
+      if (orphanTrack && !screenTransceiver.sender.track) {
+        screenTransceiver.sender.replaceTrack(orphanTrack).catch((error) => {
+          // eslint-disable-next-line no-console
+          console.warn("[resenha] failed to migrate screen audio track", error);
+        });
+        orphan.sender.replaceTrack(null).catch(() => {});
+      }
+    }
+
+    screenAudioTransceivers.set(pc, screenTransceiver);
+  }
+
   #peerConnections = new Map();
   #offerRetryTimers = new Map();
   #offerRetryAttempts = new Map();
@@ -77,6 +129,7 @@ export default class PeerManager {
   #getIceTransportPolicy;
   #getLocalStream;
   #getLocalVideoTrack;
+  #getLocalScreenAudioTrack;
   #sendSignal;
   #flushQueuedSignals;
   #onTrack;
@@ -89,6 +142,7 @@ export default class PeerManager {
     getIceTransportPolicy = () => "all",
     getLocalStream,
     getLocalVideoTrack = () => null,
+    getLocalScreenAudioTrack = () => null,
     sendSignal,
     flushQueuedSignals,
     onTrack,
@@ -100,6 +154,7 @@ export default class PeerManager {
     this.#getIceTransportPolicy = getIceTransportPolicy;
     this.#getLocalStream = getLocalStream;
     this.#getLocalVideoTrack = getLocalVideoTrack;
+    this.#getLocalScreenAudioTrack = getLocalScreenAudioTrack;
     this.#sendSignal = sendSignal;
     this.#flushQueuedSignals = flushQueuedSignals;
     this.#onTrack = onTrack;
@@ -173,8 +228,29 @@ export default class PeerManager {
       });
     }
 
+    // A second audio m-line, pre-negotiated for the same reason as video,
+    // carries tab/system audio during a screen share. It stays separate from
+    // the mic m-line so voice mute/PTT and receiver-side speaking detection
+    // never touch content audio.
+    const screenAudioTransceiver = pc.addTransceiver("audio", {
+      direction: "sendrecv",
+    });
+    screenAudioTransceivers.set(pc, screenAudioTransceiver);
+    const screenAudioTrack = this.#getLocalScreenAudioTrack(
+      roomId,
+      remoteUserId
+    );
+    if (screenAudioTrack) {
+      screenAudioTransceiver.sender
+        .replaceTrack(screenAudioTrack)
+        .catch((error) => {
+          // eslint-disable-next-line no-console
+          console.warn("[resenha] failed to attach screen audio track", error);
+        });
+    }
+
     pc.ontrack = (event) => {
-      this.#onTrack(roomId, remoteUserId, event.track);
+      this.#onTrack(roomId, remoteUserId, event.track, event.streams);
     };
 
     pc.onicecandidate = (event) => {

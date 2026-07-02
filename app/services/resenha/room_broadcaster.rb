@@ -91,6 +91,10 @@ module Resenha
 
     def room_message_bus_targets
       targets = room.message_bus_targets
+      # An untargeted publish already reaches everyone; merging user_ids into
+      # it would restrict delivery to just those users.
+      return targets if targets.blank?
+
       participant_ids = Resenha::ParticipantTracker.user_ids(room.id)
       return targets if participant_ids.empty?
 

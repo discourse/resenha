@@ -34,6 +34,23 @@ RSpec.describe Resenha::ParticipantTracker do
     end
   end
 
+  describe ".recently_active_room_ids" do
+    it "includes rooms with recent membership changes, even once emptied" do
+      described_class.add(room.id, user1.id)
+      described_class.remove(room.id, user1.id)
+
+      expect(described_class.recently_active_room_ids).to include(room.id)
+    end
+
+    it "prunes rooms whose last change is older than the safety window" do
+      described_class.add(room.id, user1.id)
+      Discourse.redis.zadd(described_class::RECENTLY_ACTIVE_ROOMS_KEY, 1.hour.ago.to_f, room.id)
+
+      expect(described_class.recently_active_room_ids).not_to include(room.id)
+      expect(Discourse.redis.zscore(described_class::RECENTLY_ACTIVE_ROOMS_KEY, room.id)).to be_nil
+    end
+  end
+
   describe ".user_ids" do
     it "returns only users with fresh heartbeats" do
       described_class.add(room.id, user1.id)

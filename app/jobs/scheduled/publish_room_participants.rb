@@ -6,31 +6,21 @@ module Jobs
     sidekiq_options retry: false
     cluster_concurrency 1
 
+    # Backstop that re-asserts full participant state so clients converge even
+    # after missing a broadcast (page-load races, sleep/resume, message-bus
+    # backlog gaps). It iterates rooms with recent membership activity rather
+    # than scanning for participants keys in Redis: an emptied room's key is
+    # gone, but its (empty) state still needs re-broadcasting for a while,
+    # otherwise a single missed leave message shows ghosts until reload.
     def execute(args)
       return unless ::Resenha.enabled?
 
-      # Find all room participant keys in Redis
-      pattern = "#{::Resenha::ParticipantTracker::KEY_NAMESPACE}:*:participants"
-      redis = Discourse.redis
+      room_ids = ::Resenha::ParticipantTracker.recently_active_room_ids
+      return if room_ids.empty?
 
-      # Use scan_each to iterate through matching keys
-      # This is safe for production as resenha rooms should be a manageable number
-      redis.scan_each(match: pattern) do |key|
-        # Extract room_id from key: "resenha:room:123:participants" -> 123
-        if key =~
-             /#{Regexp.escape(::Resenha::ParticipantTracker::KEY_NAMESPACE)}:(\d+):participants/
-          room_id = Regexp.last_match(1).to_i
-          room = ::Resenha::Room.find_by(id: room_id)
-
-          if room
-            # Publish current participants (will reflect any TTL-expired removals)
-            ::Resenha::RoomBroadcaster.publish_participants(room)
-            Rails.logger.debug(
-              "[resenha] published participants for room #{room_id} (scheduled job)",
-            )
-          end
-        end
-      end
+      ::Resenha::Room
+        .where(id: room_ids)
+        .find_each { |room| ::Resenha::RoomBroadcaster.publish_participants(room) }
     end
   end
 end

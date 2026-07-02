@@ -28,7 +28,7 @@ module Resenha
 
     def targets
       if room.public?
-        { group_ids: SiteSetting.resenha_allowed_groups_map }
+        Resenha.public_room_message_bus_targets
       else
         { user_ids: room.member_ids }
       end

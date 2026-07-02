@@ -10,9 +10,11 @@ import { popupAjaxError } from "discourse/lib/ajax-error";
 import { not } from "discourse/truth-helpers";
 import { i18n } from "discourse-i18n";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
+import ResenhaVoiceSettingsModal from "./modal/resenha-voice-settings";
 import ResenhaPttKeyCapture from "./resenha-ptt-key-capture";
 
 export default class ResenhaParticipantSidebarContextMenu extends Component {
+  @service modal;
   @service resenhaWebrtc;
   @service siteSettings;
 
@@ -215,6 +217,12 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
   }
 
   @action
+  openVoiceSettings() {
+    this.args.close();
+    this.modal.show(ResenhaVoiceSettingsModal);
+  }
+
+  @action
   togglePtt() {
     if (this.isPttEnabled) {
       this.resenhaWebrtc.disablePtt();
@@ -339,6 +347,15 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
             </dropdown.item>
           {{/if}}
         {{/unless}}
+        <dropdown.item>
+          <DButton
+            @action={{this.openVoiceSettings}}
+            @icon="gear"
+            @label="resenha.voice_settings.open"
+            @title="resenha.voice_settings.open"
+            class="resenha-participant-sidebar-context-menu__voice-settings-btn"
+          />
+        </dropdown.item>
         {{#if this.showAutoStatusToggle}}
           <dropdown.item>
             <DButton

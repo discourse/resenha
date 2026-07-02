@@ -8,6 +8,7 @@ Resenha is a Discourse plugin that adds Discord-style voice rooms powered by Web
 
 - **Sidebar-first UX** — click a room to join/leave, see live participant avatars with speaking indicators, all without a route change.
 - **Mute, deafen, and per-user volume** — right-click any participant (or use the kebab menu) for audio controls. Room managers can kick participants.
+- **Voice settings with mic test** — input/output device pickers, a live input level meter, and an input sensitivity gate that stops transmitting below a chosen level. Preferences persist per device via `localStorage`.
 - **User room creation** — users in the allowed group see a "+" button to create rooms directly from the sidebar; room creators and managers can edit rooms in-app.
 - **Audio cues** — synthesized tones for connect/disconnect, user join/leave, and mute/deafen toggles.
 - **Noise suppression** — optional DTLN-based background noise filtering via WebAssembly. See [Noise Suppression](#noise-suppression).

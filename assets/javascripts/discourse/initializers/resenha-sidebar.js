@@ -6,6 +6,7 @@ import { prioritizeNameInUx } from "discourse/lib/settings";
 import { i18n } from "discourse-i18n";
 import ResenhaCreateRoomModal from "discourse/plugins/resenha/discourse/components/modal/resenha-create-room";
 import ResenhaParticipantSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-context-menu";
+import ResenhaParticipantSidebarSuffix from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-suffix";
 import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-room-sidebar-context-menu";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
 
@@ -270,6 +271,14 @@ export default {
               return !capabilities.isIpadOS && !!this.currentUser;
             }
 
+            get #isAudiblySpeaking() {
+              return (
+                this.participant.is_speaking &&
+                !this.participant.is_muted &&
+                !this.participant.is_deafened
+              );
+            }
+
             get hoverType() {
               return this.#showMenu ? "icon" : null;
             }
@@ -324,7 +333,7 @@ export default {
                 classes.push("resenha-sidebar-participant--listeners-start");
               }
 
-              if (this.participant.is_speaking) {
+              if (this.#isAudiblySpeaking) {
                 classes.push("resenha-sidebar-participant--speaking");
               }
 
@@ -356,39 +365,38 @@ export default {
             }
 
             get title() {
-              const name = this.#displayName;
+              let title = this.#displayName;
               if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
-                return `${name} — ${i18n("resenha.ptt.badge", { key: humanKeyName(this.resenhaWebrtc.pttKey) })}`;
+                title = `${title} — ${i18n("resenha.ptt.badge", { key: humanKeyName(this.resenhaWebrtc.pttKey) })}`;
               }
-              return name;
+              // The speaking wave is a CSS pseudo-element and can't carry
+              // its own accessible label, so surface the state here instead.
+              if (this.#isAudiblySpeaking) {
+                title = `${title} — ${i18n("resenha.participant.status_speaking")}`;
+              }
+              return title;
             }
 
             get text() {
               return this.#displayName;
             }
 
-            get suffixType() {
-              if (
-                this.participant.is_screen_sharing ||
-                this.participant.is_video_on ||
-                (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled)
-              ) {
-                return "icon";
-              }
-              return null;
+            // A custom suffix component (instead of the single suffixValue
+            // slot) so every state icon can show simultaneously on the right
+            // edge. The speaking wave renders over the avatar via the
+            // `--speaking` class.
+            get suffixComponent() {
+              return ResenhaParticipantSidebarSuffix;
             }
 
-            get suffixValue() {
-              if (this.participant.is_screen_sharing) {
-                return "display";
-              }
-              if (this.participant.is_video_on) {
-                return "video";
-              }
-              if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
-                return "walkie-talkie";
-              }
-              return null;
+            get suffixArgs() {
+              return {
+                isScreenSharing: this.participant.is_screen_sharing,
+                isVideoOn: this.participant.is_video_on,
+                isPtt: this.#isCurrentUser && this.resenhaWebrtc.pttEnabled,
+                isMuted: this.participant.is_muted,
+                isDeafened: this.participant.is_deafened,
+              };
             }
 
             get prefixType() {

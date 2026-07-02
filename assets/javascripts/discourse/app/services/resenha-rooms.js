@@ -55,10 +55,6 @@ export default class ResenhaRoomsService extends Service {
     }
 
     this.ready = this.#bootstrap();
-    this.messageBus.subscribe(
-      "/resenha/rooms/index",
-      this.handleDirectoryEvent
-    );
   }
 
   willDestroy() {
@@ -86,6 +82,16 @@ export default class ResenhaRoomsService extends Service {
     const payload = await ajax("/resenha/rooms.json");
     this.canCreateRoom = payload.can_create_room ?? false;
     this.#hydrateRooms(payload.rooms);
+
+    // Subscribing from the snapshot's message-bus position replays anything
+    // published while the payload was in flight; subscribing without one
+    // would silently drop those events.
+    this.messageBus.subscribe(
+      "/resenha/rooms/index",
+      this.handleDirectoryEvent,
+      payload.index_message_bus_last_id ?? -1
+    );
+
     return this.rooms;
   }
 
@@ -98,7 +104,7 @@ export default class ResenhaRoomsService extends Service {
       room.active_participants = sortParticipants(room.active_participants);
       this.#roomsById.set(room.id, room);
       this.#roomsBySlug.set(room.slug, room);
-      this.#ensureRoomSubscription(room.id);
+      this.#ensureRoomSubscription(room.id, room.message_bus_last_id);
     });
   }
 
@@ -130,7 +136,19 @@ export default class ResenhaRoomsService extends Service {
       this.#roomsBySlug.delete(message.room.slug);
       this.#teardownRoomSubscription(message.room.id);
     } else {
+<<<<<<< HEAD
       this.upsertRoom(message.room);
+=======
+      message.room.active_participants = sortParticipants(
+        message.room.active_participants
+      );
+      this.#roomsById.set(message.room.id, message.room);
+      this.#roomsBySlug.set(message.room.slug, message.room);
+      this.#ensureRoomSubscription(
+        message.room.id,
+        message.room.message_bus_last_id
+      );
+>>>>>>> origin/main
     }
 
     this.rooms = Array.from(this.#roomsById.values());
@@ -179,14 +197,14 @@ export default class ResenhaRoomsService extends Service {
     this.#forwardToRoomHandlers(payload.room_id, payload);
   }
 
-  #ensureRoomSubscription(roomId) {
+  #ensureRoomSubscription(roomId, lastId) {
     if (this.#roomSubscriptions.has(roomId)) {
       return;
     }
 
     const channel = `/resenha/rooms/${roomId}`;
     const callback = (message) => this.handleRoomBroadcast(message);
-    this.messageBus.subscribe(channel, callback);
+    this.messageBus.subscribe(channel, callback, lastId ?? -1);
     this.#roomSubscriptions.set(roomId, callback);
   }
 
