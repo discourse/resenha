@@ -6,6 +6,15 @@ import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
 import IdleTracker from "../../lib/resenha/idle-tracker";
+import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
+import {
+  applyOutputDevice,
+  audioConstraints,
+  preferredInputDeviceId,
+  preferredOutputDeviceId,
+  setPreferredInputDeviceId,
+  setPreferredOutputDeviceId,
+} from "../../lib/resenha/media-devices";
 import NoiseSuppressionManager from "../../lib/resenha/noise-suppression";
 import PeerManager from "../../lib/resenha/peer-manager";
 import PttManager from "../../lib/resenha/ptt-manager";
@@ -44,6 +53,9 @@ export default class ResenhaWebrtcService extends Service {
   @tracked pttKey = "Space";
   @tracked pttActive = false;
   @tracked autoStatusEnabled = true;
+  @tracked gateThreshold = 0;
+  @tracked inputDeviceId;
+  @tracked outputDeviceId;
 
   #connectingRoomIds = new Set();
   #roleChangeInProgress = new Set();
@@ -63,12 +75,14 @@ export default class ResenhaWebrtcService extends Service {
   #streamToParticipant = new WeakMap();
   #pendingPlaybackElements = new WeakSet();
   #rawLocalStream = null;
+  #upstreamStream = null;
 
   #signaling;
   #peerManager;
   #audioMonitor;
   #idleTracker;
   #noiseSuppression;
+  #inputGate;
   #pttManager;
   #roomMessageQueue;
 
@@ -124,11 +138,13 @@ export default class ResenhaWebrtcService extends Service {
     });
 
     this.#noiseSuppression = new NoiseSuppressionManager({
-      onStreamReady: (stream) => {
-        this.localStream = stream;
-        this.#syncLocalStreamState();
-      },
+      onStreamReady: (stream) => this.#setOutgoingStream(stream),
     });
+
+    this.#inputGate = new InputGateManager();
+    this.gateThreshold = InputGateManager.storedSliderValue();
+    this.inputDeviceId = preferredInputDeviceId();
+    this.outputDeviceId = preferredOutputDeviceId();
 
     this.#roomMessageQueue = new RoomMessageQueue();
 
@@ -528,6 +544,7 @@ export default class ResenhaWebrtcService extends Service {
         this.#trackAudioElement(roomId, userId, element);
         this.#applyAudioSettings(roomId, userId);
       }
+      applyOutputDevice(element, this.outputDeviceId);
     }
 
     if (typeof element.play === "function") {
@@ -665,8 +682,7 @@ export default class ResenhaWebrtcService extends Service {
     if (this.noiseSuppressionEnabled) {
       this.#noiseSuppression.teardown();
       this.noiseSuppressionEnabled = false;
-      this.localStream = this.#rawLocalStream;
-      this.#syncLocalStreamState();
+      this.#setOutgoingStream(this.#rawLocalStream);
       this.#noiseSuppression.setPreference(false);
       // eslint-disable-next-line no-console
       console.log("[resenha] noise suppression disabled");
@@ -680,12 +696,90 @@ export default class ResenhaWebrtcService extends Service {
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to enable noise suppression", error);
-        this.localStream = this.#rawLocalStream;
-        this.#syncLocalStreamState();
+        this.#setOutgoingStream(this.#rawLocalStream);
         return;
       }
     }
 
+    await this.#replaceTrackOnAllPeers();
+  }
+
+  // --- Device selection & input sensitivity ---
+
+  async setInputDevice(deviceId) {
+    this.inputDeviceId = deviceId;
+    setPreferredInputDeviceId(deviceId);
+
+    if (!this.#rawLocalStream) {
+      return true;
+    }
+
+    let newRawStream;
+    try {
+      newRawStream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints(deviceId),
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to switch input device", error);
+      return false;
+    }
+
+    const oldRawStream = this.#rawLocalStream;
+    this.#rawLocalStream = newRawStream;
+
+    if (this.noiseSuppressionEnabled) {
+      this.#noiseSuppression.teardown();
+      try {
+        await this.#noiseSuppression.setup(newRawStream);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[resenha] noise suppression setup failed after device switch",
+          error
+        );
+        this.noiseSuppressionEnabled = false;
+        this.#setOutgoingStream(newRawStream);
+      }
+    } else {
+      this.#setOutgoingStream(newRawStream);
+    }
+
+    oldRawStream.getTracks().forEach((track) => track.stop());
+    await this.#replaceTrackOnAllPeers();
+    return true;
+  }
+
+  setOutputDevice(deviceId) {
+    this.outputDeviceId = deviceId;
+    setPreferredOutputDeviceId(deviceId);
+
+    for (const [, element] of this.#audioElements) {
+      applyOutputDevice(element, deviceId);
+    }
+  }
+
+  async setGateThreshold(value) {
+    const clamped = Math.max(0, Math.min(100, Math.round(value)));
+    this.gateThreshold = clamped;
+    InputGateManager.storeSliderValue(clamped);
+
+    if (!this.#upstreamStream) {
+      return;
+    }
+
+    // Adjusting an already-running gate is just a new compare value; only
+    // crossing zero (gate off ↔ on) restructures the pipeline and needs the
+    // peers' senders updated.
+    if (this.#inputGate.active && clamped > 0) {
+      this.#inputGate.setThreshold(sliderToRms(clamped));
+      return;
+    }
+    if (!this.#inputGate.active && clamped === 0) {
+      return;
+    }
+
+    this.#setOutgoingStream(this.#upstreamStream);
     await this.#replaceTrackOnAllPeers();
   }
 
@@ -1554,7 +1648,7 @@ export default class ResenhaWebrtcService extends Service {
   async #acquireMicrophone() {
     try {
       const rawStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: audioConstraints(this.inputDeviceId),
       });
       // eslint-disable-next-line no-console
       console.log("[resenha] local stream obtained");
@@ -1576,10 +1670,10 @@ export default class ResenhaWebrtcService extends Service {
             "[resenha] noise suppression setup failed, using raw stream",
             nsError
           );
-          this.localStream = rawStream;
+          this.#setOutgoingStream(rawStream);
         }
       } else {
-        this.localStream = rawStream;
+        this.#setOutgoingStream(rawStream);
       }
 
       return true;
@@ -2039,6 +2133,8 @@ export default class ResenhaWebrtcService extends Service {
   #stopLocalStream() {
     this.#noiseSuppression.teardown();
     this.noiseSuppressionEnabled = false;
+    this.#inputGate.teardown();
+    this.#upstreamStream = null;
 
     if (this.#rawLocalStream) {
       this.#rawLocalStream.getTracks().forEach((track) => track.stop());
@@ -2050,6 +2146,30 @@ export default class ResenhaWebrtcService extends Service {
       this.localStream = null;
     }
 
+    this.#syncLocalStreamState();
+  }
+
+  // Final hop of the local pipeline: raw mic → optional noise suppression
+  // (the `upstream` argument) → optional input gate → localStream.
+  #setOutgoingStream(upstream) {
+    this.#upstreamStream = upstream;
+    this.#inputGate.teardown();
+
+    let stream = upstream;
+    if (upstream && this.gateThreshold > 0) {
+      try {
+        stream = this.#inputGate.setup(
+          upstream,
+          sliderToRms(this.gateThreshold)
+        );
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to set up input gate", error);
+        stream = upstream;
+      }
+    }
+
+    this.localStream = stream;
     this.#syncLocalStreamState();
   }
 
