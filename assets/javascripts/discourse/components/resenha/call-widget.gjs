@@ -17,6 +17,8 @@ const WIDGET_VIDEO_TILE_BUDGET = 4;
 const WIDGET_VIEWPORT_MARGIN = 16;
 const WIDGET_MIN_WIDTH = 300;
 const WIDGET_MIN_HEIGHT = 180;
+const WIDGET_EXTRA_MINIMIZED_WIDTH = 118;
+const WIDGET_EXTRA_MINIMIZED_HEIGHT = 52;
 const WIDGET_MAX_WIDTH_RATIO = 0.5;
 const WIDGET_MAX_HEIGHT_RATIO = 0.5;
 const WIDGET_SIZE_KEY = "resenha-widget-size";
@@ -44,6 +46,7 @@ export default class ResenhaCallWidget extends Component {
   @tracked posTop = null;
   @tracked dragging = false;
   @tracked resizing = false;
+  @tracked extraMinimized = false;
 
   resizeCorners = RESIZE_CORNERS;
 
@@ -70,12 +73,16 @@ export default class ResenhaCallWidget extends Component {
       return;
     }
     try {
-      const { width, height } = JSON.parse(raw);
-      this.widgetWidth = this.#clampWidth(width);
-      this.widgetHeight = this.#clampHeight(height);
+      const { width, height, extraMinimized } = JSON.parse(raw);
+      this.extraMinimized = !!extraMinimized;
+      this.widgetWidth = this.extraMinimized ? null : this.#clampWidth(width);
+      this.widgetHeight = this.extraMinimized
+        ? null
+        : this.#clampHeight(height);
     } catch {
       this.widgetWidth = null;
       this.widgetHeight = null;
+      this.extraMinimized = false;
     }
   }
 
@@ -85,6 +92,7 @@ export default class ResenhaCallWidget extends Component {
       value: JSON.stringify({
         width: this.widgetWidth,
         height: this.widgetHeight,
+        extraMinimized: this.extraMinimized,
       }),
     });
   }
@@ -220,6 +228,10 @@ export default class ResenhaCallWidget extends Component {
     return i18n("resenha.room.open_page");
   }
 
+  get expandWidgetTitle() {
+    return i18n("resenha.widget.expand");
+  }
+
   get resized() {
     return !!(this.widgetWidth && this.widgetHeight);
   }
@@ -243,8 +255,12 @@ export default class ResenhaCallWidget extends Component {
       return parts.length ? htmlSafe(parts.join(" ")) : null;
     }
 
-    const width = this.#clampWidth(this.widgetWidth);
-    const height = this.#clampHeight(this.widgetHeight);
+    const width = this.extraMinimized
+      ? WIDGET_EXTRA_MINIMIZED_WIDTH
+      : this.#clampWidth(this.widgetWidth);
+    const height = this.extraMinimized
+      ? WIDGET_EXTRA_MINIMIZED_HEIGHT
+      : this.#clampHeight(this.widgetHeight);
 
     if (width) {
       parts.push(`width: ${width}px;`);
@@ -431,17 +447,26 @@ export default class ResenhaCallWidget extends Component {
         : window.innerHeight - state.anchorY - WIDGET_VIEWPORT_MARGIN
     );
 
-    const width = clamp(
-      Math.abs(point.x - state.anchorX),
-      WIDGET_MIN_WIDTH,
-      maxWidth
-    );
-    const height = clamp(
-      Math.abs(point.y - state.anchorY),
-      WIDGET_MIN_HEIGHT,
-      maxHeight
-    );
+    const rawWidth = Math.abs(point.x - state.anchorX);
+    const rawHeight = Math.abs(point.y - state.anchorY);
 
+    if (rawWidth < WIDGET_MIN_WIDTH || rawHeight < WIDGET_MIN_HEIGHT) {
+      this.extraMinimized = true;
+      this.widgetWidth = null;
+      this.widgetHeight = null;
+      this.posLeft = null;
+      this.posTop = null;
+
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    const width = clamp(rawWidth, WIDGET_MIN_WIDTH, maxWidth);
+    const height = clamp(rawHeight, WIDGET_MIN_HEIGHT, maxHeight);
+
+    this.extraMinimized = false;
     this.widgetWidth = width;
     this.widgetHeight = height;
     this.posLeft = state.onLeft ? state.anchorX - width : state.anchorX;
@@ -489,6 +514,16 @@ export default class ResenhaCallWidget extends Component {
   @action
   leaveRoom() {
     this.resenhaWebrtc.leave(this.room);
+  }
+
+  @action
+  expandWidget() {
+    this.extraMinimized = false;
+    this.widgetWidth = null;
+    this.widgetHeight = null;
+    this.posLeft = null;
+    this.posTop = null;
+    this.#saveSize();
   }
 
   @action
@@ -552,6 +587,7 @@ export default class ResenhaCallWidget extends Component {
           (if this.resizing "--resizing")
           (if this.dragging "--dragging")
           (if this.resized "--resized")
+          (if this.extraMinimized "--extra-minimized")
         }}
         style={{this.widgetStyle}}
         data-room-id={{this.room.id}}
@@ -562,85 +598,100 @@ export default class ResenhaCallWidget extends Component {
         {{on "pointerup" this.stopDrag}}
         {{on "pointercancel" this.stopDrag}}
       >
-        <header class="resenha-call-widget__header">
-          <div
-            class="resenha-call-widget__room"
-            role="heading"
-            aria-level="2"
-            {{on "mousedown" this.startDrag}}
-            {{on "touchstart" this.startDrag}}
-          >
-            <span
-              class="resenha-call-widget__room-name"
-            >{{this.room.name}}</span>
-          </div>
-        </header>
+        {{#unless this.extraMinimized}}
+          <header class="resenha-call-widget__header">
+            <div
+              class="resenha-call-widget__room"
+              role="heading"
+              aria-level="2"
+              {{on "mousedown" this.startDrag}}
+              {{on "touchstart" this.startDrag}}
+            >
+              <span
+                class="resenha-call-widget__room-name"
+              >{{this.room.name}}</span>
+            </div>
+          </header>
 
-        <div class="resenha-call-widget__tiles">
-          {{#each this.tiles key="participant.id" as |tile|}}
-            <ResenhaVideoTile
-              @room={{this.room}}
-              @participant={{tile.participant}}
-              @isSelf={{tile.isSelf}}
-              @showVideo={{tile.showVideo}}
-              @onAspect={{this.noopAspect}}
-            />
-          {{/each}}
-        </div>
+          <div class="resenha-call-widget__tiles">
+            {{#each this.tiles key="participant.id" as |tile|}}
+              <ResenhaVideoTile
+                @room={{this.room}}
+                @participant={{tile.participant}}
+                @isSelf={{tile.isSelf}}
+                @showVideo={{tile.showVideo}}
+                @onAspect={{this.noopAspect}}
+              />
+            {{/each}}
+          </div>
+        {{/unless}}
 
         <footer class="resenha-call-widget__controls">
-          <DButton
-            @action={{this.toggleMute}}
-            @icon={{if
-              this.resenhaWebrtc.audioEnabled
-              "microphone"
-              "microphone-slash"
-            }}
-            @translatedTitle={{this.micTitle}}
-            @disabled={{this.resenhaWebrtc.pttEnabled}}
-            class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
-          />
-          <DButton
-            @action={{this.toggleDeafen}}
-            @icon={{if this.resenhaWebrtc.deafened "volume-xmark" "ear-listen"}}
-            @translatedTitle={{this.deafenTitle}}
-            class={{if this.resenhaWebrtc.deafened "--off" ""}}
-          />
-          {{#if this.videoAllowed}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.cameraActive "--active")
+          {{#if this.extraMinimized}}
+            <DButton
+              @action={{this.expandWidget}}
+              @icon="expand"
+              @translatedTitle={{this.expandWidgetTitle}}
+              class="resenha-call-widget__expand"
+            />
+          {{else}}
+            <DButton
+              @action={{this.toggleMute}}
+              @icon={{if
+                this.resenhaWebrtc.audioEnabled
+                "microphone"
+                "microphone-slash"
               }}
-              title={{this.cameraTitle}}
-              aria-label={{this.cameraTitle}}
-              disabled={{this.cameraDisabled}}
-              {{on "click" this.toggleCamera}}
-            >
-              {{dIcon (if this.cameraActive "video" "video-slash")}}
-            </button>
-          {{/if}}
-          {{#if this.showScreenShare}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.screenShareActive "--active")
+              @translatedTitle={{this.micTitle}}
+              @disabled={{this.resenhaWebrtc.pttEnabled}}
+              class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
+            />
+            <DButton
+              @action={{this.toggleDeafen}}
+              @icon={{if
+                this.resenhaWebrtc.deafened
+                "volume-xmark"
+                "ear-listen"
               }}
-              title={{this.screenShareTitle}}
-              aria-label={{this.screenShareTitle}}
-              disabled={{this.screenShareDisabled}}
-              {{on "click" this.toggleScreenShare}}
-            >
-              {{dIcon "display"}}
-            </button>
+              @translatedTitle={{this.deafenTitle}}
+              class={{if this.resenhaWebrtc.deafened "--off" ""}}
+            />
+            {{#if this.videoAllowed}}
+              <button
+                type="button"
+                class={{dConcatClass
+                  "btn btn-icon no-text"
+                  (if this.cameraActive "--active")
+                }}
+                title={{this.cameraTitle}}
+                aria-label={{this.cameraTitle}}
+                disabled={{this.cameraDisabled}}
+                {{on "click" this.toggleCamera}}
+              >
+                {{dIcon (if this.cameraActive "video" "video-slash")}}
+              </button>
+            {{/if}}
+            {{#if this.showScreenShare}}
+              <button
+                type="button"
+                class={{dConcatClass
+                  "btn btn-icon no-text"
+                  (if this.screenShareActive "--active")
+                }}
+                title={{this.screenShareTitle}}
+                aria-label={{this.screenShareTitle}}
+                disabled={{this.screenShareDisabled}}
+                {{on "click" this.toggleScreenShare}}
+              >
+                {{dIcon "display"}}
+              </button>
+            {{/if}}
+            <DButton
+              @action={{this.openRoom}}
+              @icon="expand"
+              @translatedTitle={{this.openRoomTitle}}
+            />
           {{/if}}
-          <DButton
-            @action={{this.openRoom}}
-            @icon="expand"
-            @translatedTitle={{this.openRoomTitle}}
-          />
           <DButton
             @action={{this.leaveRoom}}
             @icon="phone-slash"
@@ -651,15 +702,17 @@ export default class ResenhaCallWidget extends Component {
 
         {{#unless this.capabilities.touch}}
           {{#each this.resizeCorners as |corner|}}
-            <div
-              class={{dConcatClass
-                "resenha-call-widget__resize"
-                (concat "--" corner)
-              }}
-              aria-hidden="true"
-              {{on "mousedown" (fn this.startResize corner)}}
-              {{on "touchstart" (fn this.startResize corner)}}
-            ></div>
+            {{#unless this.extraMinimized}}
+              <div
+                class={{dConcatClass
+                  "resenha-call-widget__resize"
+                  (concat "--" corner)
+                }}
+                aria-hidden="true"
+                {{on "mousedown" (fn this.startResize corner)}}
+                {{on "touchstart" (fn this.startResize corner)}}
+              ></div>
+            {{/unless}}
           {{/each}}
         {{/unless}}
       </section>

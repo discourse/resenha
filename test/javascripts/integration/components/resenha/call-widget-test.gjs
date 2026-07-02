@@ -1,6 +1,6 @@
 import { tracked } from "@glimmer/tracking";
 import Service from "@ember/service";
-import { render, settled } from "@ember/test-helpers";
+import { click, render, settled, triggerEvent } from "@ember/test-helpers";
 import { module, test } from "qunit";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
 import { logIn } from "discourse/tests/helpers/qunit-helpers";
@@ -34,6 +34,7 @@ class ResenhaWebrtcStub extends Service {
   screenShareSupported = false;
   watchingCalls = [];
   videoStreams = new Map();
+  leaveCalls = [];
 
   get activeRoom() {
     return this.resenhaRooms.roomById(this.activeRoomId);
@@ -60,7 +61,9 @@ class ResenhaWebrtcStub extends Service {
   toggleDeafen() {}
   toggleCamera() {}
   toggleScreenShare() {}
-  leave() {}
+  leave(room) {
+    this.leaveCalls.push(room);
+  }
 }
 
 class RouterStub extends Service {
@@ -156,6 +159,70 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
       this.resenhaWebrtc.watchingCalls.at(-1),
       { roomId: 1, watching: false, options: { keepVideo: true } },
       "clears the widget watch state when the widget is removed"
+    );
+  });
+
+  test("resizing below the widget threshold enters extra minimized mode", async function (assert) {
+    await render(<template><ResenhaCallWidget /></template>);
+
+    const widget = document.querySelector(".resenha-call-widget");
+    widget.getBoundingClientRect = () => ({
+      left: 100,
+      top: 100,
+      right: 500,
+      bottom: 340,
+      width: 400,
+      height: 240,
+    });
+
+    await triggerEvent(".resenha-call-widget__resize.--se", "mousedown", {
+      button: 0,
+      clientX: 500,
+      clientY: 340,
+    });
+    await triggerEvent(window, "mousemove", {
+      clientX: 250,
+      clientY: 220,
+    });
+    await triggerEvent(window, "mouseup");
+
+    assert
+      .dom(".resenha-call-widget")
+      .hasClass(
+        "--extra-minimized",
+        "marks the widget as extra minimized after crossing the resize threshold"
+      );
+    assert
+      .dom(".resenha-call-widget__tiles")
+      .doesNotExist("hides participant tiles in extra minimized mode");
+    assert
+      .dom(".resenha-call-widget__controls button")
+      .exists({ count: 2 }, "only renders expand and leave controls");
+    assert.notOk(
+      /inset-inline-start|inset-block-start/.test(
+        document.querySelector(".resenha-call-widget").getAttribute("style") ??
+          ""
+      ),
+      "keeps the extra minimized widget pinned to the bottom-right corner"
+    );
+
+    await click(".resenha-call-widget__expand");
+
+    assert
+      .dom(".resenha-call-widget")
+      .doesNotHaveClass(
+        "--extra-minimized",
+        "expands back to the default widget dimensions"
+      );
+    assert
+      .dom(".resenha-call-widget__tiles")
+      .exists("restores the default widget content");
+    assert.notOk(
+      /inset-inline-start|inset-block-start/.test(
+        document.querySelector(".resenha-call-widget").getAttribute("style") ??
+          ""
+      ),
+      "expands from the bottom-right corner instead of the old resize position"
     );
   });
 });
