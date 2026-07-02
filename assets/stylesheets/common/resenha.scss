@@ -13,12 +13,18 @@
 }
 
 .resenha-sidebar-participant {
-  // Indent so participant avatars start where the room name text starts,
-  // making rows read unambiguously as children of the room above.
-  padding-left: calc(
+  --resenha-participant-indent: calc(
     var(--d-sidebar-row-horizontal-padding) +
       var(--d-sidebar-section-link-prefix-width) +
       var(--d-sidebar-section-link-prefix-margin-right)
+  );
+  --resenha-speaking-slot: 1.25rem;
+
+  // Indent past the room name so rows read unambiguously as children of the
+  // room above, plus a fixed slot where the speaking wave appears — keeping
+  // it in one scannable column right next to the avatars.
+  padding-left: calc(
+    var(--resenha-participant-indent) + var(--resenha-speaking-slot)
   );
   position: relative;
 
@@ -44,36 +50,13 @@
     .sidebar-section-link-content-text {
       color: var(--primary);
     }
-  }
 
-  &--muted,
-  &--deafened {
-    .sidebar-section-link-prefix img {
-      opacity: 0.5;
-    }
-
-    .sidebar-section-link-content-text {
-      opacity: 0.7;
-    }
-  }
-
-  // Every applicable state icon renders together, in a fixed order
-  // (screenshare, camera, PTT, then voice state), at one size and color.
-  // The speaking wave and the mute icon share the last slot — they can
-  // never apply at the same time.
-  .resenha-participant-suffix {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    flex-shrink: 0;
-    font-size: var(--font-down-1);
-
-    .d-icon {
-      color: var(--primary-medium);
-    }
-
-    &__bars {
+    &::before {
+      content: "";
+      position: absolute;
+      left: calc(var(--resenha-participant-indent) + 0.2rem);
+      top: 50%;
+      transform: translateY(-50%);
       height: 0.875rem;
       width: 0.8125rem;
       background:
@@ -90,6 +73,32 @@
       @media (prefers-reduced-motion: reduce) {
         animation: none;
       }
+    }
+  }
+
+  &--muted,
+  &--deafened {
+    .sidebar-section-link-prefix img {
+      opacity: 0.5;
+    }
+
+    .sidebar-section-link-content-text {
+      opacity: 0.7;
+    }
+  }
+
+  // Every applicable state icon renders together, in a fixed order
+  // (screenshare, camera, PTT, muted, deafened), at one size and color.
+  .resenha-participant-suffix {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-shrink: 0;
+    font-size: var(--font-down-1);
+
+    .d-icon {
+      color: var(--primary-medium);
     }
   }
 

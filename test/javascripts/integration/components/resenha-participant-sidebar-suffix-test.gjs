@@ -13,7 +13,6 @@ module(
         isScreenSharing: true,
         isVideoOn: true,
         isPtt: false,
-        isSpeaking: false,
         isMuted: true,
         isDeafened: true,
       };
@@ -30,30 +29,6 @@ module(
         .dom(".resenha-participant-suffix .d-icon-microphone-slash")
         .exists();
       assert.dom(".resenha-participant-suffix .d-icon-volume-xmark").exists();
-      assert.dom(".resenha-participant-suffix__bars").doesNotExist();
-    });
-
-    test("shows the speaking wave alongside media icons", async function (assert) {
-      const suffixArgs = {
-        isScreenSharing: false,
-        isVideoOn: true,
-        isPtt: false,
-        isSpeaking: true,
-        isMuted: false,
-        isDeafened: false,
-      };
-
-      await render(
-        <template>
-          <ResenhaParticipantSidebarSuffix @suffixArgs={{suffixArgs}} />
-        </template>
-      );
-
-      assert.dom(".resenha-participant-suffix__bars").exists();
-      assert.dom(".resenha-participant-suffix .d-icon-video").exists();
-      assert
-        .dom(".resenha-participant-suffix .d-icon-microphone-slash")
-        .doesNotExist();
     });
 
     test("renders the wrapper even with no active states", async function (assert) {
@@ -61,7 +36,6 @@ module(
         isScreenSharing: false,
         isVideoOn: false,
         isPtt: false,
-        isSpeaking: false,
         isMuted: false,
         isDeafened: false,
       };
@@ -74,7 +48,6 @@ module(
 
       assert.dom(".resenha-participant-suffix").exists();
       assert.dom(".resenha-participant-suffix .d-icon").doesNotExist();
-      assert.dom(".resenha-participant-suffix__bars").doesNotExist();
     });
   }
 );

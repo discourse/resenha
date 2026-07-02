@@ -365,11 +365,16 @@ export default {
             }
 
             get title() {
-              const name = this.#displayName;
+              let title = this.#displayName;
               if (this.#isCurrentUser && this.resenhaWebrtc.pttEnabled) {
-                return `${name} — ${i18n("resenha.ptt.badge", { key: humanKeyName(this.resenhaWebrtc.pttKey) })}`;
+                title = `${title} — ${i18n("resenha.ptt.badge", { key: humanKeyName(this.resenhaWebrtc.pttKey) })}`;
               }
-              return name;
+              // The speaking wave is a CSS pseudo-element and can't carry
+              // its own accessible label, so surface the state here instead.
+              if (this.#isAudiblySpeaking) {
+                title = `${title} — ${i18n("resenha.participant.status_speaking")}`;
+              }
+              return title;
             }
 
             get text() {
@@ -378,8 +383,8 @@ export default {
 
             // A custom suffix component (instead of the single suffixValue
             // slot) so every state icon can show simultaneously on the right
-            // edge. The speaking wave shares its slot with the mute icon,
-            // since they can never apply at the same time.
+            // edge. The speaking wave renders on the left, next to the
+            // avatar, via the `--speaking` class.
             get suffixComponent() {
               return ResenhaParticipantSidebarSuffix;
             }
@@ -389,7 +394,6 @@ export default {
                 isScreenSharing: this.participant.is_screen_sharing,
                 isVideoOn: this.participant.is_video_on,
                 isPtt: this.#isCurrentUser && this.resenhaWebrtc.pttEnabled,
-                isSpeaking: this.#isAudiblySpeaking,
                 isMuted: this.participant.is_muted,
                 isDeafened: this.participant.is_deafened,
               };
