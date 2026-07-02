@@ -273,6 +273,9 @@ RSpec.describe Resenha::ChatSession do
 
     it "raises a clear error without orphaning the message when threading is off" do
       channel.update!(threading_enabled: false)
+      # The room memoizes its channel per instance (a fresh load in production
+      # requests); pick the flip up here explicitly.
+      room.reload
 
       expect { described_class.post_message!(room, user, "hello") }.to raise_error(
         Resenha::ChatSession::Error,
@@ -287,6 +290,9 @@ RSpec.describe Resenha::ChatSession do
     it "raises without orphaning a templated starter when threading is off" do
       room.update!(chat_thread_title_template: "Team Meeting at {time}")
       channel.update!(threading_enabled: false)
+      # The room memoizes its channel per instance (a fresh load in production
+      # requests); pick the flip up here explicitly.
+      room.reload
 
       expect { described_class.post_message!(room, user, "hello") }.to raise_error(
         Resenha::ChatSession::Error,

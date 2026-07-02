@@ -295,9 +295,11 @@ html.discourse-touch .resenha-call-widget {
   }
 }
 
-// On narrow viewports the sidebar can't sit beside the video column, so it
-// becomes a full-height drawer over the page (above the docked call widget).
-@media (max-width: 700px) {
+// Below this the 22rem sidebar would squash the video column into a sliver,
+// so instead of sitting beside it the panel becomes a full-height drawer over
+// the page (above the docked call widget). Keep in sync with the close-button
+// breakpoint in resenha-chat.scss.
+@media (max-width: 1000px) {
   .resenha-room-page__sidebar {
     position: fixed;
     inset-block: var(--header-offset, 4em) 0;

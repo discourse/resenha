@@ -72,9 +72,21 @@ module Resenha
       chat_channel_id.present?
     end
 
+    # Memoized (keyed on the current id, so an in-flight reassignment isn't
+    # served a stale channel): serialization consults the channel several
+    # times per room, which would otherwise be a query each.
     def chat_channel
       return nil unless chat_channel_id && defined?(::Chat)
-      ::Chat::Channel.find_by(id: chat_channel_id)
+      if @chat_channel_for_id != chat_channel_id
+        @chat_channel_for_id = chat_channel_id
+        @chat_channel = ::Chat::Channel.find_by(id: chat_channel_id)
+      end
+      @chat_channel
+    end
+
+    def reload(...)
+      @chat_channel_for_id = @chat_channel = nil
+      super
     end
 
     def chat_idle_seconds

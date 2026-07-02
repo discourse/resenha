@@ -3,6 +3,17 @@ import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
 import { bind } from "discourse/lib/decorators";
 
+// Directory broadcasts are serialized without a user, so fields the server
+// gates per user (chat availability, manager-only chat settings) are absent
+// from them. A broadcast replaces the whole room object; carry over what this
+// client already knows so a mid-call room update doesn't wipe its own state.
+const USER_GATED_ROOM_FIELDS = [
+  "chat_available",
+  "chat_channel_id",
+  "chat_idle_minutes",
+  "chat_thread_title_template",
+];
+
 // Participant broadcasts arrive in arbitrary database order, so every list
 // that reaches the UI is normalized to one canonical order — otherwise
 // sidebar rows and video tiles reshuffle on each broadcast.
@@ -91,6 +102,27 @@ export default class ResenhaRoomsService extends Service {
     });
   }
 
+  // Replaces (or adds) a room from a fresh payload — a directory broadcast or
+  // an endpoint response like join's, whose serialization is scoped to the
+  // current user and so carries the per-user chat fields.
+  upsertRoom(room) {
+    room.active_participants = sortParticipants(room.active_participants);
+
+    const previous = this.#roomsById.get(room.id);
+    if (previous) {
+      USER_GATED_ROOM_FIELDS.forEach((field) => {
+        if (room[field] === undefined) {
+          room[field] = previous[field];
+        }
+      });
+    }
+
+    this.#roomsById.set(room.id, room);
+    this.#roomsBySlug.set(room.slug, room);
+    this.#ensureRoomSubscription(room.id);
+    this.rooms = Array.from(this.#roomsById.values());
+  }
+
   @bind
   handleDirectoryEvent(message) {
     if (message.type === "destroyed") {
@@ -98,12 +130,7 @@ export default class ResenhaRoomsService extends Service {
       this.#roomsBySlug.delete(message.room.slug);
       this.#teardownRoomSubscription(message.room.id);
     } else {
-      message.room.active_participants = sortParticipants(
-        message.room.active_participants
-      );
-      this.#roomsById.set(message.room.id, message.room);
-      this.#roomsBySlug.set(message.room.slug, message.room);
-      this.#ensureRoomSubscription(message.room.id);
+      this.upsertRoom(message.room);
     }
 
     this.rooms = Array.from(this.#roomsById.values());

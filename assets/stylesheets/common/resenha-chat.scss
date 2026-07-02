@@ -40,7 +40,7 @@
     // the sidebar drawer in resenha-room-page.scss.
     display: none;
 
-    @media (max-width: 700px) {
+    @media (max-width: 1000px) {
       display: inline-flex;
     }
   }

@@ -685,6 +685,64 @@ RSpec.describe Resenha::RoomsController do
       Resenha::ParticipantTracker.add(room.id, joining_user.id)
     end
 
+    describe "chat fields in the serialized room" do
+      # Below the create-rooms group threshold, so not a manager of anything.
+      fab!(:viewer) { Fabricate(:user, trust_level: TrustLevel[1]) }
+
+      it "hides all chat fields from a signed-in non-participant" do
+        sign_in(viewer)
+
+        get "/resenha/rooms/#{room.id}.json"
+
+        room_json = response.parsed_body["room"]
+        expect(room_json.keys).not_to include(
+          "chat_available",
+          "chat_channel_id",
+          "chat_idle_minutes",
+          "chat_thread_title_template",
+        )
+      end
+
+      it "hides all chat fields from the anonymously-scoped directory broadcast" do
+        json = Resenha::RoomSerializer.new(room, scope: Guardian.new(nil), root: false).as_json
+
+        expect(json.keys).not_to include(
+          :chat_available,
+          :chat_channel_id,
+          :chat_idle_minutes,
+          :chat_thread_title_template,
+        )
+      end
+
+      it "exposes availability — but not the settings — to a present participant" do
+        sign_in(viewer)
+        join_room!(viewer)
+
+        get "/resenha/rooms/#{room.id}.json"
+
+        room_json = response.parsed_body["room"]
+        expect(room_json["chat_available"]).to eq(true)
+        expect(room_json.keys).not_to include(
+          "chat_channel_id",
+          "chat_idle_minutes",
+          "chat_thread_title_template",
+        )
+      end
+
+      it "exposes the chat settings to a manager" do
+        room.update!(chat_thread_title_template: "Team meeting at {time}")
+        sign_in(staff)
+
+        get "/resenha/rooms/#{room.id}.json"
+
+        room_json = response.parsed_body["room"]
+        expect(room_json["chat_available"]).to eq(true)
+        expect(room_json["chat_channel_id"]).to eq(channel.id)
+        expect(room_json["chat_idle_minutes"]).to eq(15)
+        expect(room_json["chat_thread_title_template"]).to eq("Team meeting at {time}")
+      end
+    end
+
     describe "#chat_session" do
       it "returns the channel and an empty session before any chat" do
         sign_in(user)
