@@ -110,12 +110,14 @@ export default class ResenhaWebrtcService extends Service {
       getLocalStream: () => this.localStream,
       getLocalVideoTrack: (roomId, uid) =>
         this.#localVideoTrackFor(roomId, uid),
+      getLocalScreenAudioTrack: (roomId, uid) =>
+        this.#localScreenAudioTrackFor(roomId, uid),
       sendSignal: (roomId, uid, payload) =>
         this.#signaling.send(roomId, uid, payload),
       flushQueuedSignals: (roomId, uid) =>
         this.#signaling.flushQueued(roomId, uid),
-      onTrack: (roomId, uid, track) =>
-        this.#registerRemoteTrack(roomId, uid, track),
+      onTrack: (roomId, uid, track, streams) =>
+        this.#registerRemoteTrack(roomId, uid, track, streams),
       clearSignalQueue: (roomId, uid) =>
         this.#signaling.clearForPeer(roomId, uid),
       onPeerDestroyed: (roomId, uid) => this.#removeRemoteStream(roomId, uid),
@@ -243,6 +245,15 @@ export default class ResenhaWebrtcService extends Service {
       .filter(Array.isArray)
       .flat()
       .map((entry) => entry.stream);
+  }
+
+  get remoteScreenAudioStreams() {
+    this.remoteStreamsRevision;
+    return Array.from(this.#remoteStreams.values())
+      .filter(Array.isArray)
+      .flat()
+      .map((entry) => entry.screenAudioStream)
+      .filter(Boolean);
   }
 
   remoteStreamsFor(roomId) {
@@ -540,8 +551,13 @@ export default class ResenhaWebrtcService extends Service {
     } else {
       const participant = this.#streamToParticipant.get(stream);
       if (participant) {
-        const { roomId, userId } = participant;
-        this.#trackAudioElement(roomId, userId, element);
+        const { roomId, userId, screenAudio } = participant;
+        this.#trackAudioElement(
+          roomId,
+          userId,
+          element,
+          screenAudio ? "screen" : "voice"
+        );
         this.#applyAudioSettings(roomId, userId);
       }
       applyOutputDevice(element, this.outputDeviceId);
@@ -662,12 +678,14 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    for (const [key, element] of this.#audioElements) {
+    for (const [key, elements] of this.#audioElements) {
       const muted = this.deafened || (this.#participantMuted.get(key) ?? false);
       const volume = this.#participantVolumes.get(key) ?? 1;
-      element.muted = muted;
-      if (!muted) {
-        element.volume = volume;
+      for (const element of Object.values(elements)) {
+        element.muted = muted;
+        if (!muted) {
+          element.volume = volume;
+        }
       }
     }
 
@@ -754,8 +772,10 @@ export default class ResenhaWebrtcService extends Service {
     this.outputDeviceId = deviceId;
     setPreferredOutputDeviceId(deviceId);
 
-    for (const [, element] of this.#audioElements) {
-      applyOutputDevice(element, deviceId);
+    for (const [, elements] of this.#audioElements) {
+      for (const element of Object.values(elements)) {
+        applyOutputDevice(element, deviceId);
+      }
     }
   }
 
@@ -930,9 +950,18 @@ export default class ResenhaWebrtcService extends Service {
     let stream;
     try {
       if (kind === "screen") {
+        // Tab/system audio rides along for watch-along use. Voice processing
+        // is disabled because it is tuned for speech and mangles content
+        // audio; browsers without display-audio support just return no audio
+        // track. The user can still untick audio in the picker.
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: { frameRate: { max: 15 } },
-          audio: false,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+          systemAudio: "include",
         });
       } else {
         // Request dimensions matching the device orientation so a phone held
@@ -976,6 +1005,12 @@ export default class ResenhaWebrtcService extends Service {
     track.addEventListener("ended", () => this.#handleLocalVideoEnded(), {
       once: true,
     });
+
+    const audioTrack =
+      kind === "screen" ? stream.getAudioTracks()[0] : undefined;
+    if (audioTrack) {
+      audioTrack.contentHint = "music";
+    }
 
     this.localVideoStream = stream;
     this.localVideoKind = kind;
@@ -1029,6 +1064,22 @@ export default class ResenhaWebrtcService extends Service {
     return this.localVideoStream?.getVideoTracks()?.[0] || null;
   }
 
+  get localScreenAudioTrack() {
+    if (this.localVideoKind !== "screen") {
+      return null;
+    }
+    return this.localVideoStream?.getAudioTracks()?.[0] || null;
+  }
+
+  #localScreenAudioTrackFor(roomId, remoteUserId) {
+    if (!this.localScreenAudioTrack) {
+      return null;
+    }
+    return this.#localVideoTrackFor(roomId, remoteUserId)
+      ? this.localScreenAudioTrack
+      : null;
+  }
+
   #localVideoTrackFor(roomId, remoteUserId) {
     const track = this.localVideoTrack;
     if (!track) {
@@ -1060,24 +1111,38 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     for (const [remoteUserId, pc] of peers) {
-      const transceiver = PeerManager.videoTransceiverFor(pc);
-      if (!transceiver) {
-        continue;
-      }
-
       const desired = this.#localVideoTrackFor(roomId, remoteUserId);
-      if (transceiver.sender.track === desired) {
-        continue;
+
+      const transceiver = PeerManager.videoTransceiverFor(pc);
+      if (transceiver && transceiver.sender.track !== desired) {
+        try {
+          await transceiver.sender.replaceTrack(desired);
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[resenha] failed to sync video sender for user ${remoteUserId}`,
+            error
+          );
+        }
       }
 
-      try {
-        await transceiver.sender.replaceTrack(desired);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha] failed to sync video sender for user ${remoteUserId}`,
-          error
-        );
+      // Screen audio follows the same watching gate as the video track, so
+      // non-watchers don't get a soundtrack without a picture.
+      const desiredAudio = desired ? this.localScreenAudioTrack : null;
+      const audioTransceiver = PeerManager.screenAudioTransceiverFor(pc);
+      if (audioTransceiver && audioTransceiver.sender.track !== desiredAudio) {
+        try {
+          await audioTransceiver.sender.replaceTrack(desiredAudio);
+          if (desiredAudio) {
+            await this.#applyScreenAudioQuality(audioTransceiver.sender);
+          }
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[resenha] failed to sync screen audio sender for user ${remoteUserId}`,
+            error
+          );
+        }
       }
     }
 
@@ -1148,6 +1213,22 @@ export default class ResenhaWebrtcService extends Service {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to apply video quality", error);
       }
+    }
+  }
+
+  // Opus defaults target speech bitrates; content audio gets a higher ceiling
+  // so music doesn't sound underwater. Still small next to the video budget.
+  async #applyScreenAudioQuality(sender) {
+    try {
+      const parameters = sender.getParameters();
+      if (!parameters.encodings?.length) {
+        parameters.encodings = [{}];
+      }
+      parameters.encodings[0].maxBitrate = 128_000;
+      await sender.setParameters(parameters);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to apply screen audio quality", error);
     }
   }
 
@@ -1263,23 +1344,27 @@ export default class ResenhaWebrtcService extends Service {
 
   #applyAudioSettings(roomId, userId) {
     const key = this.remotePeerKey(roomId, userId);
-    const element = this.#audioElements.get(key);
-    if (!element) {
+    const elements = this.#audioElements.get(key);
+    if (!elements) {
       return;
     }
 
     const muted = this.deafened || (this.#participantMuted.get(key) ?? false);
     const volume = this.#participantVolumes.get(key) ?? 1;
 
-    element.muted = muted;
-    if (!muted) {
-      element.volume = volume;
+    for (const element of Object.values(elements)) {
+      element.muted = muted;
+      if (!muted) {
+        element.volume = volume;
+      }
     }
   }
 
-  #trackAudioElement(roomId, userId, element) {
+  #trackAudioElement(roomId, userId, element, role = "voice") {
     const key = this.remotePeerKey(roomId, userId);
-    this.#audioElements.set(key, element);
+    const elements = this.#audioElements.get(key) || {};
+    elements[role] = element;
+    this.#audioElements.set(key, elements);
   }
 
   #untrackAudioElement(roomId, userId) {
@@ -1462,6 +1547,7 @@ export default class ResenhaWebrtcService extends Service {
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
         PeerManager.alignVideoTransceiverForAnswer(pc);
+        PeerManager.alignScreenAudioTransceiverForAnswer(pc);
         await this.#peerManager.flushPendingCandidates(
           roomId,
           remoteUserId,
@@ -1980,12 +2066,16 @@ export default class ResenhaWebrtcService extends Service {
     this.#bumpRemoteStreamsRevision();
   }
 
-  // Each remote user gets one service-owned MediaStream that incoming tracks
-  // are merged into. Audio arrives with the sender's stream attached, but the
-  // pre-negotiated video transceiver delivers a bare track (no stream), so
-  // keying the registry on incoming stream identity would make the video
-  // track clobber the user's audio entry.
-  #registerRemoteTrack(roomId, remoteUserId, track) {
+  // Each remote user gets one service-owned MediaStream that incoming mic
+  // audio and video tracks are merged into. Mic audio arrives with the
+  // sender's stream attached, but the pre-negotiated video and screen-audio
+  // transceivers deliver bare tracks (no stream), so keying the registry on
+  // incoming stream identity would make those tracks clobber the user's
+  // audio entry — and a bare audio track is how screen audio is told apart
+  // from mic audio. Screen audio lives in its own per-user stream with its
+  // own sink, keeping it out of the speaking detector and letting one media
+  // element never juggle two audio tracks.
+  #registerRemoteTrack(roomId, remoteUserId, track, streams) {
     if (!roomId || !remoteUserId || !track) {
       return;
     }
@@ -2004,12 +2094,32 @@ export default class ResenhaWebrtcService extends Service {
       next.push(entry);
     }
 
-    const existingTracks = entry.stream.getTracks();
-    if (!existingTracks.includes(track)) {
-      existingTracks
-        .filter((existing) => existing.kind === track.kind)
-        .forEach((existing) => entry.stream.removeTrack(existing));
-      entry.stream.addTrack(track);
+    const isScreenAudio = track.kind === "audio" && !streams?.length;
+
+    if (isScreenAudio) {
+      if (!entry.screenAudioStream) {
+        entry.screenAudioStream = new MediaStream();
+      }
+      const existingTracks = entry.screenAudioStream.getTracks();
+      if (!existingTracks.includes(track)) {
+        existingTracks.forEach((existing) =>
+          entry.screenAudioStream.removeTrack(existing)
+        );
+        entry.screenAudioStream.addTrack(track);
+      }
+      this.#streamToParticipant.set(entry.screenAudioStream, {
+        roomId,
+        userId: remoteUserId,
+        screenAudio: true,
+      });
+    } else {
+      const existingTracks = entry.stream.getTracks();
+      if (!existingTracks.includes(track)) {
+        existingTracks
+          .filter((existing) => existing.kind === track.kind)
+          .forEach((existing) => entry.stream.removeTrack(existing));
+        entry.stream.addTrack(track);
+      }
     }
 
     this.#remoteStreams.set(roomId, next);
@@ -2019,7 +2129,7 @@ export default class ResenhaWebrtcService extends Service {
     });
     this.#bumpRemoteStreamsRevision();
 
-    if (track.kind === "audio") {
+    if (track.kind === "audio" && !isScreenAudio) {
       this.#audioMonitor.ensure(roomId, remoteUserId, entry.stream, false);
     }
   }
@@ -2208,8 +2318,12 @@ export default class ResenhaWebrtcService extends Service {
 
     for (const [, peers] of this.#peerManager.allPeerConnections()) {
       for (const [, pc] of peers) {
+        // The screen-share audio sender also carries kind "audio"; a mic
+        // device switch or noise suppression toggle must not stomp it.
+        const screenAudioSender =
+          PeerManager.screenAudioTransceiverFor(pc)?.sender;
         for (const sender of pc.getSenders()) {
-          if (sender.track?.kind === "audio") {
+          if (sender.track?.kind === "audio" && sender !== screenAudioSender) {
             try {
               await sender.replaceTrack(newTrack);
             } catch (error) {
