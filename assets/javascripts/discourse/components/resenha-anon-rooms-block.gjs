@@ -4,6 +4,7 @@ import { block } from "discourse/blocks";
 import SidebarSection from "discourse/components/sidebar/section";
 import SidebarSectionLink from "discourse/components/sidebar/section-link";
 import { avatarUrl } from "discourse/lib/avatar-utils";
+import { prioritizeNameInUx } from "discourse/lib/settings";
 import { i18n } from "discourse-i18n";
 
 @block("resenha:rooms", {
@@ -173,12 +174,18 @@ class ParticipantLink {
     return classes.join(" ");
   }
 
+  get displayName() {
+    return prioritizeNameInUx(this.participant.name)
+      ? this.participant.name
+      : this.participant.username;
+  }
+
   get title() {
-    return this.participant.name || this.participant.username;
+    return this.displayName;
   }
 
   get content() {
-    return this.participant.name || this.participant.username;
+    return this.displayName;
   }
 
   get prefixType() {

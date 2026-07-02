@@ -8,6 +8,7 @@ import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import { avatarUrl } from "discourse/lib/avatar-utils";
+import { prioritizeNameInUx } from "discourse/lib/settings";
 import { eq } from "discourse/truth-helpers";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
@@ -96,7 +97,9 @@ export default class ResenhaVideoTile extends Component {
   }
 
   get displayName() {
-    return this.participant.name || this.participant.username;
+    return prioritizeNameInUx(this.participant.name)
+      ? this.participant.name
+      : this.participant.username;
   }
 
   <template>
