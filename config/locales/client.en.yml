@@ -36,8 +36,8 @@ en:
         empty: "No one is here yet — join to get things started."
       widget:
         title: "Active voice room: %{room}"
-<<<<<<< HEAD
         open_chat: "Open room chat"
+        expand: "Expand call widget"
       chat:
         title: "Chat"
         open: "Open chat"
@@ -48,9 +48,6 @@ en:
         composer_placeholder: "Message the room…"
         send: "Send"
         open_in_chat: "Open in chat"
-=======
-        expand: "Expand call widget"
->>>>>>> origin/main
       video:
         camera_on: "Turn on camera"
         camera_off: "Turn off camera"

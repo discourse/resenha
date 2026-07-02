@@ -125,7 +125,7 @@ export default class ResenhaRoomsService extends Service {
 
     this.#roomsById.set(room.id, room);
     this.#roomsBySlug.set(room.slug, room);
-    this.#ensureRoomSubscription(room.id);
+    this.#ensureRoomSubscription(room.id, room.message_bus_last_id);
     this.rooms = Array.from(this.#roomsById.values());
   }
 
@@ -136,19 +136,7 @@ export default class ResenhaRoomsService extends Service {
       this.#roomsBySlug.delete(message.room.slug);
       this.#teardownRoomSubscription(message.room.id);
     } else {
-<<<<<<< HEAD
       this.upsertRoom(message.room);
-=======
-      message.room.active_participants = sortParticipants(
-        message.room.active_participants
-      );
-      this.#roomsById.set(message.room.id, message.room);
-      this.#roomsBySlug.set(message.room.slug, message.room);
-      this.#ensureRoomSubscription(
-        message.room.id,
-        message.room.message_bus_last_id
-      );
->>>>>>> origin/main
     }
 
     this.rooms = Array.from(this.#roomsById.values());

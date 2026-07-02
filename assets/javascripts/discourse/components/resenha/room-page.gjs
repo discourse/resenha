@@ -21,11 +21,8 @@ import {
   DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
-<<<<<<< HEAD
-import ResenhaChatPanel from "./chat-panel";
-=======
 import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
->>>>>>> origin/main
+import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
 
 const MOBILE_VIDEO_TILE_BUDGET = 4;
@@ -421,7 +418,6 @@ export default class ResenhaRoomPage extends Component {
               its action via next(), which lands outside the click event
               dispatch — Firefox only allows getDisplayMedia during the
               actual dispatch, so a deferred call throws NotAllowedError. }}
-<<<<<<< HEAD
                 {{#if this.videoAllowed}}
                   <button
                     type="button"
@@ -470,6 +466,12 @@ export default class ResenhaRoomPage extends Component {
                   </button>
                 {{/if}}
                 <DButton
+                  @action={{this.openVoiceSettings}}
+                  @icon="gear"
+                  @title="resenha.voice_settings.title"
+                  @ariaLabel="resenha.voice_settings.title"
+                />
+                <DButton
                   @action={{this.dockRoom}}
                   @icon="compress"
                   @ariaLabel="resenha.room.widget_mode"
@@ -504,64 +506,6 @@ export default class ResenhaRoomPage extends Component {
           >
             <ResenhaChatPanel @room={{this.room}} @onClose={{this.closeChat}} />
           </aside>
-=======
-          {{#if this.videoAllowed}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.cameraActive "--active")
-              }}
-              title={{this.cameraTitle}}
-              aria-label={{this.cameraTitle}}
-              disabled={{this.cameraDisabled}}
-              {{on "click" this.toggleCamera}}
-            >
-              {{dIcon (if this.cameraActive "video" "video-slash")}}
-            </button>
-          {{/if}}
-          {{#if this.showScreenShare}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.screenShareActive "--active")
-              }}
-              title={{this.screenShareTitle}}
-              aria-label={{this.screenShareTitle}}
-              disabled={{this.screenShareDisabled}}
-              {{on "click" this.toggleScreenShare}}
-            >
-              {{dIcon "display"}}
-            </button>
-          {{/if}}
-          <DButton
-            @action={{this.openVoiceSettings}}
-            @icon="gear"
-            @title="resenha.voice_settings.title"
-            @ariaLabel="resenha.voice_settings.title"
-          />
-          <DButton
-            @action={{this.dockRoom}}
-            @icon="compress"
-            @ariaLabel="resenha.room.widget_mode"
-          />
-          <DButton
-            @action={{this.leaveRoom}}
-            @icon="phone-slash"
-            @label="resenha.room.leave"
-            class="btn-danger resenha-room-page__leave"
-          />
-        {{else}}
-          <DButton
-            @action={{this.joinRoom}}
-            @icon="phone"
-            @label="resenha.room.join"
-            @disabled={{this.connecting}}
-            @isLoading={{this.connecting}}
-            class="btn-primary resenha-room-page__join"
-          />
->>>>>>> origin/main
         {{/if}}
       </div>
     </section>

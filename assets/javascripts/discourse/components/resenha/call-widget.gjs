@@ -232,17 +232,16 @@ export default class ResenhaCallWidget extends Component {
     return i18n("resenha.room.open_page");
   }
 
-<<<<<<< HEAD
   get chatAvailable() {
     return !!this.room?.chat_available;
   }
 
   get chatTitle() {
     return i18n("resenha.widget.open_chat");
-=======
+  }
+
   get expandWidgetTitle() {
     return i18n("resenha.widget.expand");
->>>>>>> origin/main
   }
 
   get resized() {
