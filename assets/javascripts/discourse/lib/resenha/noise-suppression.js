@@ -1,3 +1,5 @@
+import getURL from "discourse/lib/get-url";
+
 export default class NoiseSuppressionManager {
   #context = null;
   #source = null;
@@ -17,7 +19,7 @@ export default class NoiseSuppressionManager {
     const audioContext = new AudioContext();
 
     await audioContext.audioWorklet.addModule(
-      "/plugins/resenha/javascripts/dtln-worklet.js"
+      getURL("/plugins/resenha/javascripts/dtln-worklet.js")
     );
 
     const source = audioContext.createMediaStreamSource(rawStream);

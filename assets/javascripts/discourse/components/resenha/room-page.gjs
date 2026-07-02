@@ -24,6 +24,7 @@ import {
   DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
+import ResenhaVideoSettingsModal from "../modal/resenha-video-settings";
 import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
 import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
@@ -389,8 +390,15 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
-  openVoiceSettings() {
+  openVoiceSettings(closeMenu) {
+    closeMenu?.();
     this.modal.show(ResenhaVoiceSettingsModal);
+  }
+
+  @action
+  openVideoSettings(closeMenu) {
+    closeMenu?.();
+    this.modal.show(ResenhaVideoSettingsModal);
   }
 
   <template>
@@ -604,13 +612,44 @@ export default class ResenhaRoomPage extends Component {
                     <span aria-hidden="true">&#8203;</span>
                   </button>
                 {{/if}}
-                <DButton
-                  @action={{this.openVoiceSettings}}
-                  @icon="gear"
-                  @title="resenha.voice_settings.title"
-                  @ariaLabel="resenha.voice_settings.title"
-                  class="btn-default"
-                />
+                {{#if this.videoAllowed}}
+                  <DMenu
+                    @identifier="resenha-call-settings"
+                    @icon="gear"
+                    @title={{i18n "resenha.room.settings"}}
+                    @ariaLabel={{i18n "resenha.room.settings"}}
+                    @triggerClass="btn-default"
+                    @modalForMobile={{true}}
+                    as |menu|
+                  >
+                    <DDropdownMenu as |dropdown|>
+                      <dropdown.item>
+                        <DButton
+                          @action={{fn this.openVoiceSettings menu.close}}
+                          @icon="microphone-lines"
+                          @label="resenha.voice_settings.title"
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                      <dropdown.item>
+                        <DButton
+                          @action={{fn this.openVideoSettings menu.close}}
+                          @icon="video"
+                          @label="resenha.video_settings.title"
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                    </DDropdownMenu>
+                  </DMenu>
+                {{else}}
+                  <DButton
+                    @action={{this.openVoiceSettings}}
+                    @icon="gear"
+                    @title="resenha.voice_settings.title"
+                    @ariaLabel="resenha.voice_settings.title"
+                    class="btn-default"
+                  />
+                {{/if}}
                 <DButton
                   @action={{this.dockRoom}}
                   @icon="compress"
