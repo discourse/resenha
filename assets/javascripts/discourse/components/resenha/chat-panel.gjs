@@ -261,7 +261,6 @@ export default class ResenhaChatPanel extends Component {
     >
       <header class="resenha-chat__header">
         <h2 class="resenha-chat__title">
-          {{dIcon "far-comment"}}
           {{i18n "resenha.chat.title"}}
         </h2>
         {{#if this.canOpenInChat}}

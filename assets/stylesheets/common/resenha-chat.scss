@@ -18,15 +18,19 @@
   }
 
   &__title {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
     margin: 0;
     font-size: var(--font-0);
     font-weight: 600;
+  }
 
-    .d-icon {
-      color: var(--primary-medium);
+  &__open-in-chat {
+    margin-inline-start: auto;
+    border: 1px solid var(--primary-low-mid);
+    background: transparent;
+
+    &:hover,
+    &:focus-visible {
+      background: var(--primary-very-low);
     }
   }
 
