@@ -78,6 +78,12 @@ en:
         mute: "Mute"
         unmute: "Unmute"
         kick: "Kick from room"
+        status_speaking: "Speaking"
+        status_muted: "Muted"
+        status_deafened: "Deafened"
+        status_screen_sharing: "Sharing screen"
+        status_video: "Camera on"
+        status_ptt: "Push to talk enabled"
       room_info:
         title: "Room Info"
         status: "Status"
