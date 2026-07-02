@@ -54,9 +54,7 @@ describe "Resenha video settings", type: :system do
     open_video_settings
 
     expect(page).to have_css(".resenha-video-settings__preview video")
-    expect(
-      resenha_media_track_live?(".resenha-video-settings__preview video"),
-    ).to eq(true)
+    expect(resenha_media_track_live?(".resenha-video-settings__preview video")).to eq(true)
 
     camera_select.expand
     expect(camera_select).to have_option_name("Resenha fake camera A")
@@ -83,9 +81,7 @@ describe "Resenha video settings", type: :system do
     join_room
     open_video_settings
 
-    within(".resenha-video-settings") do
-      expect(page).to have_css(".d-toggle-switch")
-    end
+    within(".resenha-video-settings") { expect(page).to have_css(".d-toggle-switch") }
   end
 
   it "hides background blur when the site setting is disabled" do
