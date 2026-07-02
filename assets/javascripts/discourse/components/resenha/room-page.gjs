@@ -1,5 +1,6 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
+import { fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
@@ -8,7 +9,9 @@ import { cancel, next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
+import DMenu from "discourse/float-kit/components/d-menu";
 import discourseLater from "discourse/lib/later";
+import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
@@ -26,6 +29,8 @@ import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
 
 const MOBILE_VIDEO_TILE_BUDGET = 4;
+const LAYOUT_PRESENTATION = "presentation";
+const LAYOUT_TILED = "tiled";
 
 export default class ResenhaRoomPage extends Component {
   @service capabilities;
@@ -43,6 +48,7 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridFullscreen = false;
   @tracked chatOpen = !!this.args.openChat;
   @tracked chatClosing = false;
+  @tracked layoutMode = LAYOUT_PRESENTATION;
 
   gridElement = null;
   trackGridSize = trackGridSize;
@@ -107,6 +113,28 @@ export default class ResenhaRoomPage extends Component {
     });
   }
 
+  get presentationTile() {
+    return (
+      this.tiles.find((tile) => tile.participant.is_screen_sharing) ??
+      this.tiles.find((tile) => tile.showVideo && !tile.isSelf) ??
+      this.tiles.find((tile) => tile.showVideo) ??
+      this.tiles[0]
+    );
+  }
+
+  get presentationRailTiles() {
+    const featuredId = this.presentationTile?.participant.id;
+    return this.tiles.filter((tile) => tile.participant.id !== featuredId);
+  }
+
+  get tiledLayout() {
+    return this.layoutMode === LAYOUT_TILED;
+  }
+
+  get presentationLayout() {
+    return this.layoutMode === LAYOUT_PRESENTATION;
+  }
+
   @action
   updateGridSize(width, height, gap) {
     this.gridWidth = width;
@@ -140,6 +168,28 @@ export default class ResenhaRoomPage extends Component {
     toggleFullscreen(this.gridElement);
   }
 
+  @action
+  setPresentationLayout(menu) {
+    this.layoutMode = LAYOUT_PRESENTATION;
+    menu?.close?.();
+  }
+
+  @action
+  setTiledLayout(menu) {
+    this.layoutMode = LAYOUT_TILED;
+    menu?.close?.();
+  }
+
+  get layoutTitle() {
+    return this.presentationLayout
+      ? i18n("resenha.video.layout_presentation")
+      : i18n("resenha.video.layout_tiled");
+  }
+
+  get layoutIcon() {
+    return this.presentationLayout ? "person-chalkboard" : "users";
+  }
+
   get gridFullscreenTitle() {
     return this.gridFullscreen
       ? i18n("resenha.video.exit_fullscreen")
@@ -163,7 +213,12 @@ export default class ResenhaRoomPage extends Component {
   }
 
   get gridStyle() {
-    if (!this.tiles.length || !this.gridWidth || !this.gridHeight) {
+    if (
+      !this.tiledLayout ||
+      !this.tiles.length ||
+      !this.gridWidth ||
+      !this.gridHeight
+    ) {
       return null;
     }
 
@@ -343,6 +398,8 @@ export default class ResenhaRoomPage extends Component {
       class={{dConcatClass
         "resenha-room-page"
         (if this.chatVisible "--chat-open")
+        (if this.presentationLayout "--presentation")
+        (if this.tiledLayout "--tiled")
       }}
       {{didInsert this.watchRoom}}
     >
@@ -359,33 +416,64 @@ export default class ResenhaRoomPage extends Component {
 
           <div class="resenha-room-page__stage">
             {{#if this.tiles.length}}
-              <div
-                class="resenha-room-page__grid"
-                style={{this.gridStyle}}
-                {{didInsert this.registerGrid}}
-                {{this.trackGridSize this.updateGridSize}}
-                {{this.trackFullscreen this.setGridFullscreen}}
-              >
-                <button
-                  type="button"
-                  class="btn btn-icon no-text resenha-room-page__fullscreen"
-                  title={{this.gridFullscreenTitle}}
-                  aria-label={{this.gridFullscreenTitle}}
-                  {{on "click" this.toggleGridFullscreen}}
-                >
-                  {{dIcon (if this.gridFullscreen "compress" "expand")}}
-                </button>
+              {{#if this.presentationLayout}}
+                <div class="resenha-room-page__presentation">
+                  <div class="resenha-room-page__presentation-main">
+                    <ResenhaVideoTile
+                      @room={{this.room}}
+                      @participant={{this.presentationTile.participant}}
+                      @isSelf={{this.presentationTile.isSelf}}
+                      @showVideo={{this.presentationTile.showVideo}}
+                      @onAspect={{this.reportTileAspect}}
+                    />
+                  </div>
 
-                {{#each this.tiles key="participant.id" as |tile|}}
-                  <ResenhaVideoTile
-                    @room={{this.room}}
-                    @participant={{tile.participant}}
-                    @isSelf={{tile.isSelf}}
-                    @showVideo={{tile.showVideo}}
-                    @onAspect={{this.reportTileAspect}}
-                  />
-                {{/each}}
-              </div>
+                  {{#if this.presentationRailTiles.length}}
+                    <div class="resenha-room-page__presentation-rail">
+                      {{#each
+                        this.presentationRailTiles key="participant.id"
+                        as |tile|
+                      }}
+                        <ResenhaVideoTile
+                          @room={{this.room}}
+                          @participant={{tile.participant}}
+                          @isSelf={{tile.isSelf}}
+                          @showVideo={{tile.showVideo}}
+                          @onAspect={{this.reportTileAspect}}
+                        />
+                      {{/each}}
+                    </div>
+                  {{/if}}
+                </div>
+              {{else}}
+                <div
+                  class="resenha-room-page__grid"
+                  style={{this.gridStyle}}
+                  {{didInsert this.registerGrid}}
+                  {{this.trackGridSize this.updateGridSize}}
+                  {{this.trackFullscreen this.setGridFullscreen}}
+                >
+                  <button
+                    type="button"
+                    class="btn btn-icon no-text resenha-room-page__fullscreen"
+                    title={{this.gridFullscreenTitle}}
+                    aria-label={{this.gridFullscreenTitle}}
+                    {{on "click" this.toggleGridFullscreen}}
+                  >
+                    {{dIcon (if this.gridFullscreen "compress" "expand")}}
+                  </button>
+
+                  {{#each this.tiles key="participant.id" as |tile|}}
+                    <ResenhaVideoTile
+                      @room={{this.room}}
+                      @participant={{tile.participant}}
+                      @isSelf={{tile.isSelf}}
+                      @showVideo={{tile.showVideo}}
+                      @onAspect={{this.reportTileAspect}}
+                    />
+                  {{/each}}
+                </div>
+              {{/if}}
             {{else}}
               <div class="resenha-room-page__empty">
                 {{i18n "resenha.room_page.empty"}}
@@ -402,7 +490,10 @@ export default class ResenhaRoomPage extends Component {
                   }}
                   @translatedTitle={{this.micTitle}}
                   @disabled={{this.resenhaWebrtc.pttEnabled}}
-                  class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
+                  class={{dConcatClass
+                    "btn-default"
+                    (if this.resenhaWebrtc.audioEnabled "" "--off")
+                  }}
                 />
                 <DButton
                   @action={{this.toggleDeafen}}
@@ -412,8 +503,56 @@ export default class ResenhaRoomPage extends Component {
                     "ear-listen"
                   }}
                   @translatedTitle={{this.deafenTitle}}
-                  class={{if this.resenhaWebrtc.deafened "--off" ""}}
+                  class={{dConcatClass
+                    "btn-default"
+                    (if this.resenhaWebrtc.deafened "--off" "")
+                  }}
                 />
+                <DMenu
+                  @icon={{this.layoutIcon}}
+                  @title={{this.layoutTitle}}
+                  @ariaLabel={{i18n "resenha.video.layout"}}
+                  @identifier="resenha-room-page-layout-menu"
+                  @placement="top"
+                  @triggerClass="btn-default resenha-room-page__layout-trigger"
+                  @contentClass="resenha-room-page__layout-content"
+                >
+                  <:content as |menu|>
+                    <DDropdownMenu
+                      class="resenha-room-page__layout-dropdown"
+                      as |dropdown|
+                    >
+                      <dropdown.item
+                        class={{dConcatClass
+                          "resenha-room-page__layout-option"
+                          (if this.presentationLayout "--active")
+                        }}
+                      >
+                        <DButton
+                          @action={{fn this.setPresentationLayout menu}}
+                          @icon="person-chalkboard"
+                          @label="resenha.video.layout_presentation"
+                          @title="resenha.video.layout_presentation"
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                      <dropdown.item
+                        class={{dConcatClass
+                          "resenha-room-page__layout-option"
+                          (if this.tiledLayout "--active")
+                        }}
+                      >
+                        <DButton
+                          @action={{fn this.setTiledLayout menu}}
+                          @icon="users"
+                          @label="resenha.video.layout_tiled"
+                          @title="resenha.video.layout_tiled"
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                    </DDropdownMenu>
+                  </:content>
+                </DMenu>
                 {{! Capture buttons are plain <button>s on purpose: DButton defers
               its action via next(), which lands outside the click event
               dispatch — Firefox only allows getDisplayMedia during the
@@ -422,7 +561,7 @@ export default class ResenhaRoomPage extends Component {
                   <button
                     type="button"
                     class={{dConcatClass
-                      "btn btn-icon no-text"
+                      "btn btn-icon no-text btn-default"
                       (if this.cameraActive "--active")
                     }}
                     title={{this.cameraTitle}}
@@ -437,7 +576,7 @@ export default class ResenhaRoomPage extends Component {
                   <button
                     type="button"
                     class={{dConcatClass
-                      "btn btn-icon no-text"
+                      "btn btn-icon no-text btn-default"
                       (if this.screenShareActive "--active")
                     }}
                     title={{this.screenShareTitle}}
@@ -452,7 +591,7 @@ export default class ResenhaRoomPage extends Component {
                   <button
                     type="button"
                     class={{dConcatClass
-                      "btn btn-icon no-text resenha-room-page__chat-toggle"
+                      "btn btn-icon no-text btn-default resenha-room-page__chat-toggle"
                       (if this.chatVisible "--active")
                     }}
                     title={{this.chatToggleTitle}}
@@ -470,11 +609,13 @@ export default class ResenhaRoomPage extends Component {
                   @icon="gear"
                   @title="resenha.voice_settings.title"
                   @ariaLabel="resenha.voice_settings.title"
+                  class="btn-default"
                 />
                 <DButton
                   @action={{this.dockRoom}}
                   @icon="compress"
                   @ariaLabel="resenha.room.widget_mode"
+                  class="btn-default"
                 />
                 <DButton
                   @action={{this.leaveRoom}}

@@ -244,6 +244,53 @@ html.discourse-touch .resenha-call-widget {
     row-gap: 0.75em;
   }
 
+  &__presentation {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(9rem, 13rem);
+    gap: var(--space-2);
+  }
+
+  &__presentation-main {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid var(--primary-low);
+    border-radius: var(--d-border-radius);
+    background: var(--secondary);
+
+    .resenha-video-tile {
+      width: 100%;
+      height: 100%;
+      border-radius: calc(var(--d-border-radius) - 1px);
+    }
+
+    .resenha-video-tile.--screen .resenha-video-tile__video,
+    .resenha-video-tile.--avatar .resenha-video-tile__video {
+      object-fit: contain;
+    }
+  }
+
+  &__presentation-rail {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-auto-rows: minmax(5rem, 8rem);
+    gap: var(--space-2);
+    align-content: start;
+    overflow: auto;
+    padding-inline-end: 1px;
+
+    .resenha-video-tile {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
   &__grid {
     position: relative;
     flex: 1;
@@ -319,11 +366,40 @@ html.discourse-touch .resenha-call-widget {
   }
 }
 
+.resenha-room-page__layout-content {
+  .resenha-room-page__layout-dropdown {
+    min-width: 12rem;
+  }
+
+  .resenha-room-page__layout-option.--active {
+    background: var(--tertiary-low);
+
+    .btn,
+    .d-icon {
+      color: var(--tertiary);
+    }
+  }
+}
+
 // Below this the 22rem sidebar would squash the video column into a sliver,
 // so instead of sitting beside it the panel becomes a full-height drawer over
 // the page (above the docked call widget). Keep in sync with the close-button
 // breakpoint in resenha-chat.scss.
 @media (max-width: 1000px) {
+  .resenha-room-page__presentation {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .resenha-room-page__presentation-rail {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(8rem, 11rem);
+    grid-auto-rows: 6rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-block-end: 1px;
+  }
+
   .resenha-room-page__sidebar {
     position: fixed;
     inset-block: var(--header-offset, 4em) 0;

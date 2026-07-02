@@ -59,6 +59,9 @@ en:
         fullscreen: "Full screen"
         exit_fullscreen: "Exit full screen"
         fullscreen_all: "Full-screen all videos"
+        layout: "Video layout"
+        layout_presentation: "Presentation layout"
+        layout_tiled: "Tiled layout"
       ptt:
         enable: "Push to Talk"
         disable: "Disable Push to Talk"
