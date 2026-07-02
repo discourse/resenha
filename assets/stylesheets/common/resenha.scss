@@ -13,18 +13,12 @@
 }
 
 .resenha-sidebar-participant {
-  --resenha-participant-indent: calc(
+  // Indent so participant avatars start where the room name text starts,
+  // making rows read unambiguously as children of the room above.
+  padding-left: calc(
     var(--d-sidebar-row-horizontal-padding) +
       var(--d-sidebar-section-link-prefix-width) +
       var(--d-sidebar-section-link-prefix-margin-right)
-  );
-  --resenha-speaking-slot: 1.25rem;
-
-  // Indent past the room name so rows read unambiguously as children of the
-  // room above, plus a fixed slot where the speaking wave appears — keeping
-  // it in one scannable column right next to the avatars.
-  padding-left: calc(
-    var(--resenha-participant-indent) + var(--resenha-speaking-slot)
   );
   position: relative;
 
@@ -44,36 +38,6 @@
   .sidebar-section-link-content-text {
     font-size: var(--font-down-1);
     color: var(--primary-high);
-  }
-
-  &--speaking {
-    .sidebar-section-link-content-text {
-      color: var(--primary);
-    }
-
-    &::before {
-      content: "";
-      position: absolute;
-      left: calc(var(--resenha-participant-indent) + 0.2rem);
-      top: 50%;
-      transform: translateY(-50%);
-      height: 0.875rem;
-      width: 0.8125rem;
-      background:
-        linear-gradient(var(--success), var(--success)) 0 50%,
-        linear-gradient(var(--success), var(--success)) 5px 50%,
-        linear-gradient(var(--success), var(--success)) 10px 50%;
-      background-size:
-        3px 40%,
-        3px 70%,
-        3px 50%;
-      background-repeat: no-repeat;
-      animation: resenha-audio-bars 0.8s ease-in-out infinite;
-
-      @media (prefers-reduced-motion: reduce) {
-        animation: none;
-      }
-    }
   }
 
   &--muted,
@@ -180,6 +144,61 @@
     .sidebar-section-link-content-text {
       opacity: 0.5;
       transition: opacity 0.3s ease;
+    }
+  }
+
+  // While speaking, the wave takes over the avatar: the picture fades behind
+  // a backdrop disc (so the wave stays legible over photo avatars) with the
+  // animated bars centered on top. Last so it wins over the idle/afk badge.
+  &--speaking {
+    .sidebar-section-link-content-text {
+      color: var(--primary);
+    }
+
+    .sidebar-section-link-prefix {
+      img {
+        opacity: 0.25;
+      }
+
+      &::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        height: 1.25rem;
+        width: 1.25rem;
+        border-radius: 50%;
+        background: var(--d-sidebar-background);
+        opacity: 0.4;
+      }
+
+      &::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        height: 0.875rem;
+        width: 0.8125rem;
+        border: none;
+        border-radius: 0;
+        mask-image: none;
+        background:
+          linear-gradient(var(--success), var(--success)) 0 50%,
+          linear-gradient(var(--success), var(--success)) 5px 50%,
+          linear-gradient(var(--success), var(--success)) 10px 50%;
+        background-size:
+          3px 40%,
+          3px 70%,
+          3px 50%;
+        background-repeat: no-repeat;
+        animation: resenha-audio-bars 0.8s ease-in-out infinite;
+
+        @media (prefers-reduced-motion: reduce) {
+          animation: none;
+        }
+      }
     }
   }
 }

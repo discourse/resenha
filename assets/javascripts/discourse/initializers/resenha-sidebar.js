@@ -383,8 +383,8 @@ export default {
 
             // A custom suffix component (instead of the single suffixValue
             // slot) so every state icon can show simultaneously on the right
-            // edge. The speaking wave renders on the left, next to the
-            // avatar, via the `--speaking` class.
+            // edge. The speaking wave renders over the avatar via the
+            // `--speaking` class.
             get suffixComponent() {
               return ResenhaParticipantSidebarSuffix;
             }
