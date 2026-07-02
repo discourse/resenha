@@ -36,11 +36,15 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridWidth = 0;
   @tracked gridHeight = 0;
   @tracked gridGap = 0;
+  @tracked stageWidth = 0;
+  @tracked stageHeight = 0;
+  @tracked stageGap = 0;
   @tracked tileAspects = new Map();
   @tracked gridFullscreen = false;
   @tracked chatOpen = !!this.args.openChat;
 
   gridElement = null;
+  controlsElement = null;
 
   trackGridSize = trackGridSize;
   trackFullscreen = trackFullscreen;
@@ -110,8 +114,20 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
+  updateStageSize(width, height, gap) {
+    this.stageWidth = width;
+    this.stageHeight = height;
+    this.stageGap = gap;
+  }
+
+  @action
   registerGrid(element) {
     this.gridElement = element;
+  }
+
+  @action
+  registerControls(element) {
+    this.controlsElement = element;
   }
 
   @action
@@ -158,7 +174,23 @@ export default class ResenhaRoomPage extends Component {
   }
 
   get gridStyle() {
-    if (!this.tiles.length || !this.gridWidth || !this.gridHeight) {
+    // The grid hugs its rows so the controls can sit right below the videos;
+    // tile size is computed from the stage (the space the grid MAY use: stage
+    // minus the controls), except in fullscreen where the grid itself is the
+    // sized box again.
+    let width, height;
+    if (this.gridFullscreen) {
+      width = this.gridWidth;
+      height = this.gridHeight;
+    } else {
+      width = this.stageWidth;
+      height =
+        this.stageHeight -
+        (this.controlsElement?.offsetHeight ?? 0) -
+        this.stageGap;
+    }
+
+    if (!this.tiles.length || !width || height <= 0) {
       return null;
     }
 
@@ -166,12 +198,7 @@ export default class ResenhaRoomPage extends Component {
       (tile) => this.tileAspects.get(tile.participant.id) ?? DEFAULT_TILE_ASPECT
     );
 
-    const rowHeight = bestRowHeight(
-      this.gridWidth,
-      this.gridHeight,
-      aspects,
-      this.gridGap
-    );
+    const rowHeight = bestRowHeight(width, height, aspects, this.gridGap);
 
     if (rowHeight <= 0) {
       return null;
@@ -319,39 +346,143 @@ export default class ResenhaRoomPage extends Component {
             {{/if}}
           </header>
 
-          {{#if this.tiles.length}}
-            <div
-              class="resenha-room-page__grid"
-              style={{this.gridStyle}}
-              {{didInsert this.registerGrid}}
-              {{this.trackGridSize this.updateGridSize}}
-              {{this.trackFullscreen this.setGridFullscreen}}
-            >
-              <button
-                type="button"
-                class="btn btn-icon no-text resenha-room-page__fullscreen"
-                title={{this.gridFullscreenTitle}}
-                aria-label={{this.gridFullscreenTitle}}
-                {{on "click" this.toggleGridFullscreen}}
+          <div
+            class="resenha-room-page__stage"
+            {{this.trackGridSize this.updateStageSize}}
+          >
+            {{#if this.tiles.length}}
+              <div
+                class="resenha-room-page__grid"
+                style={{this.gridStyle}}
+                {{didInsert this.registerGrid}}
+                {{this.trackGridSize this.updateGridSize}}
+                {{this.trackFullscreen this.setGridFullscreen}}
               >
-                {{dIcon (if this.gridFullscreen "compress" "expand")}}
-              </button>
+                <button
+                  type="button"
+                  class="btn btn-icon no-text resenha-room-page__fullscreen"
+                  title={{this.gridFullscreenTitle}}
+                  aria-label={{this.gridFullscreenTitle}}
+                  {{on "click" this.toggleGridFullscreen}}
+                >
+                  {{dIcon (if this.gridFullscreen "compress" "expand")}}
+                </button>
 
-              {{#each this.tiles key="participant.id" as |tile|}}
-                <ResenhaVideoTile
-                  @room={{this.room}}
-                  @participant={{tile.participant}}
-                  @isSelf={{tile.isSelf}}
-                  @showVideo={{tile.showVideo}}
-                  @onAspect={{this.reportTileAspect}}
+                {{#each this.tiles key="participant.id" as |tile|}}
+                  <ResenhaVideoTile
+                    @room={{this.room}}
+                    @participant={{tile.participant}}
+                    @isSelf={{tile.isSelf}}
+                    @showVideo={{tile.showVideo}}
+                    @onAspect={{this.reportTileAspect}}
+                  />
+                {{/each}}
+              </div>
+            {{else}}
+              <div class="resenha-room-page__empty">
+                {{i18n "resenha.room_page.empty"}}
+              </div>
+            {{/if}}
+            <footer
+              class="resenha-room-page__controls"
+              {{didInsert this.registerControls}}
+            >
+              {{#if this.joined}}
+                <DButton
+                  @action={{this.toggleMute}}
+                  @icon={{if
+                    this.resenhaWebrtc.audioEnabled
+                    "microphone"
+                    "microphone-slash"
+                  }}
+                  @translatedTitle={{this.micTitle}}
+                  @disabled={{this.resenhaWebrtc.pttEnabled}}
+                  class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
                 />
-              {{/each}}
-            </div>
-          {{else}}
-            <div class="resenha-room-page__empty">
-              {{i18n "resenha.room_page.empty"}}
-            </div>
-          {{/if}}
+                <DButton
+                  @action={{this.toggleDeafen}}
+                  @icon={{if
+                    this.resenhaWebrtc.deafened
+                    "volume-xmark"
+                    "ear-listen"
+                  }}
+                  @translatedTitle={{this.deafenTitle}}
+                  class={{if this.resenhaWebrtc.deafened "--off" ""}}
+                />
+                {{! Capture buttons are plain <button>s on purpose: DButton defers
+              its action via next(), which lands outside the click event
+              dispatch — Firefox only allows getDisplayMedia during the
+              actual dispatch, so a deferred call throws NotAllowedError. }}
+                {{#if this.videoAllowed}}
+                  <button
+                    type="button"
+                    class={{dConcatClass
+                      "btn btn-icon no-text"
+                      (if this.cameraActive "--active")
+                    }}
+                    title={{this.cameraTitle}}
+                    aria-label={{this.cameraTitle}}
+                    disabled={{this.cameraDisabled}}
+                    {{on "click" this.toggleCamera}}
+                  >
+                    {{dIcon (if this.cameraActive "video" "video-slash")}}
+                  </button>
+                {{/if}}
+                {{#if this.showScreenShare}}
+                  <button
+                    type="button"
+                    class={{dConcatClass
+                      "btn btn-icon no-text"
+                      (if this.screenShareActive "--active")
+                    }}
+                    title={{this.screenShareTitle}}
+                    aria-label={{this.screenShareTitle}}
+                    disabled={{this.screenShareDisabled}}
+                    {{on "click" this.toggleScreenShare}}
+                  >
+                    {{dIcon "display"}}
+                  </button>
+                {{/if}}
+                {{#if this.chatAvailable}}
+                  <button
+                    type="button"
+                    class={{dConcatClass
+                      "btn btn-icon no-text resenha-room-page__chat-toggle"
+                      (if this.chatVisible "--active")
+                    }}
+                    title={{this.chatToggleTitle}}
+                    aria-label={{this.chatToggleTitle}}
+                    {{on "click" this.toggleChat}}
+                  >
+                    {{dIcon "far-comment"}}
+                    {{! Zero-width space: matches DButton so an icon-only button keeps
+                  full button height and aligns with its DButton siblings. }}
+                    <span aria-hidden="true">&#8203;</span>
+                  </button>
+                {{/if}}
+                <DButton
+                  @action={{this.dockRoom}}
+                  @icon="compress"
+                  @ariaLabel="resenha.room.widget_mode"
+                />
+                <DButton
+                  @action={{this.leaveRoom}}
+                  @icon="phone-slash"
+                  @label="resenha.room.leave"
+                  class="btn-danger resenha-room-page__leave"
+                />
+              {{else}}
+                <DButton
+                  @action={{this.joinRoom}}
+                  @icon="phone"
+                  @label="resenha.room.join"
+                  @disabled={{this.connecting}}
+                  @isLoading={{this.connecting}}
+                  class="btn-primary resenha-room-page__join"
+                />
+              {{/if}}
+            </footer>
+          </div>
         </div>
 
         {{#if this.chatVisible}}
@@ -360,99 +491,6 @@ export default class ResenhaRoomPage extends Component {
           </aside>
         {{/if}}
       </div>
-
-      <footer class="resenha-room-page__controls">
-        {{#if this.joined}}
-          <DButton
-            @action={{this.toggleMute}}
-            @icon={{if
-              this.resenhaWebrtc.audioEnabled
-              "microphone"
-              "microphone-slash"
-            }}
-            @translatedTitle={{this.micTitle}}
-            @disabled={{this.resenhaWebrtc.pttEnabled}}
-            class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
-          />
-          <DButton
-            @action={{this.toggleDeafen}}
-            @icon={{if this.resenhaWebrtc.deafened "volume-xmark" "ear-listen"}}
-            @translatedTitle={{this.deafenTitle}}
-            class={{if this.resenhaWebrtc.deafened "--off" ""}}
-          />
-          {{! Capture buttons are plain <button>s on purpose: DButton defers
-              its action via next(), which lands outside the click event
-              dispatch — Firefox only allows getDisplayMedia during the
-              actual dispatch, so a deferred call throws NotAllowedError. }}
-          {{#if this.videoAllowed}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.cameraActive "--active")
-              }}
-              title={{this.cameraTitle}}
-              aria-label={{this.cameraTitle}}
-              disabled={{this.cameraDisabled}}
-              {{on "click" this.toggleCamera}}
-            >
-              {{dIcon (if this.cameraActive "video" "video-slash")}}
-            </button>
-          {{/if}}
-          {{#if this.showScreenShare}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text"
-                (if this.screenShareActive "--active")
-              }}
-              title={{this.screenShareTitle}}
-              aria-label={{this.screenShareTitle}}
-              disabled={{this.screenShareDisabled}}
-              {{on "click" this.toggleScreenShare}}
-            >
-              {{dIcon "display"}}
-            </button>
-          {{/if}}
-          {{#if this.chatAvailable}}
-            <button
-              type="button"
-              class={{dConcatClass
-                "btn btn-icon no-text resenha-room-page__chat-toggle"
-                (if this.chatVisible "--active")
-              }}
-              title={{this.chatToggleTitle}}
-              aria-label={{this.chatToggleTitle}}
-              {{on "click" this.toggleChat}}
-            >
-              {{dIcon "far-comment"}}
-              {{! Zero-width space: matches DButton so an icon-only button keeps
-                  full button height and aligns with its DButton siblings. }}
-              <span aria-hidden="true">&#8203;</span>
-            </button>
-          {{/if}}
-          <DButton
-            @action={{this.dockRoom}}
-            @icon="compress"
-            @ariaLabel="resenha.room.widget_mode"
-          />
-          <DButton
-            @action={{this.leaveRoom}}
-            @icon="phone-slash"
-            @label="resenha.room.leave"
-            class="btn-danger resenha-room-page__leave"
-          />
-        {{else}}
-          <DButton
-            @action={{this.joinRoom}}
-            @icon="phone"
-            @label="resenha.room.join"
-            @disabled={{this.connecting}}
-            @isLoading={{this.connecting}}
-            class="btn-primary resenha-room-page__join"
-          />
-        {{/if}}
-      </footer>
     </section>
   </template>
 }

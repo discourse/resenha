@@ -190,10 +190,21 @@ html.discourse-touch .resenha-call-widget {
     }
   }
 
-  &__grid {
-    position: relative;
+  // Centers the video grid and the control bar together, so the controls sit
+  // right below the videos instead of pinned to the bottom of the page. Tile
+  // size is computed from this box (minus the controls) — see gridStyle.
+  &__stage {
     flex: 1;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    row-gap: 0.75em;
+  }
+
+  &__grid {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
     gap: 0.5em;
@@ -233,21 +244,18 @@ html.discourse-touch .resenha-call-widget {
   }
 
   &__empty {
-    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding-block: var(--space-6);
     color: var(--primary-medium);
   }
 
   &__controls {
-    position: sticky;
-    bottom: 0;
     display: flex;
+    flex-wrap: wrap;
     justify-content: center;
     gap: 0.5em;
-    padding-block: 0.75em;
-    background: var(--secondary);
 
     .--off,
     .--active {
