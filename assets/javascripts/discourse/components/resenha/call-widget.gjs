@@ -712,13 +712,13 @@ export default class ResenhaCallWidget extends Component {
               @icon="expand"
               @translatedTitle={{this.openRoomTitle}}
             />
-          {{/if}}
-          {{#if this.chatAvailable}}
-            <DButton
-              @action={{this.openChat}}
-              @icon="far-comment"
-              @translatedTitle={{this.chatTitle}}
-            />
+            {{#if this.chatAvailable}}
+              <DButton
+                @action={{this.openChat}}
+                @icon="far-comment"
+                @translatedTitle={{this.chatTitle}}
+              />
+            {{/if}}
           {{/if}}
           <DButton
             @action={{this.leaveRoom}}

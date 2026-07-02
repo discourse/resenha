@@ -96,6 +96,9 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
         slug: "test-room",
         name: "Test Room",
         video_enabled: true,
+        // Makes the chat button eligible, so the extra-minimized test's exact
+        // control count guards against it leaking into that mode.
+        chat_available: true,
         active_participants: [
           {
             id: this.currentUser.id,
