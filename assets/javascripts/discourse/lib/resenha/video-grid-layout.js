@@ -34,8 +34,11 @@ function rowsAtHeight(aspects, containerWidth, gap, height) {
 // Tiles share a height and vary in width, so portrait and landscape feeds sit
 // side by side without cropping or distortion. For a room where every tile has
 // the same aspect this converges to the same optimum as a column-count search;
-// mixed-aspect rooms get a justified-gallery layout. Grid height is fixed by
-// the flex parent, so the result never feeds back into the container size.
+// mixed-aspect rooms get a justified-gallery layout. The grid uses
+// `contain: size`, so the result never feeds back into the container size —
+// without it, oversized tiles (e.g. right after exiting fullscreen) would
+// grow the grid, the remeasure would see the inflated box, and the layout
+// would lock there.
 export function bestRowHeight(containerWidth, containerHeight, aspects, gap) {
   const count = aspects.length;
   if (!count || containerWidth <= 0 || containerHeight <= 0) {
