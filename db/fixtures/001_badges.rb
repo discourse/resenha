@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-RESENHA_BADGE_GROUP = "Resenha"
+resenha_badge_group = "Resenha"
 
 BadgeGrouping.seed(:name) do |g|
-  g.name = RESENHA_BADGE_GROUP
+  g.name = resenha_badge_group
   g.default_position = 15
 end
 
-resenha_grouping = BadgeGrouping.find_by(name: RESENHA_BADGE_GROUP)
+resenha_grouping = BadgeGrouping.find_by(name: resenha_badge_group)
 
 duration_sql = "EXTRACT(EPOCH FROM (COALESCE(left_at, CURRENT_TIMESTAMP) - joined_at))"
 
