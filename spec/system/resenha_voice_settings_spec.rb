@@ -22,7 +22,10 @@ describe "Resenha voice settings", type: :system do
   end
 
   def open_voice_settings
-    find("button[title='#{I18n.t("js.resenha.voice_settings.title")}']").click
+    find("button[data-identifier='resenha-audio-menu']").click
+    within(".fk-d-menu[data-identifier='resenha-audio-menu']") do
+      click_button(I18n.t("js.resenha.voice_settings.audio_settings"))
+    end
     expect(page).to have_css(".resenha-voice-settings-modal")
   end
 

@@ -26,25 +26,30 @@ describe "Resenha video settings", type: :system do
     expect(page).to have_css(".resenha-room-page__leave")
   end
 
-  def open_call_settings_menu
-    find("button[data-identifier='resenha-call-settings']").click
-    expect(page).to have_css(".fk-d-menu[data-identifier='resenha-call-settings']")
+  def open_video_menu
+    find("button[data-identifier='resenha-video-menu']").click
+    expect(page).to have_css(".fk-d-menu[data-identifier='resenha-video-menu']")
   end
 
   def open_video_settings
-    open_call_settings_menu
-    within(".fk-d-menu[data-identifier='resenha-call-settings']") do
+    open_video_menu
+    within(".fk-d-menu[data-identifier='resenha-video-menu']") do
       click_button(I18n.t("js.resenha.video_settings.title"))
     end
     expect(page).to have_css(".resenha-video-settings-modal")
   end
 
-  it "offers voice and video settings from the call settings menu" do
+  it "offers voice and video settings from the call menus" do
     join_room
-    open_call_settings_menu
 
-    within(".fk-d-menu[data-identifier='resenha-call-settings']") do
-      expect(page).to have_button(I18n.t("js.resenha.voice_settings.title"))
+    find("button[data-identifier='resenha-audio-menu']").click
+    within(".fk-d-menu[data-identifier='resenha-audio-menu']") do
+      expect(page).to have_button(I18n.t("js.resenha.voice_settings.audio_settings"))
+    end
+    find("button[data-identifier='resenha-audio-menu']").click
+
+    open_video_menu
+    within(".fk-d-menu[data-identifier='resenha-video-menu']") do
       expect(page).to have_button(I18n.t("js.resenha.video_settings.title"))
     end
   end

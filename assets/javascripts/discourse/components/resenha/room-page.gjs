@@ -838,7 +838,7 @@ export default class ResenhaRoomPage extends Component {
                           @icon={{this.layoutIcon}}
                           @label="resenha.room.layout"
                           @suffixIcon="angle-right"
-                          class="btn-transparent"
+                          class="btn-transparent resenha-room-page__layout-trigger"
                         />
                       </dropdown.item>
                       <dropdown.item>

@@ -7,7 +7,10 @@ describe "Resenha voice rooms", type: :system do
   let(:resenha_sidebar) { PageObjects::Components::ResenhaSidebar.new }
 
   def click_room_page_widget_mode_button
-    within(".resenha-room-page__controls") { all(".btn-icon").last.click }
+    find("button[data-identifier='resenha-room-menu']").click
+    within(".fk-d-menu[data-identifier='resenha-room-menu']") do
+      click_button(I18n.t("js.resenha.room.widget_mode"))
+    end
   end
 
   def click_call_widget_open_page_button
@@ -16,6 +19,14 @@ describe "Resenha voice rooms", type: :system do
 
   def click_call_widget_leave_button
     within(".resenha-call-widget__controls") { find(".resenha-call-widget__leave").click }
+  end
+
+  def switch_layout(layout_label)
+    find("button[data-identifier='resenha-room-menu']").click
+    within(".fk-d-menu[data-identifier='resenha-room-menu']") do
+      click_button(I18n.t("js.resenha.room.layout"))
+    end
+    click_button(layout_label)
   end
 
   fab!(:user)
@@ -115,6 +126,22 @@ describe "Resenha voice rooms", type: :system do
           ".resenha-video-tile.--video[data-user-id='#{user.id}'] video.resenha-video-tile__video"
         expect(page).to have_css(video_selector)
         expect(resenha_media_track_count(video_selector)).to eq(1)
+      end
+
+      it "switches between presentation and tiled layouts from the menu" do
+        SiteSetting.resenha_video_enabled = true
+        install_resenha_fake_media
+
+        visit("/resenha/r/#{room.slug}")
+        click_button(I18n.t("js.resenha.room.join"))
+        expect(page).to have_css(".resenha-room-page__leave")
+        expect(page).to have_css(".resenha-room-page.--tiled")
+
+        switch_layout(I18n.t("js.resenha.video.layout_presentation"))
+        expect(page).to have_css(".resenha-room-page.--presentation")
+
+        switch_layout(I18n.t("js.resenha.video.layout_tiled"))
+        expect(page).to have_css(".resenha-room-page.--tiled")
       end
 
       it "keeps the active call in a widget after switching to widget mode" do
