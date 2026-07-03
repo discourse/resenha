@@ -191,6 +191,27 @@ describe "Resenha voice rooms", type: :system do
         expect(page).to have_no_css(".resenha-call-widget")
       end
 
+      it "opens room actions from the widget overflow menu" do
+        SiteSetting.resenha_video_enabled = true
+        install_resenha_fake_media
+
+        visit("/resenha/r/#{room.slug}")
+        click_button(I18n.t("js.resenha.room.join"))
+        click_room_page_widget_mode_button
+
+        expect(page).to have_css(".resenha-call-widget", text: room.name)
+
+        # The overflow menu portals out at the dropdown z-index; opening it and
+        # clicking an item asserts it renders above the widget rather than
+        # behind it.
+        find(".resenha-call-widget button[data-identifier='resenha-widget-room-menu']").click
+        within(".fk-d-menu[data-identifier='resenha-widget-room-menu']") do
+          click_button(I18n.t("js.resenha.room.info"))
+        end
+
+        expect(page).to have_css(".resenha-room-info-modal")
+      end
+
       it "shows remote fake video when another user publishes a camera stream" do
         SiteSetting.resenha_video_enabled = true
         other_user.activate

@@ -1,0 +1,380 @@
+import Component from "@glimmer/component";
+import { tracked } from "@glimmer/tracking";
+import { fn } from "@ember/helper";
+import { on } from "@ember/modifier";
+import { action } from "@ember/object";
+import { service } from "@ember/service";
+import DButton from "discourse/components/d-button";
+import DMenu from "discourse/float-kit/components/d-menu";
+import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
+import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
+import { i18n } from "discourse-i18n";
+import {
+  enumerateAudioDevices,
+  enumerateVideoDevices,
+  outputSelectionSupported,
+  SYSTEM_DEFAULT_DEVICE_ID,
+} from "../../lib/resenha/media-devices";
+import ResenhaVideoSettingsModal from "../modal/resenha-video-settings";
+import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
+import ResenhaCallSubmenu from "./call-submenu";
+
+const AUDIO_MENU = "resenha-audio-menu";
+const VIDEO_MENU = "resenha-video-menu";
+const SUBMENU = "resenha-call-submenu";
+
+// The audio/video capture controls shared by the room page and the persistent
+// call widget: mic and camera "combo" buttons (a toggle plus a caret opening
+// device pickers and settings), plus the deafen and screen-share buttons.
+//
+// Hosts render this inside their own `__controls` footer and append their
+// context-specific tail (overflow menu, leave button, etc.) as siblings.
+export default class ResenhaCallControls extends Component {
+  @service menu;
+  @service modal;
+  @service resenhaWebrtc;
+
+  @tracked audioInputDevices = [];
+  @tracked audioOutputDevices = [];
+  @tracked videoInputDevices = [];
+
+  get room() {
+    return this.args.room;
+  }
+
+  get videoAllowed() {
+    return this.resenhaWebrtc.videoAllowedIn(this.room);
+  }
+
+  get cameraActive() {
+    return this.resenhaWebrtc.localVideoKind === "camera";
+  }
+
+  get screenShareActive() {
+    return this.resenhaWebrtc.localVideoKind === "screen";
+  }
+
+  get cameraDisabled() {
+    return (
+      !this.cameraActive && !this.resenhaWebrtc.canPublishVideo(this.room?.id)
+    );
+  }
+
+  get screenShareDisabled() {
+    return (
+      !this.screenShareActive &&
+      !this.resenhaWebrtc.canPublishVideo(this.room?.id)
+    );
+  }
+
+  get showScreenShare() {
+    return this.videoAllowed && this.resenhaWebrtc.screenShareSupported;
+  }
+
+  get micTitle() {
+    if (this.resenhaWebrtc.pttEnabled) {
+      return i18n("resenha.ptt.controlled_by_ptt");
+    }
+    return this.resenhaWebrtc.audioEnabled
+      ? i18n("resenha.room.mic_on")
+      : i18n("resenha.room.mic_off");
+  }
+
+  get cameraTitle() {
+    return this.cameraActive
+      ? i18n("resenha.video.camera_off")
+      : i18n("resenha.video.camera_on");
+  }
+
+  get screenShareTitle() {
+    return this.screenShareActive
+      ? i18n("resenha.video.screen_share_stop")
+      : i18n("resenha.video.screen_share_start");
+  }
+
+  get deafenTitle() {
+    return this.resenhaWebrtc.deafened
+      ? i18n("resenha.room.deafen_off")
+      : i18n("resenha.room.deafen_on");
+  }
+
+  get audioOutputSupported() {
+    return outputSelectionSupported();
+  }
+
+  @action
+  toggleMute() {
+    this.resenhaWebrtc.toggleMute();
+  }
+
+  @action
+  toggleDeafen() {
+    this.resenhaWebrtc.toggleDeafen();
+  }
+
+  @action
+  toggleCamera() {
+    this.resenhaWebrtc.toggleCamera();
+  }
+
+  @action
+  toggleScreenShare() {
+    this.resenhaWebrtc.toggleScreenShare();
+  }
+
+  @action
+  openVoiceSettings(closeMenu) {
+    closeMenu?.();
+    this.modal.show(ResenhaVoiceSettingsModal);
+  }
+
+  @action
+  openVideoSettings(closeMenu) {
+    closeMenu?.();
+    this.modal.show(ResenhaVideoSettingsModal);
+  }
+
+  #systemDefaultDevice() {
+    return {
+      id: SYSTEM_DEFAULT_DEVICE_ID,
+      name: i18n("resenha.devices.system_default"),
+    };
+  }
+
+  @action
+  async loadAudioDevices() {
+    const { inputs, outputs } = await enumerateAudioDevices();
+    if (this.isDestroying || this.isDestroyed) {
+      return;
+    }
+    const defaultDevice = this.#systemDefaultDevice();
+    this.audioInputDevices = [defaultDevice, ...inputs];
+    this.audioOutputDevices = [defaultDevice, ...outputs];
+  }
+
+  @action
+  async loadVideoDevices() {
+    const inputs = await enumerateVideoDevices();
+    if (this.isDestroying || this.isDestroyed) {
+      return;
+    }
+    this.videoInputDevices = [this.#systemDefaultDevice(), ...inputs];
+  }
+
+  // Opened programmatically (not a nested <DMenu>) so the trigger stays a
+  // normal full-width menu item, matching core's channel context menu.
+  #openSubmenu(event, parentMenu, items, onSelect) {
+    // Anchor to the row button, not the clicked icon/label, so the submenu
+    // opens flush to the row's right edge.
+    const anchor = event.target.closest(".btn") ?? event.target;
+    this.menu.show(anchor, {
+      identifier: SUBMENU,
+      groupIdentifier: SUBMENU,
+      component: ResenhaCallSubmenu,
+      placement: "right-start",
+      offset: { mainAxis: 8, crossAxis: -5 },
+      modalForMobile: true,
+      data: {
+        items,
+        onSelect: (id) => {
+          onSelect(id);
+          this.menu.close(parentMenu);
+        },
+      },
+    });
+  }
+
+  #deviceItems(devices, currentId) {
+    return devices.map((device) => ({
+      id: device.id,
+      label: device.name,
+      selected: device.id === currentId,
+    }));
+  }
+
+  @action
+  openInputDeviceMenu(_actionArg, event) {
+    this.#openSubmenu(
+      event,
+      AUDIO_MENU,
+      this.#deviceItems(
+        this.audioInputDevices,
+        this.resenhaWebrtc.inputDeviceId
+      ),
+      (id) => this.resenhaWebrtc.setInputDevice(id)
+    );
+  }
+
+  @action
+  openOutputDeviceMenu(_actionArg, event) {
+    this.#openSubmenu(
+      event,
+      AUDIO_MENU,
+      this.#deviceItems(
+        this.audioOutputDevices,
+        this.resenhaWebrtc.outputDeviceId
+      ),
+      (id) => this.resenhaWebrtc.setOutputDevice(id)
+    );
+  }
+
+  @action
+  openCameraMenu(_actionArg, event) {
+    this.#openSubmenu(
+      event,
+      VIDEO_MENU,
+      this.#deviceItems(
+        this.videoInputDevices,
+        this.resenhaWebrtc.videoInputDeviceId
+      ),
+      (id) => this.resenhaWebrtc.setVideoInputDevice(id)
+    );
+  }
+
+  <template>
+    <div class="resenha-call-controls__combo">
+      <DButton
+        @action={{this.toggleMute}}
+        @icon={{if
+          this.resenhaWebrtc.audioEnabled
+          "microphone"
+          "microphone-slash"
+        }}
+        @translatedTitle={{this.micTitle}}
+        @disabled={{this.resenhaWebrtc.pttEnabled}}
+        class={{dConcatClass
+          "btn-default resenha-call-controls__combo-main"
+          (if this.resenhaWebrtc.audioEnabled "" "--off")
+        }}
+      />
+      <DMenu
+        @identifier="resenha-audio-menu"
+        @icon="angle-down"
+        @title={{i18n "resenha.room.audio_options"}}
+        @ariaLabel={{i18n "resenha.room.audio_options"}}
+        @placement="top-end"
+        @onShow={{this.loadAudioDevices}}
+        @triggerClass="btn-default resenha-call-controls__combo-caret"
+      >
+        <:content as |audioMenu|>
+          <DDropdownMenu as |dropdown|>
+            <dropdown.item>
+              <DButton
+                @action={{this.openInputDeviceMenu}}
+                @forwardEvent={{true}}
+                @icon="microphone"
+                @label="resenha.voice_settings.input_audio"
+                @suffixIcon="angle-right"
+                class="btn-transparent"
+              />
+            </dropdown.item>
+            {{#if this.audioOutputSupported}}
+              <dropdown.item>
+                <DButton
+                  @action={{this.openOutputDeviceMenu}}
+                  @forwardEvent={{true}}
+                  @icon="volume-high"
+                  @label="resenha.voice_settings.output_audio"
+                  @suffixIcon="angle-right"
+                  class="btn-transparent"
+                />
+              </dropdown.item>
+            {{/if}}
+            <dropdown.divider />
+            <dropdown.item>
+              <DButton
+                @action={{fn this.openVoiceSettings audioMenu.close}}
+                @icon="sliders"
+                @label="resenha.voice_settings.audio_settings"
+                class="btn-transparent"
+              />
+            </dropdown.item>
+          </DDropdownMenu>
+        </:content>
+      </DMenu>
+    </div>
+    {{! Capture buttons are plain <button>s on purpose: DButton defers its
+    action via next(), which lands outside the click event dispatch — Firefox
+    only allows getDisplayMedia during the actual dispatch, so a deferred call
+    throws NotAllowedError. }}
+    {{#if this.videoAllowed}}
+      <div class="resenha-call-controls__combo">
+        <button
+          type="button"
+          class={{dConcatClass
+            "btn btn-icon no-text btn-default resenha-call-controls__combo-main"
+            (if this.cameraActive "--active")
+          }}
+          title={{this.cameraTitle}}
+          aria-label={{this.cameraTitle}}
+          disabled={{this.cameraDisabled}}
+          {{on "click" this.toggleCamera}}
+        >
+          {{dIcon (if this.cameraActive "video" "video-slash")}}
+          {{! Zero-width space: matches DButton so an icon-only button keeps
+          full button height and aligns with its DButton siblings. }}
+          <span aria-hidden="true">&#8203;</span>
+        </button>
+        <DMenu
+          @identifier="resenha-video-menu"
+          @icon="angle-down"
+          @title={{i18n "resenha.room.video_options"}}
+          @ariaLabel={{i18n "resenha.room.video_options"}}
+          @placement="top-end"
+          @onShow={{this.loadVideoDevices}}
+          @triggerClass="btn-default resenha-call-controls__combo-caret"
+        >
+          <:content as |videoMenu|>
+            <DDropdownMenu as |dropdown|>
+              <dropdown.item>
+                <DButton
+                  @action={{this.openCameraMenu}}
+                  @forwardEvent={{true}}
+                  @icon="video"
+                  @label="resenha.video_settings.camera"
+                  @suffixIcon="angle-right"
+                  class="btn-transparent"
+                />
+              </dropdown.item>
+              <dropdown.divider />
+              <dropdown.item>
+                <DButton
+                  @action={{fn this.openVideoSettings videoMenu.close}}
+                  @icon="sliders"
+                  @label="resenha.video_settings.title"
+                  class="btn-transparent"
+                />
+              </dropdown.item>
+            </DDropdownMenu>
+          </:content>
+        </DMenu>
+      </div>
+    {{/if}}
+    <DButton
+      @action={{this.toggleDeafen}}
+      @icon={{if this.resenhaWebrtc.deafened "volume-xmark" "ear-listen"}}
+      @translatedTitle={{this.deafenTitle}}
+      class={{dConcatClass
+        "btn-default"
+        (if this.resenhaWebrtc.deafened "--off" "")
+      }}
+    />
+    {{#if this.showScreenShare}}
+      <button
+        type="button"
+        class={{dConcatClass
+          "btn btn-icon no-text btn-default"
+          (if this.screenShareActive "--active")
+        }}
+        title={{this.screenShareTitle}}
+        aria-label={{this.screenShareTitle}}
+        disabled={{this.screenShareDisabled}}
+        {{on "click" this.toggleScreenShare}}
+      >
+        {{dIcon "display"}}
+        <span aria-hidden="true">&#8203;</span>
+      </button>
+    {{/if}}
+  </template>
+}
