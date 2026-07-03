@@ -29,8 +29,12 @@ en:
         type_stage_hint: "Participants join as listeners. Moderators can promote listeners to speakers."
         listeners_cannot_unmute: "Only speakers can unmute in this room."
         open_page: "Show full room view"
-        widget_mode: "Show widget view"
+        widget_mode: "Widget view"
         settings: "Call settings"
+        more: "More options"
+        audio_options: "Audio options"
+        video_options: "Video options"
+        layout: "Layout"
       room_page:
         empty: "No one is here yet — join to get things started."
       widget:
@@ -93,6 +97,9 @@ en:
       voice_settings:
         title: "Voice settings"
         open: "Voice settings"
+        input_audio: "Input audio"
+        output_audio: "Output audio"
+        audio_settings: "Audio settings"
         input_device: "Input device"
         output_device: "Output device"
         mic_test: "Microphone test"
