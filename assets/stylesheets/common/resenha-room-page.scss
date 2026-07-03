@@ -357,6 +357,7 @@ html.discourse-touch .resenha-call-widget {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
+    align-items: center;
     gap: 0.5em;
 
     .--off,
@@ -364,19 +365,26 @@ html.discourse-touch .resenha-call-widget {
       color: var(--tertiary);
     }
   }
-}
 
-.resenha-room-page__layout-content {
-  .resenha-room-page__layout-dropdown {
-    min-width: 12rem;
-  }
+  // Split "combo" button: the main toggle and its caret read as one button.
+  // The main button drops its trailing border so the caret's leading border is
+  // the only divider between them.
+  &__combo {
+    display: inline-flex;
+    align-items: stretch;
 
-  .resenha-room-page__layout-option.--active {
-    background: var(--tertiary-low);
+    .resenha-room-page__combo-main {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+      border-inline-end: none;
+    }
 
-    .btn,
-    .d-icon {
-      color: var(--tertiary);
+    .resenha-room-page__combo-caret {
+      margin-inline-start: 0;
+      padding-inline: 0.4em;
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      border-inline-start: 1px solid var(--primary-low-mid);
     }
   }
 }
