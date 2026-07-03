@@ -24,6 +24,16 @@ RSpec.describe Resenha::RoomsController do
   fab!(:user) { Fabricate(:user, trust_level: TrustLevel[2]) }
   fab!(:other_participant) { Fabricate(:user, trust_level: TrustLevel[2]) }
   fab!(:room) { Fabricate(:resenha_room, creator: staff, public: true) }
+  fab!(:room_owner) { Fabricate(:user, trust_level: TrustLevel[2]) }
+  fab!(:private_room_member) { Fabricate(:user, trust_level: TrustLevel[2]) }
+  fab!(:private_room) { Fabricate(:resenha_room, creator: room_owner, public: false) }
+
+  fab!(:private_room_membership) do
+    private_room.room_memberships.create!(
+      user: private_room_member,
+      role: Resenha::RoomMembership::ROLE_PARTICIPANT,
+    )
+  end
 
   before do
     SiteSetting.resenha_enabled = true
@@ -50,9 +60,36 @@ RSpec.describe Resenha::RoomsController do
       expect(response.parsed_body["rooms"].first["message_bus_last_id"]).to be_a(Integer)
     end
 
-    context "when anonymous" do
-      fab!(:private_room) { Fabricate(:resenha_room, creator: staff, public: false) }
+    it "hides non-public rooms from non-members who can create rooms" do
+      sign_in(user)
 
+      get "/resenha/rooms.json"
+
+      expect(response.status).to eq(200)
+      room_ids = response.parsed_body["rooms"].map { |listed_room| listed_room["id"] }
+      expect(room_ids).not_to include(private_room.id)
+      expect(response.parsed_body["can_create_room"]).to eq(true)
+    end
+
+    it "includes non-public rooms for their members" do
+      sign_in(private_room_member)
+
+      get "/resenha/rooms.json"
+
+      room_ids = response.parsed_body["rooms"].map { |listed_room| listed_room["id"] }
+      expect(room_ids).to include(room.id, private_room.id)
+    end
+
+    it "includes non-public rooms for site staff" do
+      sign_in(staff)
+
+      get "/resenha/rooms.json"
+
+      room_ids = response.parsed_body["rooms"].map { |listed_room| listed_room["id"] }
+      expect(room_ids).to include(private_room.id)
+    end
+
+    context "when anonymous" do
       it "returns only public rooms when access is open to everyone" do
         get "/resenha/rooms.json"
 
@@ -74,6 +111,39 @@ RSpec.describe Resenha::RoomsController do
     end
   end
 
+  describe "#show" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(user)
+
+      get "/resenha/rooms/#{private_room.id}.json"
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns the room to a member" do
+      sign_in(private_room_member)
+
+      get "/resenha/rooms/#{private_room.id}.json"
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["room"]["id"]).to eq(private_room.id)
+    end
+
+    it "returns the room to site staff who aren't members" do
+      sign_in(staff)
+
+      get "/resenha/rooms/#{private_room.id}.json"
+
+      expect(response.status).to eq(200)
+    end
+
+    it "returns 403 to anonymous visitors for non-public rooms" do
+      get "/resenha/rooms/#{private_room.id}.json"
+
+      expect(response.status).to eq(403)
+    end
+  end
+
   describe "#create" do
     it "allows trusted user to create a room" do
       sign_in(user)
@@ -83,9 +153,46 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(200)
       expect(response.parsed_body["room"]["name"]).to eq("Game Night")
     end
+
+    it "denies room creation to users outside the create-room groups" do
+      low_trust_user = Fabricate(:user, trust_level: TrustLevel[0])
+      sign_in(low_trust_user)
+
+      post "/resenha/rooms.json", params: { room: { name: "Game Night", public: true } }
+
+      expect(response.status).to eq(403)
+    end
   end
 
   describe "#join" do
+    it "returns 403 when a non-member who can create rooms joins a private room" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{private_room.id}/join.json"
+
+      expect(response.status).to eq(403)
+      expect(Resenha::ParticipantTracker.user_ids(private_room.id)).not_to include(user.id)
+    end
+
+    it "lets a member join a private room" do
+      sign_in(private_room_member)
+
+      post "/resenha/rooms/#{private_room.id}/join.json"
+
+      expect(response.status).to eq(200)
+      expect(Resenha::ParticipantTracker.user_ids(private_room.id)).to include(
+        private_room_member.id,
+      )
+    end
+
+    it "lets site staff join a private room they aren't a member of" do
+      sign_in(staff)
+
+      post "/resenha/rooms/#{private_room.id}/join.json"
+
+      expect(response.status).to eq(200)
+    end
+
     it "tracks users when they join a room" do
       sign_in(user)
 
@@ -513,6 +620,135 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(200)
       expect(room.reload.video_enabled).to eq(false)
       expect(response.parsed_body["room"]["video_enabled"]).to eq(false)
+    end
+
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(user)
+
+      expect {
+        put "/resenha/rooms/#{private_room.id}.json", params: { room: { name: "Hijacked" } }
+      }.not_to change { private_room.reload.name }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns 403 for a plain participant member" do
+      sign_in(private_room_member)
+
+      put "/resenha/rooms/#{private_room.id}.json", params: { room: { name: "Hijacked" } }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "lets the creator update their room" do
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{private_room.id}.json", params: { room: { name: "New name" } }
+
+      expect(response.status).to eq(200)
+      expect(private_room.reload.name).to eq("New name")
+    end
+  end
+
+  describe "#destroy" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(user)
+
+      delete "/resenha/rooms/#{private_room.id}.json"
+
+      expect(response.status).to eq(403)
+      expect(Resenha::Room.exists?(private_room.id)).to eq(true)
+    end
+
+    it "lets the creator destroy their room" do
+      sign_in(room_owner)
+
+      delete "/resenha/rooms/#{private_room.id}.json"
+
+      expect(response.status).to eq(200)
+      expect(Resenha::Room.exists?(private_room.id)).to eq(false)
+    end
+
+    it "broadcasts the destroy to the members the room had" do
+      sign_in(room_owner)
+
+      messages =
+        MessageBus.track_publish(Resenha.room_index_channel) do
+          delete "/resenha/rooms/#{private_room.id}.json"
+        end
+
+      expect(response.status).to eq(200)
+      destroy_message = messages.find { |message| message.data[:type] == :destroyed }
+      expect(destroy_message).to be_present
+      expect(destroy_message.user_ids).to contain_exactly(room_owner.id, private_room_member.id)
+    end
+  end
+
+  describe "#participants" do
+    before { Resenha::ParticipantTracker.add(private_room.id, private_room_member.id) }
+
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(user)
+
+      get "/resenha/rooms/#{private_room.id}/participants.json"
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns the participant list to a member" do
+      sign_in(private_room_member)
+
+      get "/resenha/rooms/#{private_room.id}/participants.json"
+
+      expect(response.status).to eq(200)
+      participant_ids = response.parsed_body["participants"].map { |p| p["id"] }
+      expect(participant_ids).to include(private_room_member.id)
+    end
+  end
+
+  describe "#heartbeat on a private room" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{private_room.id}/heartbeat.json"
+
+      expect(response.status).to eq(403)
+      expect(Resenha::ParticipantTracker.user_ids(private_room.id)).not_to include(user.id)
+    end
+  end
+
+  describe "#signal on a private room" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{private_room.id}/signal.json",
+           params: {
+             payload: {
+               type: "offer",
+               sdp: "v=0",
+               recipient_id: private_room_member.id,
+             },
+           }
+
+      expect(response.status).to eq(403)
+    end
+  end
+
+  describe "#kick on a private room" do
+    before { Resenha::ParticipantTracker.add(private_room.id, private_room_member.id) }
+
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(user)
+
+      delete "/resenha/rooms/#{private_room.id}/kick.json",
+             params: {
+               user_id: private_room_member.id,
+             }
+
+      expect(response.status).to eq(403)
+      expect(Resenha::ParticipantTracker.user_ids(private_room.id)).to include(
+        private_room_member.id,
+      )
     end
   end
 

@@ -16,17 +16,18 @@ module Resenha
         SiteSetting.resenha_allowed_groups_map.include?(Group::AUTO_GROUPS[:everyone])
     end
 
-    def can_manage_resenha_rooms?
+    def can_create_resenha_room?
       return false unless can_access_resenha?
       user.in_any_groups?(SiteSetting.resenha_create_room_allowed_groups_map)
     end
 
+    # Being allowed to create rooms grants nothing over other people's rooms:
+    # a room is managed by site staff, its creator, and its moderators only.
     def can_manage_resenha_room?(room)
       return false unless can_access_resenha?
       return false unless room
 
-      can_manage_resenha_rooms? || room.creator_id == user&.id ||
-        room.moderator_ids.include?(user&.id)
+      is_staff? || room.creator_id == user.id || room.moderator_ids.include?(user.id)
     end
 
     def ensure_can_manage_resenha_room!(room)
@@ -36,7 +37,7 @@ module Resenha
     end
 
     def ensure_can_create_resenha_room!
-      unless can_manage_resenha_rooms?
+      unless can_create_resenha_room?
         raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
       end
     end
