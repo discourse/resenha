@@ -126,22 +126,8 @@ module("Integration | Component | resenha/room-page", function (hooks) {
 
     assert
       .dom(".resenha-room-page")
-      .hasClass("--presentation", "defaults to presentation layout");
-    assert
-      .dom(".resenha-room-page__presentation")
-      .exists("renders the presentation stage");
-
-    await click(".resenha-room-page__layout-trigger");
-    await click(
-      '[role="dialog"] button[title="Tiled layout"], .resenha-room-page__layout-content button[title="Tiled layout"]'
-    );
-
-    assert
-      .dom(".resenha-room-page")
-      .hasClass("--tiled", "switches to tiled layout");
-    assert
-      .dom(".resenha-room-page__grid")
-      .exists("renders the tiled grid after switching");
+      .hasClass("--tiled", "defaults to tiled layout");
+    assert.dom(".resenha-room-page__grid").exists("renders the tiled grid");
 
     await click(".resenha-room-page__layout-trigger");
     await click(
@@ -150,6 +136,18 @@ module("Integration | Component | resenha/room-page", function (hooks) {
 
     assert
       .dom(".resenha-room-page")
-      .hasClass("--presentation", "switches back to presentation layout");
+      .hasClass("--presentation", "switches to presentation layout");
+    assert
+      .dom(".resenha-room-page__presentation")
+      .exists("renders the presentation stage after switching");
+
+    await click(".resenha-room-page__layout-trigger");
+    await click(
+      '[role="dialog"] button[title="Tiled layout"], .resenha-room-page__layout-content button[title="Tiled layout"]'
+    );
+
+    assert
+      .dom(".resenha-room-page")
+      .hasClass("--tiled", "switches back to tiled layout");
   });
 });
