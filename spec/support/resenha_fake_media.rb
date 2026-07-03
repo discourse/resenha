@@ -161,6 +161,18 @@ module ResenhaFakeMedia
               accent: "#111827",
             });
           };
+
+          mediaDevices.enumerateDevices = async () => {
+            return window.__resenhaFakeMediaVideoFeeds.map((feed, index) => ({
+              deviceId: `resenha-fake-camera-${index}`,
+              groupId: `resenha-fake-group-${index}`,
+              kind: "videoinput",
+              label: feed.label,
+              toJSON() {
+                return this;
+              },
+            }));
+          };
         })();
       JS
     end
