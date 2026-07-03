@@ -411,8 +411,8 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
   hooks.beforeEach(function () {
     this.currentUser = logIn(this.owner);
     this.siteSettings = this.owner.lookup("service:site-settings");
-    this.siteSettings.resenha_noise_suppression = false;
     this.siteSettings.resenha_auto_status_enabled = true;
+    localStorage.removeItem("resenha:noise-suppression");
     this.siteSettings.resenha_stun_servers = "";
     this.siteSettings.resenha_turn_servers = "";
 
@@ -1534,7 +1534,6 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       processedStream,
     });
 
-    this.siteSettings.resenha_noise_suppression = true;
     this.room.membership.role_name = "speaker";
     this.room.active_participants = [
       { id: this.currentUser.id, role: "speaker" },
@@ -1591,7 +1590,6 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       processedStream,
     });
 
-    this.siteSettings.resenha_noise_suppression = true;
     this.room.membership.role_name = "speaker";
     this.room.active_participants = [
       { id: this.currentUser.id, role: "speaker" },
@@ -1640,6 +1638,36 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     } finally {
       localStorage.removeItem("resenha:noise-suppression");
       audioEnvironment.restore();
+    }
+  });
+
+  test("toggling noise suppression without a microphone only stores the preference", async function (assert) {
+    try {
+      await this.subject.toggleNoiseSuppression();
+
+      assert.true(
+        this.subject.noiseSuppressionEnabled,
+        "marks noise suppression as enabled for the next mic acquisition"
+      );
+      assert.strictEqual(
+        localStorage.getItem("resenha:noise-suppression"),
+        "1",
+        "persists the preference"
+      );
+
+      await this.subject.toggleNoiseSuppression();
+
+      assert.false(
+        this.subject.noiseSuppressionEnabled,
+        "marks noise suppression as disabled"
+      );
+      assert.strictEqual(
+        localStorage.getItem("resenha:noise-suppression"),
+        null,
+        "clears the preference"
+      );
+    } finally {
+      localStorage.removeItem("resenha:noise-suppression");
     }
   });
 

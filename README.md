@@ -33,7 +33,6 @@ The plugin seeds a default "Watercooler" room on first enable.
 | `resenha_create_room_allowed_groups` | Groups that can create new rooms (default: admins, moderators, TL2).                 |
 | `resenha_max_rooms_per_user`         | Max rooms per creator (default 5).                                                   |
 | `resenha_participant_ttl_seconds`    | Redis presence TTL in seconds (default 30). Client heartbeat refreshes every 10s.    |
-| `resenha_noise_suppression`          | Allow users to opt into DTLN noise suppression.                                      |
 | `resenha_video_enabled`              | Allow camera video and screen sharing (default off). Rooms can opt out individually. |
 | `resenha_video_max_publishers`       | Max simultaneous video/screen publishers per room (default 8).                       |
 | `resenha_video_background_blur_enabled` | Allow users to blur their camera background (default on; requires video).        |
@@ -81,7 +80,7 @@ The script pins the `@mediapipe/tasks-vision` npm version and the model version,
 
 ## Noise Suppression
 
-Optional DTLN-based noise suppression powered by [dtln-rs](https://github.com/DataDog/dtln-rs), compiled to WebAssembly. When enabled by an admin, users can toggle it from their participant context menu. The preference persists per device via `localStorage`.
+Optional DTLN-based noise suppression powered by [dtln-rs](https://github.com/DataDog/dtln-rs), compiled to WebAssembly. Users can toggle it from the voice settings modal. The preference persists per device via `localStorage`.
 
 ```
 Microphone → AudioContext → AudioWorkletNode (dtln) → MediaStreamDestination → WebRTC peers

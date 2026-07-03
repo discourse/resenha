@@ -159,6 +159,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#noiseSuppression = new NoiseSuppressionManager({
       onStreamReady: (stream) => this.#setOutgoingStream(stream),
     });
+    this.noiseSuppressionEnabled = this.#noiseSuppression.isPreferred();
 
     this.#inputGate = new InputGateManager();
     this.gateThreshold = InputGateManager.storedSliderValue();
@@ -717,7 +718,11 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   async toggleNoiseSuppression() {
+    // Without a live mic (e.g. a stage listener) just store the preference;
+    // it applies when the microphone is next acquired.
     if (!this.#rawLocalStream) {
+      this.noiseSuppressionEnabled = !this.noiseSuppressionEnabled;
+      this.#noiseSuppression.setPreference(this.noiseSuppressionEnabled);
       return;
     }
 
@@ -738,12 +743,24 @@ export default class ResenhaWebrtcService extends Service {
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to enable noise suppression", error);
+        this.#revertNoiseSuppressionPreference();
         this.#setOutgoingStream(this.#rawLocalStream);
         return;
       }
     }
 
     await this.#replaceTrackOnAllPeers();
+  }
+
+  #revertNoiseSuppressionPreference() {
+    this.noiseSuppressionEnabled = false;
+    this.#noiseSuppression.setPreference(false);
+    this.toasts.error({
+      duration: 5000,
+      data: {
+        message: i18n("resenha.voice_settings.noise_suppression_failed"),
+      },
+    });
   }
 
   // --- Device selection & input sensitivity ---
@@ -780,7 +797,7 @@ export default class ResenhaWebrtcService extends Service {
           "[resenha] noise suppression setup failed after device switch",
           error
         );
-        this.noiseSuppressionEnabled = false;
+        this.#revertNoiseSuppressionPreference();
         this.#setOutgoingStream(newRawStream);
       }
     } else {
@@ -2019,10 +2036,7 @@ export default class ResenhaWebrtcService extends Service {
 
       this.#rawLocalStream = rawStream;
 
-      if (
-        this.siteSettings.resenha_noise_suppression &&
-        this.#noiseSuppression.isPreferred()
-      ) {
+      if (this.#noiseSuppression.isPreferred()) {
         try {
           await this.#noiseSuppression.setup(rawStream);
           this.noiseSuppressionEnabled = true;
@@ -2034,6 +2048,7 @@ export default class ResenhaWebrtcService extends Service {
             "[resenha] noise suppression setup failed, using raw stream",
             nsError
           );
+          this.noiseSuppressionEnabled = false;
           this.#setOutgoingStream(rawStream);
         }
       } else {
@@ -2520,7 +2535,7 @@ export default class ResenhaWebrtcService extends Service {
 
   #stopLocalStream() {
     this.#noiseSuppression.teardown();
-    this.noiseSuppressionEnabled = false;
+    this.noiseSuppressionEnabled = this.#noiseSuppression.isPreferred();
     this.#inputGate.teardown();
     this.#upstreamStream = null;
 
