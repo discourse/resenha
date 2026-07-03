@@ -161,6 +161,12 @@ module Resenha
 
         root = create_message!(guardian: root_guardian, channel_id: channel.id, message: root_text)
         thread = open_thread!(channel, root, title: title)
+        # Mark the thread as this room's before anything is published: a panel
+        # reacting to the publish looks the thread up by this field right away,
+        # and a miss would be cached as "not a session thread". Unlike the
+        # Redis pointer, the marker outlives the session, tracing any past
+        # session thread back to its room.
+        thread.upsert_custom_fields(Resenha::THREAD_ROOM_ID_FIELD => room.id)
         # Record the thread before posting the templated reply: if that reply
         # is rejected (e.g. a duplicate), the session must already point at the
         # real thread so a retry continues it instead of opening another one.

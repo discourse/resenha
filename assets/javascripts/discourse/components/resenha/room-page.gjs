@@ -120,6 +120,27 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
+  autoJoinIfRequested() {
+    if (!this.args.autoJoin) {
+      return;
+    }
+
+    next(this, () => {
+      if (this.isDestroying || this.isDestroyed) {
+        return;
+      }
+
+      // Consume the param so a refresh or back-navigation doesn't rejoin a
+      // call the user has since left.
+      this.router.transitionTo({ queryParams: { join: false } });
+
+      if (!this.joined && !this.connecting) {
+        this.joinRoom();
+      }
+    });
+  }
+
+  @action
   watchRoom() {
     next(this, () => {
       if (this.isDestroying || this.isDestroyed) {
@@ -345,6 +366,7 @@ export default class ResenhaRoomPage extends Component {
         (if this.chatVisible "--chat-open")
       }}
       {{didInsert this.watchRoom}}
+      {{didInsert this.autoJoinIfRequested}}
     >
       <div class="resenha-room-page__body">
         <div class="resenha-room-page__main">

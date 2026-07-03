@@ -5,6 +5,11 @@ module ::Resenha
   ROOM_CHANNEL_PREFIX = "/resenha/rooms"
   ROOM_INDEX_CHANNEL = "/resenha/rooms/index"
 
+  # Chat::Thread custom field marking a thread as a room's voice session
+  # thread, so it can be traced back to its room long after the live session
+  # pointer in Redis has expired.
+  THREAD_ROOM_ID_FIELD = "resenha_room_id"
+
   def self.table_name_prefix
     "resenha_"
   end

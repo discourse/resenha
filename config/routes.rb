@@ -20,6 +20,7 @@ Resenha::Engine.routes.draw do
   end
 
   get "contacts" => "contacts#index"
+  get "chat_threads/:id" => "chat_threads#show", :constraints => { id: /\d+/ }
   get "r/:slug" => "page#show", :format => false
 end
 
