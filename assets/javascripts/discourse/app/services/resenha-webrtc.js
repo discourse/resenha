@@ -752,7 +752,11 @@ export default class ResenhaWebrtcService extends Service {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to enable noise suppression", error);
         this.#revertNoiseSuppressionPreference();
+        // #setOutgoingStream rebuilds the input gate, so localStream may be
+        // a brand-new track; peers must be moved onto it or they keep the
+        // torn-down gate's dead track and hear silence.
         this.#setOutgoingStream(this.#rawLocalStream);
+        await this.#replaceTrackOnAllPeers();
         return;
       }
     }

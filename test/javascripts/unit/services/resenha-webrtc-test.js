@@ -310,10 +310,16 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
 
   class FakeAudioContext {
     currentTime = 0;
+    state = "running";
     destination = {};
     audioWorklet = {
       addModule: async () => {},
     };
+
+    resume() {
+      this.state = "running";
+      return Promise.resolve();
+    }
 
     createMediaStreamSource(stream) {
       sourceStreams.push(stream);
