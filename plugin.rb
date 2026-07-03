@@ -65,6 +65,14 @@ after_initialize do
   # visitors without exposing the configured group ids.
   add_to_serializer(:site, :resenha_public_access) { scope.resenha_public_access? }
 
+  # Mediapipe assets live in the plugin's public dir, which is served by the
+  # app (and any CDN proxying it) but never uploaded to a static asset CDN,
+  # so the client cannot build a working URL with getURLWithCDN.
+  add_to_serializer(:site, :resenha_mediapipe_base_url) do
+    path = GlobalPath.path("/plugins/resenha/javascripts/mediapipe")
+    GlobalSetting.cdn_url.present? ? "#{GlobalSetting.cdn_url}#{path}" : path
+  end
+
   Resenha::DefaultRoomSeeder.ensure! if SiteSetting.resenha_enabled?
 
   on(:site_setting_changed) do |name, _old_value, new_value|

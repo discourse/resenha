@@ -6,9 +6,9 @@
 // Mirrors the NoiseSuppressionManager contract: setup(raw stream) returns
 // the processed stream; the caller keeps ownership of the raw stream.
 
-import { getURLWithCDN } from "discourse/lib/get-url";
+import getURL from "discourse/lib/get-url";
+import Site from "discourse/models/site";
 
-const MEDIAPIPE_BASE = getURLWithCDN("/plugins/resenha/javascripts/mediapipe");
 const ENABLED_KEY = "resenha_video_blur_enabled";
 const AMOUNT_KEY = "resenha_video_blur_amount";
 
@@ -33,17 +33,26 @@ let segmenterPromise = null;
 // all users of the shared segmenter.
 let lastTimestamp = 0;
 
+// The mediapipe files sit in the plugin's public dir, which static asset
+// CDNs (getURLWithCDN) never receive; the serialized base rides the
+// app-proxying CDN instead. Anchor to the page URL because this compiled
+// chunk may itself be served from a CDN origin, and a dynamic import() of
+// a bare path would resolve against the chunk's origin, not the site's.
+function mediapipeBase() {
+  const base =
+    Site.current()?.resenha_mediapipe_base_url ||
+    getURL("/plugins/resenha/javascripts/mediapipe");
+  return new URL(base, window.location).href;
+}
+
 async function loadSegmenter() {
   segmenterPromise ||= (async () => {
-    const vision = await import(
-      /* @vite-ignore */ `${MEDIAPIPE_BASE}/vision_bundle.js`
-    );
-    const fileset = await vision.FilesetResolver.forVisionTasks(
-      `${MEDIAPIPE_BASE}/wasm`
-    );
+    const base = mediapipeBase();
+    const vision = await import(/* @vite-ignore */ `${base}/vision_bundle.js`);
+    const fileset = await vision.FilesetResolver.forVisionTasks(`${base}/wasm`);
     return await vision.ImageSegmenter.createFromOptions(fileset, {
       baseOptions: {
-        modelAssetPath: `${MEDIAPIPE_BASE}/selfie_segmenter.tflite`,
+        modelAssetPath: `${base}/selfie_segmenter.tflite`,
         delegate: "GPU",
       },
       runningMode: "VIDEO",
