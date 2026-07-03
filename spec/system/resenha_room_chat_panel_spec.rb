@@ -61,7 +61,13 @@ describe "Resenha room chat panel", type: :system do
     wait_for_animation(find(".resenha-room-page__sidebar"))
 
     find(".resenha-chat__input").fill_in(with: "kicking things off")
-    find(".resenha-chat__input").send_keys(:enter)
+    # The first send on a templated room fans out into creating the thread,
+    # fetching its messages, and mounting/focusing the native composer, all
+    # before our custom "client settled" check (run automatically after
+    # send_keys) is satisfied. That chain can outlast the default wait under
+    # CI load, so give it more room here rather than raising the global
+    # timeout for every interaction in the suite.
+    using_wait_time(20) { find(".resenha-chat__input").send_keys(:enter) }
 
     # Both the system-posted starter and the reply must render on the first
     # mount — not only after closing and reopening the panel.
@@ -80,7 +86,9 @@ describe "Resenha room chat panel", type: :system do
     expect(page).to have_no_css(".resenha-chat .chat-thread")
 
     find(".resenha-chat__input").fill_in(with: "kicking things off")
-    find(".resenha-chat__input").send_keys(:enter)
+    # See the note above: the first send races thread creation, its message
+    # fetch, and the native composer's mount/focus against the settle check.
+    using_wait_time(20) { find(".resenha-chat__input").send_keys(:enter) }
 
     # The first message creates the thread and the panel swaps to the native UI.
     expect(page).to have_css(".resenha-chat .chat-thread")
