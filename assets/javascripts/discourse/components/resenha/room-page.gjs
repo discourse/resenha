@@ -20,25 +20,16 @@ import {
   trackFullscreen,
 } from "../../lib/resenha/fullscreen";
 import {
-  enumerateAudioDevices,
-  enumerateVideoDevices,
-  outputSelectionSupported,
-  SYSTEM_DEFAULT_DEVICE_ID,
-} from "../../lib/resenha/media-devices";
-import {
   bestRowHeight,
   DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
 import ResenhaRoomInfoModal from "../modal/resenha-room-info";
-import ResenhaVideoSettingsModal from "../modal/resenha-video-settings";
-import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
+import ResenhaCallControls from "./call-controls";
 import ResenhaCallSubmenu from "./call-submenu";
 import ResenhaChatPanel from "./chat-panel";
 import ResenhaVideoTile from "./video-tile";
 
-const AUDIO_MENU = "resenha-audio-menu";
-const VIDEO_MENU = "resenha-video-menu";
 const ROOM_MENU = "resenha-room-menu";
 const SUBMENU = "resenha-call-submenu";
 
@@ -64,9 +55,6 @@ export default class ResenhaRoomPage extends Component {
   @tracked chatOpen = !!this.args.openChat;
   @tracked chatClosing = false;
   @tracked layoutMode = LAYOUT_TILED;
-  @tracked audioInputDevices = [];
-  @tracked audioOutputDevices = [];
-  @tracked videoInputDevices = [];
 
   gridElement = null;
   trackGridSize = trackGridSize;
@@ -102,10 +90,6 @@ export default class ResenhaRoomPage extends Component {
 
   get connecting() {
     return this.connectionState === "connecting";
-  }
-
-  get videoAllowed() {
-    return this.resenhaWebrtc.videoAllowedIn(this.room);
   }
 
   get participants() {
@@ -261,58 +245,6 @@ export default class ResenhaRoomPage extends Component {
     return htmlSafe(`--resenha-tile-height: ${rowHeight}px;`);
   }
 
-  get cameraActive() {
-    return this.resenhaWebrtc.localVideoKind === "camera";
-  }
-
-  get screenShareActive() {
-    return this.resenhaWebrtc.localVideoKind === "screen";
-  }
-
-  get cameraDisabled() {
-    return (
-      !this.cameraActive && !this.resenhaWebrtc.canPublishVideo(this.room.id)
-    );
-  }
-
-  get screenShareDisabled() {
-    return (
-      !this.screenShareActive &&
-      !this.resenhaWebrtc.canPublishVideo(this.room.id)
-    );
-  }
-
-  get showScreenShare() {
-    return this.videoAllowed && this.resenhaWebrtc.screenShareSupported;
-  }
-
-  get micTitle() {
-    if (this.resenhaWebrtc.pttEnabled) {
-      return i18n("resenha.ptt.controlled_by_ptt");
-    }
-    return this.resenhaWebrtc.audioEnabled
-      ? i18n("resenha.room.mic_on")
-      : i18n("resenha.room.mic_off");
-  }
-
-  get cameraTitle() {
-    return this.cameraActive
-      ? i18n("resenha.video.camera_off")
-      : i18n("resenha.video.camera_on");
-  }
-
-  get screenShareTitle() {
-    return this.screenShareActive
-      ? i18n("resenha.video.screen_share_stop")
-      : i18n("resenha.video.screen_share_start");
-  }
-
-  get deafenTitle() {
-    return this.resenhaWebrtc.deafened
-      ? i18n("resenha.room.deafen_off")
-      : i18n("resenha.room.deafen_on");
-  }
-
   @action
   joinRoom() {
     if (!this.currentUser) {
@@ -390,38 +322,6 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
-  toggleMute() {
-    this.resenhaWebrtc.toggleMute();
-  }
-
-  @action
-  toggleDeafen() {
-    this.resenhaWebrtc.toggleDeafen();
-  }
-
-  @action
-  toggleCamera() {
-    this.resenhaWebrtc.toggleCamera();
-  }
-
-  @action
-  toggleScreenShare() {
-    this.resenhaWebrtc.toggleScreenShare();
-  }
-
-  @action
-  openVoiceSettings(closeMenu) {
-    closeMenu?.();
-    this.modal.show(ResenhaVoiceSettingsModal);
-  }
-
-  @action
-  openVideoSettings(closeMenu) {
-    closeMenu?.();
-    this.modal.show(ResenhaVideoSettingsModal);
-  }
-
-  @action
   openRoomInfo(closeMenu) {
     closeMenu?.();
     this.modal.show(ResenhaRoomInfoModal, { model: { room: this.room } });
@@ -437,37 +337,6 @@ export default class ResenhaRoomPage extends Component {
   toggleChatFromMenu(closeMenu) {
     closeMenu?.();
     this.toggleChat();
-  }
-
-  get audioOutputSupported() {
-    return outputSelectionSupported();
-  }
-
-  #systemDefaultDevice() {
-    return {
-      id: SYSTEM_DEFAULT_DEVICE_ID,
-      name: i18n("resenha.devices.system_default"),
-    };
-  }
-
-  @action
-  async loadAudioDevices() {
-    const { inputs, outputs } = await enumerateAudioDevices();
-    if (this.isDestroying || this.isDestroyed) {
-      return;
-    }
-    const defaultDevice = this.#systemDefaultDevice();
-    this.audioInputDevices = [defaultDevice, ...inputs];
-    this.audioOutputDevices = [defaultDevice, ...outputs];
-  }
-
-  @action
-  async loadVideoDevices() {
-    const inputs = await enumerateVideoDevices();
-    if (this.isDestroying || this.isDestroyed) {
-      return;
-    }
-    this.videoInputDevices = [this.#systemDefaultDevice(), ...inputs];
   }
 
   // Opened programmatically (not a nested <DMenu>) so the trigger stays a
@@ -491,53 +360,6 @@ export default class ResenhaRoomPage extends Component {
         },
       },
     });
-  }
-
-  #deviceItems(devices, currentId) {
-    return devices.map((device) => ({
-      id: device.id,
-      label: device.name,
-      selected: device.id === currentId,
-    }));
-  }
-
-  @action
-  openInputDeviceMenu(_actionArg, event) {
-    this.#openSubmenu(
-      event,
-      AUDIO_MENU,
-      this.#deviceItems(
-        this.audioInputDevices,
-        this.resenhaWebrtc.inputDeviceId
-      ),
-      (id) => this.resenhaWebrtc.setInputDevice(id)
-    );
-  }
-
-  @action
-  openOutputDeviceMenu(_actionArg, event) {
-    this.#openSubmenu(
-      event,
-      AUDIO_MENU,
-      this.#deviceItems(
-        this.audioOutputDevices,
-        this.resenhaWebrtc.outputDeviceId
-      ),
-      (id) => this.resenhaWebrtc.setOutputDevice(id)
-    );
-  }
-
-  @action
-  openCameraMenu(_actionArg, event) {
-    this.#openSubmenu(
-      event,
-      VIDEO_MENU,
-      this.#deviceItems(
-        this.videoInputDevices,
-        this.resenhaWebrtc.videoInputDeviceId
-      ),
-      (id) => this.resenhaWebrtc.setVideoInputDevice(id)
-    );
   }
 
   @action
@@ -652,157 +474,7 @@ export default class ResenhaRoomPage extends Component {
             {{/if}}
             <footer class="resenha-room-page__controls">
               {{#if this.joined}}
-                <div class="resenha-room-page__combo">
-                  <DButton
-                    @action={{this.toggleMute}}
-                    @icon={{if
-                      this.resenhaWebrtc.audioEnabled
-                      "microphone"
-                      "microphone-slash"
-                    }}
-                    @translatedTitle={{this.micTitle}}
-                    @disabled={{this.resenhaWebrtc.pttEnabled}}
-                    class={{dConcatClass
-                      "btn-default resenha-room-page__combo-main"
-                      (if this.resenhaWebrtc.audioEnabled "" "--off")
-                    }}
-                  />
-                  <DMenu
-                    @identifier="resenha-audio-menu"
-                    @icon="angle-down"
-                    @title={{i18n "resenha.room.audio_options"}}
-                    @ariaLabel={{i18n "resenha.room.audio_options"}}
-                    @placement="top-end"
-                    @onShow={{this.loadAudioDevices}}
-                    @triggerClass="btn-default resenha-room-page__combo-caret"
-                  >
-                    <:content as |audioMenu|>
-                      <DDropdownMenu as |dropdown|>
-                        <dropdown.item>
-                          <DButton
-                            @action={{this.openInputDeviceMenu}}
-                            @forwardEvent={{true}}
-                            @icon="microphone"
-                            @label="resenha.voice_settings.input_audio"
-                            @suffixIcon="angle-right"
-                            class="btn-transparent"
-                          />
-                        </dropdown.item>
-                        {{#if this.audioOutputSupported}}
-                          <dropdown.item>
-                            <DButton
-                              @action={{this.openOutputDeviceMenu}}
-                              @forwardEvent={{true}}
-                              @icon="volume-high"
-                              @label="resenha.voice_settings.output_audio"
-                              @suffixIcon="angle-right"
-                              class="btn-transparent"
-                            />
-                          </dropdown.item>
-                        {{/if}}
-                        <dropdown.divider />
-                        <dropdown.item>
-                          <DButton
-                            @action={{fn
-                              this.openVoiceSettings
-                              audioMenu.close
-                            }}
-                            @icon="sliders"
-                            @label="resenha.voice_settings.audio_settings"
-                            class="btn-transparent"
-                          />
-                        </dropdown.item>
-                      </DDropdownMenu>
-                    </:content>
-                  </DMenu>
-                </div>
-                {{! Capture buttons are plain <button>s on purpose: DButton defers
-              its action via next(), which lands outside the click event
-              dispatch — Firefox only allows getDisplayMedia during the
-              actual dispatch, so a deferred call throws NotAllowedError. }}
-                {{#if this.videoAllowed}}
-                  <div class="resenha-room-page__combo">
-                    <button
-                      type="button"
-                      class={{dConcatClass
-                        "btn btn-icon no-text btn-default resenha-room-page__combo-main"
-                        (if this.cameraActive "--active")
-                      }}
-                      title={{this.cameraTitle}}
-                      aria-label={{this.cameraTitle}}
-                      disabled={{this.cameraDisabled}}
-                      {{on "click" this.toggleCamera}}
-                    >
-                      {{dIcon (if this.cameraActive "video" "video-slash")}}
-                      <span aria-hidden="true">&#8203;</span>
-                    </button>
-                    <DMenu
-                      @identifier="resenha-video-menu"
-                      @icon="angle-down"
-                      @title={{i18n "resenha.room.video_options"}}
-                      @ariaLabel={{i18n "resenha.room.video_options"}}
-                      @placement="top-end"
-                      @onShow={{this.loadVideoDevices}}
-                      @triggerClass="btn-default resenha-room-page__combo-caret"
-                    >
-                      <:content as |videoMenu|>
-                        <DDropdownMenu as |dropdown|>
-                          <dropdown.item>
-                            <DButton
-                              @action={{this.openCameraMenu}}
-                              @forwardEvent={{true}}
-                              @icon="video"
-                              @label="resenha.video_settings.camera"
-                              @suffixIcon="angle-right"
-                              class="btn-transparent"
-                            />
-                          </dropdown.item>
-                          <dropdown.divider />
-                          <dropdown.item>
-                            <DButton
-                              @action={{fn
-                                this.openVideoSettings
-                                videoMenu.close
-                              }}
-                              @icon="sliders"
-                              @label="resenha.video_settings.title"
-                              class="btn-transparent"
-                            />
-                          </dropdown.item>
-                        </DDropdownMenu>
-                      </:content>
-                    </DMenu>
-                  </div>
-                {{/if}}
-                <DButton
-                  @action={{this.toggleDeafen}}
-                  @icon={{if
-                    this.resenhaWebrtc.deafened
-                    "volume-xmark"
-                    "ear-listen"
-                  }}
-                  @translatedTitle={{this.deafenTitle}}
-                  class={{dConcatClass
-                    "btn-default"
-                    (if this.resenhaWebrtc.deafened "--off" "")
-                  }}
-                />
-                {{#if this.showScreenShare}}
-                  <button
-                    type="button"
-                    class={{dConcatClass
-                      "btn btn-icon no-text btn-default"
-                      (if this.screenShareActive "--active")
-                    }}
-                    title={{this.screenShareTitle}}
-                    aria-label={{this.screenShareTitle}}
-                    disabled={{this.screenShareDisabled}}
-                    {{on "click" this.toggleScreenShare}}
-                  >
-                    {{dIcon "display"}}
-                    <span aria-hidden="true">&#8203;</span>
-                  </button>
-                {{/if}}
+                <ResenhaCallControls @room={{this.room}} />
                 <DMenu
                   @identifier="resenha-room-menu"
                   @icon="ellipsis-vertical"

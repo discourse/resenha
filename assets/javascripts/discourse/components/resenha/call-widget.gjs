@@ -8,9 +8,12 @@ import { next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
+import DMenu from "discourse/float-kit/components/d-menu";
+import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
-import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
+import ResenhaRoomInfoModal from "../modal/resenha-room-info";
+import ResenhaCallControls from "./call-controls";
 import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
@@ -35,6 +38,7 @@ function clamp(value, min, max) {
 export default class ResenhaCallWidget extends Component {
   @service capabilities;
   @service currentUser;
+  @service modal;
   @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
@@ -173,63 +177,6 @@ export default class ResenhaCallWidget extends Component {
 
       return { participant, isSelf, showVideo };
     });
-  }
-
-  get videoAllowed() {
-    return this.resenhaWebrtc.videoAllowedIn(this.room);
-  }
-
-  get cameraActive() {
-    return this.resenhaWebrtc.localVideoKind === "camera";
-  }
-
-  get screenShareActive() {
-    return this.resenhaWebrtc.localVideoKind === "screen";
-  }
-
-  get cameraDisabled() {
-    return (
-      !this.cameraActive && !this.resenhaWebrtc.canPublishVideo(this.room?.id)
-    );
-  }
-
-  get screenShareDisabled() {
-    return (
-      !this.screenShareActive &&
-      !this.resenhaWebrtc.canPublishVideo(this.room?.id)
-    );
-  }
-
-  get showScreenShare() {
-    return this.videoAllowed && this.resenhaWebrtc.screenShareSupported;
-  }
-
-  get micTitle() {
-    if (this.resenhaWebrtc.pttEnabled) {
-      return i18n("resenha.ptt.controlled_by_ptt");
-    }
-
-    return this.resenhaWebrtc.audioEnabled
-      ? i18n("resenha.room.mic_on")
-      : i18n("resenha.room.mic_off");
-  }
-
-  get cameraTitle() {
-    return this.cameraActive
-      ? i18n("resenha.video.camera_off")
-      : i18n("resenha.video.camera_on");
-  }
-
-  get screenShareTitle() {
-    return this.screenShareActive
-      ? i18n("resenha.video.screen_share_stop")
-      : i18n("resenha.video.screen_share_start");
-  }
-
-  get deafenTitle() {
-    return this.resenhaWebrtc.deafened
-      ? i18n("resenha.room.deafen_off")
-      : i18n("resenha.room.deafen_on");
   }
 
   get openRoomTitle() {
@@ -543,32 +490,24 @@ export default class ResenhaCallWidget extends Component {
   }
 
   @action
-  toggleMute() {
-    this.resenhaWebrtc.toggleMute();
-  }
-
-  @action
-  toggleDeafen() {
-    this.resenhaWebrtc.toggleDeafen();
-  }
-
-  @action
-  toggleCamera() {
-    this.resenhaWebrtc.toggleCamera();
-  }
-
-  @action
-  toggleScreenShare() {
-    this.resenhaWebrtc.toggleScreenShare();
-  }
-
-  @action
   openChat() {
     if (this.room?.slug) {
       this.router.transitionTo("resenha-room", this.room.slug, {
         queryParams: { chat: true },
       });
     }
+  }
+
+  @action
+  openChatFromMenu(closeMenu) {
+    closeMenu?.();
+    this.openChat();
+  }
+
+  @action
+  openRoomInfo(closeMenu) {
+    closeMenu?.();
+    this.modal.show(ResenhaRoomInfoModal, { model: { room: this.room } });
   }
 
   @action
@@ -660,73 +599,45 @@ export default class ResenhaCallWidget extends Component {
               class="resenha-call-widget__expand"
             />
           {{else}}
-            <DButton
-              @action={{this.toggleMute}}
-              @icon={{if
-                this.resenhaWebrtc.audioEnabled
-                "microphone"
-                "microphone-slash"
-              }}
-              @translatedTitle={{this.micTitle}}
-              @disabled={{this.resenhaWebrtc.pttEnabled}}
-              class={{if this.resenhaWebrtc.audioEnabled "" "--off"}}
-            />
-            <DButton
-              @action={{this.toggleDeafen}}
-              @icon={{if
-                this.resenhaWebrtc.deafened
-                "volume-xmark"
-                "ear-listen"
-              }}
-              @translatedTitle={{this.deafenTitle}}
-              class={{if this.resenhaWebrtc.deafened "--off" ""}}
-            />
-            {{#if this.videoAllowed}}
-              <button
-                type="button"
-                class={{dConcatClass
-                  "btn btn-icon no-text"
-                  (if this.cameraActive "--active")
-                }}
-                title={{this.cameraTitle}}
-                aria-label={{this.cameraTitle}}
-                disabled={{this.cameraDisabled}}
-                {{on "click" this.toggleCamera}}
-              >
-                {{dIcon (if this.cameraActive "video" "video-slash")}}
-                {{! Zero-width space: matches DButton so an icon-only button keeps
-                full button height and aligns with its DButton siblings. }}
-                <span aria-hidden="true">&#8203;</span>
-              </button>
-            {{/if}}
-            {{#if this.showScreenShare}}
-              <button
-                type="button"
-                class={{dConcatClass
-                  "btn btn-icon no-text"
-                  (if this.screenShareActive "--active")
-                }}
-                title={{this.screenShareTitle}}
-                aria-label={{this.screenShareTitle}}
-                disabled={{this.screenShareDisabled}}
-                {{on "click" this.toggleScreenShare}}
-              >
-                {{dIcon "display"}}
-                <span aria-hidden="true">&#8203;</span>
-              </button>
-            {{/if}}
+            <ResenhaCallControls @room={{this.room}} />
             <DButton
               @action={{this.openRoom}}
               @icon="expand"
               @translatedTitle={{this.openRoomTitle}}
+              class="btn-default"
             />
-            {{#if this.chatAvailable}}
-              <DButton
-                @action={{this.openChat}}
-                @icon="far-comment"
-                @translatedTitle={{this.chatTitle}}
-              />
-            {{/if}}
+            <DMenu
+              @identifier="resenha-widget-room-menu"
+              @icon="ellipsis-vertical"
+              @title={{i18n "resenha.room.more"}}
+              @ariaLabel={{i18n "resenha.room.more"}}
+              @placement="top-end"
+              @modalForMobile={{true}}
+              @triggerClass="btn-default"
+            >
+              <:content as |roomMenu|>
+                <DDropdownMenu as |dropdown|>
+                  {{#if this.chatAvailable}}
+                    <dropdown.item>
+                      <DButton
+                        @action={{fn this.openChatFromMenu roomMenu.close}}
+                        @icon="far-comment"
+                        @translatedLabel={{this.chatTitle}}
+                        class="btn-transparent"
+                      />
+                    </dropdown.item>
+                  {{/if}}
+                  <dropdown.item>
+                    <DButton
+                      @action={{fn this.openRoomInfo roomMenu.close}}
+                      @icon="circle-info"
+                      @label="resenha.room.info"
+                      class="btn-transparent"
+                    />
+                  </dropdown.item>
+                </DDropdownMenu>
+              </:content>
+            </DMenu>
           {{/if}}
           <DButton
             @action={{this.leaveRoom}}

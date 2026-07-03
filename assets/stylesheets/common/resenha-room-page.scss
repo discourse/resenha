@@ -71,8 +71,12 @@
   &__controls {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
     justify-content: center;
+
+    // Stretch (not center) so every control shares the tallest button's height;
+    // icon-only DMenu triggers render a few px shorter otherwise. See the
+    // matching note on .resenha-room-page__controls.
+    align-items: stretch;
     gap: 0.35rem;
 
     .--off,
@@ -357,7 +361,12 @@ html.discourse-touch .resenha-call-widget {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    align-items: center;
+
+    // Stretch (not center) so every control shares the tallest button's height.
+    // Icon-only DMenu triggers (e.g. the overflow menu) render a few px shorter
+    // than their DButton/plain-<button> siblings; stretching equalizes them the
+    // same way the combo wrapper stretches its caret.
+    align-items: stretch;
     gap: 0.5em;
 
     .--off,
@@ -365,28 +374,37 @@ html.discourse-touch .resenha-call-widget {
       color: var(--tertiary);
     }
   }
+}
 
-  // Split "combo" button: the main toggle and its caret read as one button.
-  // The main button drops its trailing border so the caret's leading border is
-  // the only divider between them.
-  &__combo {
-    display: inline-flex;
-    align-items: stretch;
+// Split "combo" button (mic/camera) shared by ResenhaCallControls in both the
+// room page and the widget: the main toggle and its caret read as one button.
+// The main button drops its trailing border so the caret's leading border is
+// the only divider between them.
+.resenha-call-controls__combo {
+  display: inline-flex;
+  align-items: stretch;
 
-    .resenha-room-page__combo-main {
-      border-top-right-radius: 0;
-      border-bottom-right-radius: 0;
-      border-inline-end: none;
-    }
-
-    .resenha-room-page__combo-caret {
-      margin-inline-start: 0;
-      padding-inline: 0.4em;
-      border-top-left-radius: 0;
-      border-bottom-left-radius: 0;
-      border-inline-start: 1px solid var(--primary-low-mid);
-    }
+  .resenha-call-controls__combo-main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-inline-end: none;
   }
+
+  .resenha-call-controls__combo-caret {
+    margin-inline-start: 0;
+    padding-inline: 0.4em;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-inline-start: 1px solid var(--primary-low-mid);
+  }
+}
+
+// Float-kit menus portal to a body-level layer at z("dropdown") (300), but the
+// persistent call widget sits at z("footer-nav") (900) and would otherwise
+// cover any menu opened from it. Lift the call menus above the widget. Harmless
+// on the room page, which has no competing high-z layer.
+.fk-d-menu[data-identifier^="resenha-"] {
+  z-index: z("header");
 }
 
 // Below this the 22rem sidebar would squash the video column into a sliver,
