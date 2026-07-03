@@ -139,7 +139,11 @@ export default class ResenhaCallWidget extends Component {
   }
 
   get shouldRender() {
-    return !!this.room && !this.onActiveRoomPage;
+    return (
+      !!this.room &&
+      !this.onActiveRoomPage &&
+      !this.resenhaWebrtc.callWidgetHidden
+    );
   }
 
   get onActiveRoomPage() {

@@ -37,6 +37,8 @@ en:
         title: "Active voice room: %{room}"
         open_chat: "Open room chat"
         expand: "Expand call widget"
+        hide: "Hide call widget"
+        show: "Show call widget"
       chat:
         title: "Chat"
         open: "Open chat"

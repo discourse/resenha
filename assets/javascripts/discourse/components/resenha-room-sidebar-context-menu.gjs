@@ -39,6 +39,12 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
   }
 
   @action
+  toggleCallWidget() {
+    this.resenhaWebrtc.toggleCallWidgetHidden();
+    this.args.close();
+  }
+
+  @action
   leaveRoom() {
     this.resenhaWebrtc.leave(this.room);
     this.args.close();
@@ -76,6 +82,23 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
         </dropdown.item>
       {{/if}}
       {{#if this.isConnected}}
+        <dropdown.item>
+          <DButton
+            @action={{this.toggleCallWidget}}
+            @icon={{if this.resenhaWebrtc.callWidgetHidden "eye" "eye-slash"}}
+            @label={{if
+              this.resenhaWebrtc.callWidgetHidden
+              "resenha.widget.show"
+              "resenha.widget.hide"
+            }}
+            @title={{if
+              this.resenhaWebrtc.callWidgetHidden
+              "resenha.widget.show"
+              "resenha.widget.hide"
+            }}
+            class="resenha-room-sidebar-context-menu__toggle-widget"
+          />
+        </dropdown.item>
         <dropdown.item>
           <DButton
             @action={{this.leaveRoom}}
