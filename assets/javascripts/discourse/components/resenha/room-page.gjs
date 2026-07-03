@@ -49,7 +49,7 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridFullscreen = false;
   @tracked chatOpen = !!this.args.openChat;
   @tracked chatClosing = false;
-  @tracked layoutMode = LAYOUT_PRESENTATION;
+  @tracked layoutMode = LAYOUT_TILED;
 
   gridElement = null;
   trackGridSize = trackGridSize;
