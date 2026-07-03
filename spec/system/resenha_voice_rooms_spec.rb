@@ -83,13 +83,21 @@ describe "Resenha voice rooms", type: :system do
         expect(resenha_sidebar).to have_room(room.name)
       end
 
-      it "shows private rooms when user can manage rooms" do
+      it "hides private rooms from non-members even when they can create rooms" do
         private_room = Fabricate(:resenha_room, name: "Private Room", creator: admin, public: false)
 
         visit("/latest")
 
-        # Users with sufficient trust level can see and manage all rooms, including private ones
         expect(resenha_sidebar).to have_room(room.name)
+        expect(resenha_sidebar).to have_no_room(private_room.name)
+      end
+
+      it "shows private rooms to their members" do
+        private_room = Fabricate(:resenha_room, name: "Private Room", creator: admin, public: false)
+        private_room.room_memberships.create!(user: user)
+
+        visit("/latest")
+
         expect(resenha_sidebar).to have_room(private_room.name)
       end
 

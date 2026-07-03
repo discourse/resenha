@@ -1,0 +1,226 @@
+# frozen_string_literal: true
+require "rails_helper"
+require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
+require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
+
+RSpec.describe Resenha::RoomMembershipsController do
+  before do
+    ActiveRecord::Migration.suppress_messages do
+      unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
+        CreateResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
+        AddVideoEnabledToResenhaRooms.new.change
+      end
+    end
+    Resenha::Room.reset_column_information
+  end
+
+  fab!(:staff, :admin)
+  fab!(:room_owner) { Fabricate(:user, trust_level: TrustLevel[2]) }
+  fab!(:room_moderator) { Fabricate(:user, trust_level: TrustLevel[2]) }
+  fab!(:member) { Fabricate(:user, trust_level: TrustLevel[2]) }
+
+  # In resenha_create_room_allowed_groups but with no tie to the room: being
+  # allowed to create rooms must not grant control over other people's rooms.
+  fab!(:outsider) { Fabricate(:user, trust_level: TrustLevel[2]) }
+
+  fab!(:invitee) { Fabricate(:user, trust_level: TrustLevel[2]) }
+  fab!(:room) { Fabricate(:resenha_room, creator: room_owner, public: false) }
+
+  fab!(:moderator_membership) do
+    room.room_memberships.create!(
+      user: room_moderator,
+      role: Resenha::RoomMembership::ROLE_MODERATOR,
+    )
+  end
+
+  fab!(:participant_membership) do
+    room.room_memberships.create!(user: member, role: Resenha::RoomMembership::ROLE_PARTICIPANT)
+  end
+
+  before do
+    SiteSetting.resenha_enabled = true
+    SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone]
+    SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
+  end
+
+  describe "#index" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(outsider)
+
+      get "/resenha/rooms/#{room.id}/memberships.json"
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns 403 for a plain participant member" do
+      sign_in(member)
+
+      get "/resenha/rooms/#{room.id}/memberships.json"
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns 403 for anonymous visitors" do
+      get "/resenha/rooms/#{room.id}/memberships.json"
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns the memberships to the room creator" do
+      sign_in(room_owner)
+
+      get "/resenha/rooms/#{room.id}/memberships.json"
+
+      expect(response.status).to eq(200)
+      user_ids = response.parsed_body["memberships"].map { |membership| membership["user_id"] }
+      expect(user_ids).to contain_exactly(room_owner.id, room_moderator.id, member.id)
+    end
+
+    it "returns the memberships to a room moderator" do
+      sign_in(room_moderator)
+
+      get "/resenha/rooms/#{room.id}/memberships.json"
+
+      expect(response.status).to eq(200)
+    end
+
+    it "returns the memberships to site staff" do
+      sign_in(staff)
+
+      get "/resenha/rooms/#{room.id}/memberships.json"
+
+      expect(response.status).to eq(200)
+    end
+  end
+
+  describe "#create" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(outsider)
+
+      expect {
+        post "/resenha/rooms/#{room.id}/memberships.json", params: { user_id: outsider.id }
+      }.not_to change { room.room_memberships.count }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns 403 for a plain participant member" do
+      sign_in(member)
+
+      post "/resenha/rooms/#{room.id}/memberships.json", params: { user_id: invitee.id }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "lets the creator add a member by user_id" do
+      sign_in(room_owner)
+
+      post "/resenha/rooms/#{room.id}/memberships.json", params: { user_id: invitee.id }
+
+      expect(response.status).to eq(200)
+      expect(room.room_memberships.find_by(user_id: invitee.id)).to be_participant
+    end
+
+    it "lets the creator add a member by username with a role" do
+      sign_in(room_owner)
+
+      post "/resenha/rooms/#{room.id}/memberships.json",
+           params: {
+             username: invitee.username,
+             role: "moderator",
+           }
+
+      expect(response.status).to eq(200)
+      expect(room.room_memberships.find_by(user_id: invitee.id)).to be_moderator
+    end
+
+    it "lets a room moderator add a member" do
+      sign_in(room_moderator)
+
+      post "/resenha/rooms/#{room.id}/memberships.json", params: { user_id: invitee.id }
+
+      expect(response.status).to eq(200)
+    end
+  end
+
+  describe "#update" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(outsider)
+
+      expect {
+        put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+            params: {
+              role: "moderator",
+            }
+      }.not_to change { participant_membership.reload.role }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "lets the creator change a member's role" do
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "speaker",
+          }
+
+      expect(response.status).to eq(200)
+      expect(participant_membership.reload).to be_speaker
+    end
+
+    it "updates the tracked role of a member present in the room" do
+      sign_in(room_owner)
+      Resenha::ParticipantTracker.add(room.id, member.id)
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "moderator",
+          }
+
+      expect(response.status).to eq(200)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, member.id)
+      expect(metadata[:role]).to eq("moderator")
+    end
+  end
+
+  describe "#destroy" do
+    it "returns 403 for a non-member who can create rooms" do
+      sign_in(outsider)
+
+      expect {
+        delete "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json"
+      }.not_to change { room.room_memberships.count }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "returns 403 for a plain participant member removing another member" do
+      sign_in(member)
+
+      delete "/resenha/rooms/#{room.id}/memberships/#{moderator_membership.id}.json"
+
+      expect(response.status).to eq(403)
+      expect(Resenha::RoomMembership.exists?(moderator_membership.id)).to eq(true)
+    end
+
+    it "lets the creator remove a member" do
+      sign_in(room_owner)
+
+      delete "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json"
+
+      expect(response.status).to eq(204)
+      expect(Resenha::RoomMembership.exists?(participant_membership.id)).to eq(false)
+    end
+
+    it "lets site staff remove a member" do
+      sign_in(staff)
+
+      delete "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json"
+
+      expect(response.status).to eq(204)
+    end
+  end
+end

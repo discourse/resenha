@@ -39,7 +39,7 @@ module Resenha
 
       render json: {
                rooms: serialize_data(rooms, Resenha::RoomSerializer),
-               can_create_room: guardian.can_manage_resenha_rooms?,
+               can_create_room: guardian.can_create_resenha_room?,
                index_message_bus_last_id: index_message_bus_last_id,
              }
     end
@@ -84,8 +84,11 @@ module Resenha
 
     def destroy
       guardian.ensure_can_manage_resenha_room!(@room)
+      # Built before the destroy so the broadcast still targets the members
+      # whose memberships the destroy cascades away.
+      broadcaster = Resenha::DirectoryBroadcaster.new(@room, :destroyed)
       @room.destroy!
-      Resenha::DirectoryBroadcaster.broadcast(action: :destroyed, room: @room)
+      broadcaster.broadcast
       render json: success_json
     end
 
