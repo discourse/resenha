@@ -600,6 +600,7 @@ export default class ResenhaRoomPage extends Component {
                     {{on "click" this.toggleCamera}}
                   >
                     {{dIcon (if this.cameraActive "video" "video-slash")}}
+                    <span aria-hidden="true">&#8203;</span>
                   </button>
                 {{/if}}
                 {{#if this.showScreenShare}}
@@ -615,6 +616,7 @@ export default class ResenhaRoomPage extends Component {
                     {{on "click" this.toggleScreenShare}}
                   >
                     {{dIcon "display"}}
+                    <span aria-hidden="true">&#8203;</span>
                   </button>
                 {{/if}}
                 {{#if this.chatAvailable}}

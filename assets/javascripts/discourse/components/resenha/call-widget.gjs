@@ -694,6 +694,9 @@ export default class ResenhaCallWidget extends Component {
                 {{on "click" this.toggleCamera}}
               >
                 {{dIcon (if this.cameraActive "video" "video-slash")}}
+                {{! Zero-width space: matches DButton so an icon-only button keeps
+                full button height and aligns with its DButton siblings. }}
+                <span aria-hidden="true">&#8203;</span>
               </button>
             {{/if}}
             {{#if this.showScreenShare}}
@@ -709,6 +712,7 @@ export default class ResenhaCallWidget extends Component {
                 {{on "click" this.toggleScreenShare}}
               >
                 {{dIcon "display"}}
+                <span aria-hidden="true">&#8203;</span>
               </button>
             {{/if}}
             <DButton
