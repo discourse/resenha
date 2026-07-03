@@ -6,9 +6,9 @@
 // Mirrors the NoiseSuppressionManager contract: setup(raw stream) returns
 // the processed stream; the caller keeps ownership of the raw stream.
 
-import getURL from "discourse/lib/get-url";
+import { getURLWithCDN } from "discourse/lib/get-url";
 
-const MEDIAPIPE_BASE = getURL("/plugins/resenha/javascripts/mediapipe");
+const MEDIAPIPE_BASE = getURLWithCDN("/plugins/resenha/javascripts/mediapipe");
 const ENABLED_KEY = "resenha_video_blur_enabled";
 const AMOUNT_KEY = "resenha_video_blur_amount";
 
