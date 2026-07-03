@@ -7,6 +7,7 @@ import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
 import DModal from "discourse/components/d-modal";
+import DToggleSwitch from "discourse/components/d-toggle-switch";
 import ComboBox from "discourse/select-kit/components/combo-box";
 import { i18n } from "discourse-i18n";
 import { rmsToPercent, sampleRms } from "../../lib/resenha/input-gate";
@@ -28,6 +29,7 @@ export default class ResenhaVoiceSettingsModal extends Component {
   @tracked level = 0;
   @tracked micError = false;
   @tracked testingOutput = false;
+  @tracked busy = false;
 
   #previewStream = null;
   #previewContext = null;
@@ -66,6 +68,10 @@ export default class ResenhaVoiceSettingsModal extends Component {
 
   get gateThreshold() {
     return this.resenhaWebrtc.gateThreshold;
+  }
+
+  get noiseSuppressionEnabled() {
+    return this.resenhaWebrtc.noiseSuppressionEnabled;
   }
 
   get gateOpen() {
@@ -165,6 +171,22 @@ export default class ResenhaVoiceSettingsModal extends Component {
   @action
   onThresholdChange(event) {
     this.resenhaWebrtc.setGateThreshold(parseInt(event.target.value, 10));
+  }
+
+  @action
+  async toggleNoiseSuppression() {
+    if (this.busy) {
+      return;
+    }
+
+    this.busy = true;
+    try {
+      await this.resenhaWebrtc.toggleNoiseSuppression();
+    } finally {
+      if (!this.isDestroying && !this.isDestroyed) {
+        this.busy = false;
+      }
+    }
   }
 
   @action
@@ -330,6 +352,18 @@ export default class ResenhaVoiceSettingsModal extends Component {
             />
             <p class="resenha-voice-settings__hint">
               {{i18n "resenha.voice_settings.input_sensitivity_hint"}}
+            </p>
+          </div>
+
+          <div class="resenha-voice-settings__field">
+            <DToggleSwitch
+              @state={{this.noiseSuppressionEnabled}}
+              @label="resenha.voice_settings.noise_suppression"
+              disabled={{this.busy}}
+              {{on "click" this.toggleNoiseSuppression}}
+            />
+            <p class="resenha-voice-settings__hint">
+              {{i18n "resenha.voice_settings.noise_suppression_hint"}}
             </p>
           </div>
         </div>

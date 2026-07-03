@@ -31,9 +31,6 @@ plugins:
     default: ""
     client: true
     secret: true
-  resenha_noise_suppression:
-    default: false
-    client: true
   resenha_video_enabled:
     default: false
     client: true

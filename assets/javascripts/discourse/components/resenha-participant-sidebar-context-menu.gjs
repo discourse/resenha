@@ -139,10 +139,6 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     return this.isCurrentUser && this.isPttEnabled;
   }
 
-  get showNoiseSuppressionToggle() {
-    return this.isCurrentUser && this.siteSettings.resenha_noise_suppression;
-  }
-
   get showAutoStatusToggle() {
     return this.isCurrentUser && this.siteSettings.resenha_auto_status_enabled;
   }
@@ -151,18 +147,6 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     return this.resenhaWebrtc.autoStatusEnabled
       ? i18n("resenha.status.auto_update_on")
       : i18n("resenha.status.auto_update_off");
-  }
-
-  get noiseSuppressionIcon() {
-    return this.resenhaWebrtc.noiseSuppressionEnabled
-      ? "ear-listen"
-      : "volume-high";
-  }
-
-  get noiseSuppressionLabel() {
-    return this.resenhaWebrtc.noiseSuppressionEnabled
-      ? "resenha.room.noise_suppression_on"
-      : "resenha.room.noise_suppression_off";
   }
 
   @action
@@ -204,11 +188,6 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
   @action
   toggleDeafen() {
     this.resenhaWebrtc.toggleDeafen();
-  }
-
-  @action
-  async toggleNoiseSuppression() {
-    await this.resenhaWebrtc.toggleNoiseSuppression();
   }
 
   @action
@@ -307,17 +286,6 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
           />
         </dropdown.item>
         {{#unless this.isListenerInStage}}
-          {{#if this.showNoiseSuppressionToggle}}
-            <dropdown.item>
-              <DButton
-                @action={{this.toggleNoiseSuppression}}
-                @icon={{this.noiseSuppressionIcon}}
-                @label={{this.noiseSuppressionLabel}}
-                @title={{this.noiseSuppressionLabel}}
-                class="resenha-participant-sidebar-context-menu__noise-suppression"
-              />
-            </dropdown.item>
-          {{/if}}
           <dropdown.item>
             <DButton
               @action={{this.togglePtt}}

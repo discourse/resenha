@@ -20,8 +20,6 @@ en:
         mic_on: "Mute microphone"
         mic_off: "Unmute microphone"
         connection_error: "We couldn't start a WebRTC session. Please ensure your browser has microphone permissions."
-        noise_suppression_on: "Disable noise suppression"
-        noise_suppression_off: "Enable noise suppression"
         deafen_on: "Deafen"
         deafen_off: "Undeafen"
         type_open: "Open"
@@ -100,6 +98,9 @@ en:
         mic_error: "We couldn't access your microphone. Check your browser permissions and device selection."
         input_sensitivity: "Input sensitivity"
         input_sensitivity_hint: "Sound below this level won't be transmitted. Set to zero to always transmit."
+        noise_suppression: "Suppress background noise"
+        noise_suppression_hint: "Filters noise like fans and keyboard clicks from your microphone."
+        noise_suppression_failed: "Noise suppression couldn't be started, so it was turned off."
         test_output: "Test"
         choose_output: "Choose output device"
       stage:
