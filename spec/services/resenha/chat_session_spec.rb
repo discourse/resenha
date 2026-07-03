@@ -122,6 +122,7 @@ RSpec.describe Resenha::ChatSession do
       expect(thread.title).to start_with("Voice chat at ")
       expect(thread.original_message.message).to eq("hello everyone")
       expect(thread.original_message.user_id).to eq(user.id)
+      expect(thread.custom_fields[Resenha::THREAD_ROOM_ID_FIELD]).to eq(room.id.to_s)
     end
 
     it "opens a templated room's thread with a system starter and the message as first reply" do
@@ -131,6 +132,7 @@ RSpec.describe Resenha::ChatSession do
       expect(thread.title).to start_with("Team Meeting at ")
       expect(thread.original_message.message).to eq(thread.title)
       expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
+      expect(thread.custom_fields[Resenha::THREAD_ROOM_ID_FIELD]).to eq(room.id.to_s)
 
       reply = thread.replies.last
       expect(reply.message).to eq("hello everyone")

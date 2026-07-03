@@ -49,6 +49,7 @@ en:
         composer_placeholder: "Message the room…"
         send: "Send"
         open_in_chat: "Open in chat"
+        back_to_voice_room: "Back to voice room"
       video:
         camera_on: "Turn on camera"
         camera_off: "Turn off camera"
