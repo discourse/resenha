@@ -57,6 +57,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked pttKey = "Space";
   @tracked pttActive = false;
   @tracked autoStatusEnabled = true;
+  @tracked callWidgetHidden = false;
   @tracked gateThreshold = 0;
   @tracked inputDeviceId;
   @tracked outputDeviceId;
@@ -173,6 +174,13 @@ export default class ResenhaWebrtcService extends Service {
       this.autoStatusEnabled = stored !== "false";
     } catch {
       this.autoStatusEnabled = true;
+    }
+
+    try {
+      this.callWidgetHidden =
+        localStorage.getItem("resenha_call_widget_hidden") === "true";
+    } catch {
+      this.callWidgetHidden = false;
     }
   }
 
@@ -1612,6 +1620,18 @@ export default class ResenhaWebrtcService extends Service {
 
     if (!this.autoStatusEnabled && this.#activeRoomIds.size > 0) {
       ajax("/user-status.json", { type: "DELETE" }).catch(() => {});
+    }
+  }
+
+  toggleCallWidgetHidden() {
+    this.callWidgetHidden = !this.callWidgetHidden;
+    try {
+      localStorage.setItem(
+        "resenha_call_widget_hidden",
+        this.callWidgetHidden ? "true" : "false"
+      );
+    } catch {
+      // ignore storage errors
     }
   }
 

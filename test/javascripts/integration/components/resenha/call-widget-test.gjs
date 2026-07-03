@@ -27,6 +27,7 @@ class ResenhaRoomsStub extends Service {
 class ResenhaWebrtcStub extends Service {
   @tracked activeRoomId = 1;
   @tracked audioEnabled = true;
+  @tracked callWidgetHidden = false;
   @tracked deafened = false;
   @tracked localVideoKind = null;
   @tracked pttEnabled = false;
@@ -189,6 +190,25 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
     assert
       .dom(".resenha-call-widget")
       .exists("shows again once navigated away from the room page");
+  });
+
+  test("stays hidden while the user has hidden the call widget", async function (assert) {
+    await render(<template><ResenhaCallWidget /></template>);
+    assert.dom(".resenha-call-widget").exists("shows by default");
+
+    this.resenhaWebrtc.callWidgetHidden = true;
+    await settled();
+
+    assert
+      .dom(".resenha-call-widget")
+      .doesNotExist("hides while the preference is on");
+
+    this.resenhaWebrtc.callWidgetHidden = false;
+    await settled();
+
+    assert
+      .dom(".resenha-call-widget")
+      .exists("shows again once the preference is turned off");
   });
 
   test("resizing below the widget threshold enters extra minimized mode", async function (assert) {
