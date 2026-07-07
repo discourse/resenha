@@ -64,6 +64,27 @@ after_initialize do
 
   Guardian.prepend Resenha::GuardianExtension
 
+  # Chat snapshots the hashtag orderings into Site.markdown_additional_options
+  # at its own after_initialize, which runs before this one (plugins load
+  # alphabetically) — refresh it so chat transcripts quoted inside posts can
+  # cook room hashtags too. The snapshot also bakes in each source's enabled?
+  # state, so it must be refreshed again when resenha_enabled toggles.
+  def self.refresh_chat_hashtag_configurations
+    return unless defined?(::Chat) && Site.markdown_additional_options["chat"]
+
+    Site.markdown_additional_options["chat"][
+      :hashtag_configurations
+    ] = HashtagAutocompleteService.contexts_with_ordered_types
+  end
+
+  # Rooms rank below chat channels (200) but above categories (100) in the
+  # chat composer, and below everything (category 100, tag 50, channel 10) in
+  # the topic composer, so a bare #slug in a post still means the category.
+  register_hashtag_data_source(Resenha::RoomHashtagDataSource)
+  register_hashtag_type_priority_for_context("room", "chat-composer", 150)
+  register_hashtag_type_priority_for_context("room", "topic-composer", 5)
+  refresh_chat_hashtag_configurations
+
   # Lets the client decide whether to render the rooms sidebar for anonymous
   # visitors without exposing the configured group ids.
   add_to_serializer(:site, :resenha_public_access) { scope.resenha_public_access? }
@@ -78,12 +99,16 @@ after_initialize do
 
   Resenha::DefaultRoomSeeder.ensure! if SiteSetting.resenha_enabled?
 
-  on(:site_setting_changed) do |name, _old_value, new_value|
-    if name.to_sym == :resenha_enabled
-      Resenha::DefaultRoomSeeder.ensure! if new_value
-      clear_all_resenha_statuses unless new_value
-    end
+  # This can't live in the on(:site_setting_changed) handler below: plugin
+  # event handlers are skipped while the plugin is disabled, which silently
+  # covers the disabling transition itself.
+  on_enabled_change do |_old_value, new_value|
+    Resenha::DefaultRoomSeeder.ensure! if new_value
+    clear_all_resenha_statuses unless new_value
+    refresh_chat_hashtag_configurations
+  end
 
+  on(:site_setting_changed) do |name, _old_value, new_value|
     if name.to_sym == :resenha_badges_enabled
       if new_value
         Resenha::BadgeGranterHooks.enable_all!
