@@ -70,6 +70,25 @@ RSpec.describe Resenha::GuardianExtension do
 
       expect(anonymous_guardian.resenha_public_access?).to eq(false)
     end
+
+    it "still admits anonymous visitors under granular group permissions" do
+      SiteSetting.granular_anonymous_and_logged_in_groups_permissions = true
+      SiteSetting.resenha_allowed_groups = "#{Group::AUTO_GROUPS[:everyone]}"
+
+      expect(anonymous_guardian.resenha_public_access?).to eq(true)
+    end
+
+    it "is true when access is open to the anonymous_users pseudogroup" do
+      SiteSetting.resenha_allowed_groups = "#{Group::AUTO_GROUPS[:anonymous_users]}"
+
+      expect(anonymous_guardian.resenha_public_access?).to eq(true)
+    end
+
+    it "is false when access is limited to logged-in users" do
+      SiteSetting.resenha_allowed_groups = "#{Group::AUTO_GROUPS[:logged_in_users]}"
+
+      expect(anonymous_guardian.resenha_public_access?).to eq(false)
+    end
   end
 
   describe "#can_create_resenha_room?" do
