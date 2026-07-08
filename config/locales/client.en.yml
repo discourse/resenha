@@ -80,6 +80,12 @@ en:
         auto_muted: "You were auto-muted after being idle."
         click_to_unmute: "Click to unmute."
         disconnected: "You were disconnected from %{room} due to inactivity."
+      livekit:
+        browser_unsupported: "Your browser can't connect to this site's voice server. Try updating it or using a different browser."
+        connect_failed: "Your network cannot reach the voice server. Check your connection or contact your administrator."
+        reconnect_failed: "The connection to the voice server was lost, so you left the call. Rejoin to reconnect."
+        room_ended: "The call ended while you were disconnected. Rejoin to start a new one."
+        duplicate_tab: "This call continued in another tab or window, so this one was disconnected."
       status:
         auto_update_on: "Auto-update status"
         auto_update_off: "Auto-update status"
