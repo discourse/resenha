@@ -55,11 +55,12 @@ RSpec.describe Resenha::RoomHashtagDataSource do
   let(:guardian) { Guardian.new(user) }
 
   def hashtag_hash(room)
+    base_icon = room.stage? ? "podcast" : "microphone-lines"
     {
       relative_url: "/resenha/r/#{room.slug}",
       text: room.name,
       description: room.description,
-      icon: room.stage? ? "podcast" : "microphone-lines",
+      icon: room.public ? base_icon : "resenha-#{base_icon}-lock",
       style_type: "icon",
       emoji: nil,
       colors: nil,
@@ -97,6 +98,17 @@ RSpec.describe Resenha::RoomHashtagDataSource do
     it "uses the podcast icon for stage rooms" do
       expect(described_class.lookup(guardian, ["town-hall"]).first.to_h).to eq(
         hashtag_hash(stage_room),
+      )
+    end
+
+    it "uses the lock icon variant for private rooms" do
+      expect(described_class.lookup(Guardian.new(creator), ["secret-sessions"]).first.icon).to eq(
+        "resenha-microphone-lines-lock",
+      )
+
+      private_room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      expect(described_class.lookup(Guardian.new(creator), ["secret-sessions"]).first.icon).to eq(
+        "resenha-podcast-lock",
       )
     end
 

@@ -15,6 +15,7 @@ import UserChooser from "discourse/select-kit/components/user-chooser";
 import { eq, notEq } from "discourse/truth-helpers";
 import { i18n } from "discourse-i18n";
 import ResenhaRoomForm from "discourse/plugins/resenha/discourse/components/resenha-room-form";
+import roomIcon from "discourse/plugins/resenha/discourse/lib/resenha/room-icon";
 
 export default class ResenhaRoomInfoModal extends Component {
   @service resenhaRooms;
@@ -186,7 +187,7 @@ export default class ResenhaRoomInfoModal extends Component {
         {{else}}
           <div class="resenha-room-info-modal__header">
             <div class="resenha-room-info-modal__icon">
-              {{icon "microphone-lines"}}
+              {{icon (roomIcon this.room)}}
             </div>
             <div class="resenha-room-info-modal__header-content">
               <h2
