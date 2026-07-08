@@ -6,6 +6,7 @@ import SidebarSectionLink from "discourse/components/sidebar/section-link";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { prioritizeNameInUx } from "discourse/lib/settings";
 import { i18n } from "discourse-i18n";
+import roomIcon from "discourse/plugins/resenha/discourse/lib/resenha/room-icon";
 
 @block("resenha:rooms", {
   allowedOutlets: ["sidebar-blocks"],
@@ -126,7 +127,7 @@ class RoomLink {
   }
 
   get prefixValue() {
-    return this.room.room_type === "stage" ? "podcast" : "microphone-lines";
+    return roomIcon(this.room);
   }
 }
 

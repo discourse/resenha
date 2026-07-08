@@ -9,6 +9,7 @@ import ResenhaParticipantSidebarContextMenu from "discourse/plugins/resenha/disc
 import ResenhaParticipantSidebarSuffix from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-suffix";
 import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-room-sidebar-context-menu";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
+import roomIcon from "../lib/resenha/room-icon";
 
 const LINK_NAME_PREFIX = "resenha-room-";
 const CHAT_PANEL = "chat";
@@ -171,9 +172,7 @@ export default {
             }
 
             get prefixValue() {
-              return this.room.room_type === "stage"
-                ? "podcast"
-                : "microphone-lines";
+              return roomIcon(this.room);
             }
 
             get #hasActiveVideo() {
