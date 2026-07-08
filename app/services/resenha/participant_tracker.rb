@@ -50,6 +50,7 @@ module Resenha
         redis.del(key(room_id))
         redis.del(metadata_key(room_id))
         redis.del(fingerprint_key(room_id))
+        redis.del(transport_key(room_id))
       end
 
       def update_metadata(room_id, user_id, metadata)
@@ -97,6 +98,34 @@ module Resenha
         redis.set(fingerprint_key(room_id), fingerprint, ex: SAFETY_TTL)
       end
 
+      # The transport pin ("mesh" | "livekit") holds a room instance to one
+      # transport for its whole life: joiners after the first ignore current
+      # settings, so a call is never split across transports. `SET NX` makes
+      # the first join win under a race; the short TTL (refreshed by every
+      # join/heartbeat) lets a crashed room self-heal instead of holding a
+      # stale transport.
+      def pin_transport!(room_id, transport)
+        redis.set(transport_key(room_id), transport, nx: true, ex: transport_pin_ttl)
+        refresh_transport_pin(room_id)
+        pinned_transport(room_id) || transport
+      end
+
+      def pinned_transport(room_id)
+        redis.get(transport_key(room_id))
+      end
+
+      def refresh_transport_pin(room_id)
+        redis.expire(transport_key(room_id), transport_pin_ttl)
+      end
+
+      def clear_transport_pin(room_id)
+        redis.del(transport_key(room_id))
+      end
+
+      def transport_pin_ttl
+        SiteSetting.resenha_participant_ttl_seconds.to_i * 2
+      end
+
       def touch_recently_active(room_id)
         redis.zadd(RECENTLY_ACTIVE_ROOMS_KEY, Time.now.to_f, room_id)
       end
@@ -127,6 +156,10 @@ module Resenha
 
       def fingerprint_key(room_id)
         "#{KEY_NAMESPACE}:#{room_id}:fingerprint"
+      end
+
+      def transport_key(room_id)
+        "#{KEY_NAMESPACE}:#{room_id}:transport"
       end
     end
   end

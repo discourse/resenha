@@ -31,6 +31,25 @@ plugins:
     default: ""
     client: true
     secret: true
+  resenha_livekit_url:
+    default: ""
+  resenha_livekit_api_key:
+    default: ""
+  resenha_livekit_api_secret:
+    default: ""
+    secret: true
+  resenha_livekit_room_policy:
+    default: "disabled"
+    type: enum
+    choices:
+      - disabled
+      - per_room
+      - all_rooms
+    validator: "ResenhaLivekitPolicyValidator"
+  resenha_livekit_room_prefix:
+    default: ""
+  resenha_livekit_mesh_fallback:
+    default: false
   resenha_video_enabled:
     default: false
     client: true

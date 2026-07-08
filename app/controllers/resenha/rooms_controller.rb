@@ -22,6 +22,7 @@ module Resenha
                     heartbeat
                     toggle_mute
                     state
+                    livekit_token
                   ]
 
     def index
@@ -94,6 +95,43 @@ module Resenha
 
     def join
       guardian.ensure_can_join_resenha_room!(@room)
+
+      # Resolved before presence is added, so a LiveKit failure rejects the
+      # join without leaving the user in the roster.
+      transport = Resenha::ParticipantTracker.pinned_transport(@room.id)
+      transport ||= Resenha::Livekit.available_for?(@room) ? "livekit" : "mesh"
+
+      livekit = nil
+      if transport == "livekit"
+        livekit = mint_livekit_payload
+
+        if livekit.nil?
+          # Fall back to mesh only when explicitly enabled and the room is
+          # empty — an occupied LiveKit room must never be split, and silent
+          # degradation hides outages from ops.
+          if SiteSetting.resenha_livekit_mesh_fallback &&
+               Resenha::ParticipantTracker.user_ids(@room.id).empty?
+            Resenha::ParticipantTracker.clear_transport_pin(@room.id)
+            transport = "mesh"
+          else
+            return render_json_error(I18n.t("resenha.errors.livekit_unavailable"), status: 503)
+          end
+        end
+      end
+
+      transport = Resenha::ParticipantTracker.pin_transport!(@room.id, transport)
+
+      # A concurrent first join can win the pin race with a different
+      # transport (e.g. settings changed between the two resolutions) —
+      # the pin is authoritative.
+      if transport == "livekit" && livekit.nil?
+        livekit = mint_livekit_payload
+        if livekit.nil?
+          return render_json_error(I18n.t("resenha.errors.livekit_unavailable"), status: 503)
+        end
+      end
+      livekit = nil if transport == "mesh"
+
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
 
       membership = @room.room_memberships.find_by(user_id: current_user.id)
@@ -116,22 +154,55 @@ module Resenha
         Resenha::UserStatusManager.set_voice_status(current_user, @room)
       end
 
-      render json: {
-               transport: "mesh",
-               room:
-                 Resenha::RoomSerializer.new(
-                   @room,
-                   scope: guardian,
-                   root: false,
-                   include_visit_count: true,
-                 ).as_json,
-             }
+      payload = {
+        transport: transport,
+        room:
+          Resenha::RoomSerializer.new(
+            @room,
+            scope: guardian,
+            root: false,
+            include_visit_count: true,
+          ).as_json,
+      }
+      payload[:livekit] = livekit if livekit
+      render json: payload
+    end
+
+    # Reissues a LiveKit access token for the reconnect ladder, which runs
+    # precisely when the presence TTL may have lapsed — so this endpoint
+    # re-adds presence itself (same authz as heartbeat) instead of requiring
+    # it. 410 tells the client the room instance ended: stop the ladder,
+    # tear down locally, and offer a rejoin.
+    def livekit_token
+      guardian.ensure_can_join_resenha_room!(@room)
+      RateLimiter.new(current_user, "resenha-livekit-token", 10, 1.minute).performed!
+
+      if Resenha::ParticipantTracker.pinned_transport(@room.id) != "livekit"
+        return render_json_error(I18n.t("resenha.errors.livekit_room_instance_ended"), status: 410)
+      end
+
+      Resenha::ParticipantTracker.add(@room.id, current_user.id)
+      metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
+      metadata[:last_heartbeat_at] = Time.now.to_f
+      Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
+      Resenha::ParticipantTracker.refresh_transport_pin(@room.id)
+      Resenha::RoomBroadcaster.publish_participants_if_changed(@room)
+
+      livekit = mint_livekit_payload
+      if livekit.nil?
+        return render_json_error(I18n.t("resenha.errors.livekit_unavailable"), status: 503)
+      end
+
+      render json: livekit
     end
 
     def leave
       guardian.ensure_can_join_resenha_room!(@room)
       session = close_session_for(@room.id, current_user.id)
       Resenha::ParticipantTracker.remove(@room.id, current_user.id)
+      if Resenha::ParticipantTracker.user_ids(@room.id).empty?
+        Resenha::ParticipantTracker.clear_transport_pin(@room.id)
+      end
       Resenha::UserStatusManager.clear_voice_status(current_user)
       Resenha::RoomBroadcaster.publish_participants(@room)
       Resenha::BadgeGranterHooks.on_leave(current_user, session, room: @room)
@@ -151,6 +222,7 @@ module Resenha
       end
 
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
+      Resenha::ParticipantTracker.refresh_transport_pin(@room.id)
 
       # Keep an in-progress chat session alive while someone is present, so it
       # only rolls over to a new thread once the room is idle AND empty.
@@ -254,6 +326,12 @@ module Resenha
 
     def signal
       guardian.ensure_can_join_resenha_room!(@room)
+
+      # Defense in depth: LiveKit rooms never exchange WebRTC signals.
+      if Resenha::ParticipantTracker.pinned_transport(@room.id) == "livekit"
+        return render_json_error(I18n.t("resenha.errors.livekit_no_signaling"), status: 422)
+      end
+
       payload =
         params
           .require(:payload)
@@ -345,6 +423,18 @@ module Resenha
     end
 
     private
+
+    # Broad rescue is deliberate: a LiveKit problem must surface as the 503
+    # handled by the callers, never as an opaque 500.
+    def mint_livekit_payload
+      token = Resenha::Livekit.mint_token(user: current_user, room: @room, guardian: guardian)
+      { url: SiteSetting.resenha_livekit_url, token: token }
+    rescue StandardError => e
+      Rails.logger.error(
+        "[resenha-livekit] token mint failed for room #{@room.id}: #{e.class} #{e.message}",
+      )
+      nil
+    end
 
     def ensure_chat_available!
       guardian.ensure_can_join_resenha_room!(@room)

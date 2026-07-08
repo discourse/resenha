@@ -34,6 +34,51 @@ RSpec.describe Resenha::ParticipantTracker do
     end
   end
 
+  describe ".pin_transport!" do
+    it "pins the first transport and keeps it under a race" do
+      expect(described_class.pin_transport!(room.id, "livekit")).to eq("livekit")
+
+      # A concurrent joiner resolving differently must get the pinned value.
+      expect(described_class.pin_transport!(room.id, "mesh")).to eq("livekit")
+      expect(described_class.pinned_transport(room.id)).to eq("livekit")
+    end
+
+    it "expires on its own so a crashed room self-heals" do
+      described_class.pin_transport!(room.id, "livekit")
+
+      ttl = Discourse.redis.ttl("#{described_class::KEY_NAMESPACE}:#{room.id}:transport")
+      expect(ttl).to be_between(1, SiteSetting.resenha_participant_ttl_seconds * 2)
+    end
+  end
+
+  describe ".pinned_transport" do
+    it "returns nil when no pin exists" do
+      expect(described_class.pinned_transport(room.id)).to be_nil
+    end
+  end
+
+  describe ".refresh_transport_pin" do
+    it "extends the pin's ttl" do
+      key = "#{described_class::KEY_NAMESPACE}:#{room.id}:transport"
+      described_class.pin_transport!(room.id, "livekit")
+      Discourse.redis.expire(key, 1)
+
+      described_class.refresh_transport_pin(room.id)
+
+      expect(Discourse.redis.ttl(key)).to be > 1
+    end
+  end
+
+  describe ".clear_transport_pin" do
+    it "removes the pin" do
+      described_class.pin_transport!(room.id, "mesh")
+
+      described_class.clear_transport_pin(room.id)
+
+      expect(described_class.pinned_transport(room.id)).to be_nil
+    end
+  end
+
   describe ".recently_active_room_ids" do
     it "includes rooms with recent membership changes, even once emptied" do
       described_class.add(room.id, user1.id)

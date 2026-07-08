@@ -20,7 +20,15 @@ module Jobs
 
       ::Resenha::Room
         .where(id: room_ids)
-        .find_each { |room| ::Resenha::RoomBroadcaster.publish_participants(room) }
+        .find_each do |room|
+          # Backstop for the pin-clear on last leave: a room that emptied
+          # without one (crashed clients, missed leave) must not hold its
+          # transport for the next call.
+          if ::Resenha::ParticipantTracker.user_ids(room.id).empty?
+            ::Resenha::ParticipantTracker.clear_transport_pin(room.id)
+          end
+          ::Resenha::RoomBroadcaster.publish_participants(room)
+        end
     end
   end
 end
