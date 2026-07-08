@@ -54,5 +54,6 @@ end
 
 require_relative "resenha/engine"
 require_relative "resenha/guardian_extension"
+require_relative "resenha/livekit"
 require_relative "resenha/room_hashtag_data_source"
 require_relative "resenha/user_status_manager"

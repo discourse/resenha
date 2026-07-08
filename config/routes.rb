@@ -13,6 +13,7 @@ Resenha::Engine.routes.draw do
       post :chat_message
       post :toggle_mute
       post :state
+      post :livekit_token
       delete :kick
     end
 
