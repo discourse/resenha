@@ -144,9 +144,16 @@ function buildFakeSdk() {
     TrackUnsubscribed: "trackUnsubscribed",
     TrackPublished: "trackPublished",
     ParticipantDisconnected: "participantDisconnected",
+    ParticipantPermissionsChanged: "participantPermissionsChanged",
     Disconnected: "disconnected",
     Reconnecting: "reconnecting",
     Reconnected: "reconnected",
+  };
+
+  const VideoQuality = {
+    LOW: 0,
+    MEDIUM: 1,
+    HIGH: 2,
   };
 
   const DisconnectReason = {
@@ -186,6 +193,7 @@ function buildFakeSdk() {
       const room = this;
       this.localParticipant = {
         published: [],
+        unpublishCalls: [],
         async publishTrack(track, publishOptions) {
           const publication = {
             source: publishOptions?.source,
@@ -201,6 +209,13 @@ function buildFakeSdk() {
           };
           room.localParticipant.published.push(publication);
           return publication;
+        },
+        async unpublishTrack(track, stopOnUnpublish) {
+          room.localParticipant.unpublishCalls.push({ track, stopOnUnpublish });
+          room.localParticipant.published =
+            room.localParticipant.published.filter(
+              (publication) => publication.track !== track
+            );
         },
       };
     }
@@ -240,9 +255,27 @@ function buildFakeSdk() {
       RoomEvent,
       DisconnectReason,
       Track,
+      VideoQuality,
       isBrowserSupported: () => true,
     },
     FakeLivekitRoom,
+  };
+}
+
+function createFakeRemotePublication(source, kind) {
+  return {
+    source,
+    kind,
+    isSubscribed: true,
+    subscribedCalls: [],
+    qualityCalls: [],
+    setSubscribed(value) {
+      this.isSubscribed = value;
+      this.subscribedCalls.push(value);
+    },
+    setVideoQuality(quality) {
+      this.qualityCalls.push(quality);
+    },
   };
 }
 
@@ -267,6 +300,7 @@ function createFakeTrack(id, kind = "audio") {
     kind,
     enabled: true,
     stop() {},
+    addEventListener() {},
   };
 }
 
@@ -279,6 +313,15 @@ function createFakeStream(id, track) {
     getAudioTracks() {
       return [track];
     },
+  };
+}
+
+function createFakeMediaStream(id, tracks) {
+  return {
+    id,
+    getTracks: () => [...tracks],
+    getAudioTracks: () => tracks.filter((track) => track.kind === "audio"),
+    getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
   };
 }
 
@@ -399,6 +442,8 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     this.currentUser.id = 10;
     this.siteSettings = this.owner.lookup("service:site-settings");
     this.siteSettings.resenha_auto_status_enabled = true;
+    this.siteSettings.resenha_video_enabled = true;
+    this.siteSettings.resenha_video_max_publishers = 4;
     localStorage.removeItem("resenha:noise-suppression");
 
     this.owner.unregister("service:resenha-rooms");
@@ -412,6 +457,7 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
       id: 1,
       name: "Voice",
       room_type: "open",
+      video_enabled: true,
       membership: { role_name: "participant" },
       active_participants: [
         { id: this.currentUser.id, role: "participant" },
@@ -438,6 +484,13 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     );
     pretender.post("/resenha/rooms/1/toggle_mute", () => response({}));
     pretender.post("/resenha/rooms/1/signal", () => response({}));
+    this.stateRequests = [];
+    pretender.post("/resenha/rooms/1/state", (request) => {
+      this.stateRequests.push(
+        Object.fromEntries(new URLSearchParams(request.requestBody))
+      );
+      return response({});
+    });
     pretender.delete("/resenha/rooms/1/leave", () => {
       this.leaveRequests++;
       return response({});
@@ -486,6 +539,25 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
       processedStream: this.processedStream,
     });
 
+    // Video capture fakes on top of the audio environment: getUserMedia with
+    // video constraints returns the fake camera, getDisplayMedia the fake
+    // screen. audioEnvironment.restore() puts getUserMedia back.
+    this.cameraTrack = createFakeTrack("camera-track", "video");
+    this.cameraStream = createFakeMediaStream("camera-stream", [
+      this.cameraTrack,
+    ]);
+    this.screenVideoTrack = createFakeTrack("screen-video-track", "video");
+    this.screenAudioTrack = createFakeTrack("screen-audio-track", "audio");
+    this.screenStream = createFakeMediaStream("screen-stream", [
+      this.screenVideoTrack,
+      this.screenAudioTrack,
+    ]);
+    const audioGetUserMedia = navigator.mediaDevices.getUserMedia;
+    navigator.mediaDevices.getUserMedia = async (constraints) =>
+      constraints?.video ? this.cameraStream : audioGetUserMedia(constraints);
+    this.originalGetDisplayMedia = navigator.mediaDevices.getDisplayMedia;
+    navigator.mediaDevices.getDisplayMedia = async () => this.screenStream;
+
     this.subject = this.owner.lookup("service:resenha-webrtc");
   });
 
@@ -496,6 +568,11 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     setLivekitReconnectDelaysForTesting(null);
     localStorage.removeItem("resenha:noise-suppression");
     this.audioEnvironment.restore();
+    if (this.originalGetDisplayMedia) {
+      navigator.mediaDevices.getDisplayMedia = this.originalGetDisplayMedia;
+    } else {
+      delete navigator.mediaDevices.getDisplayMedia;
+    }
     globalThis.RTCPeerConnection = this.originalRTCPeerConnection;
     globalThis.MediaStream = this.originalMediaStream;
   });
@@ -588,6 +665,9 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
   test("subscribed tracks land in the remote registry under numeric user ids", async function (assert) {
     await this.subject.join(this.room);
     await wait(50);
+
+    // Screen audio is watch-gated; the mic below is not.
+    this.subject.setWatching(1, true);
 
     const lkRoom = this.FakeLivekitRoom.instances[0];
     const micTrack = createFakeTrack("remote-mic-2");
@@ -845,6 +925,374 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
       this.toasts.errors.length,
       1,
       "tells the user the connection could not be recovered"
+    );
+  });
+
+  test("toggleCamera publishes a simulcast camera track and broadcasts state", async function (assert) {
+    await this.subject.join(this.room);
+    await wait(50);
+
+    await this.subject.toggleCamera();
+    await wait(20);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    const publication = lkRoom.localParticipant.published[1];
+    assert.strictEqual(
+      publication.track.mediaStreamTrack,
+      this.cameraTrack,
+      "publishes the camera track"
+    );
+    assert.deepEqual(
+      publication.options,
+      {
+        source: "camera",
+        simulcast: true,
+        videoEncoding: { maxBitrate: 1_200_000, maxFramerate: 24 },
+      },
+      "publishes with simulcast and the camera encoding preset"
+    );
+    assert.deepEqual(
+      this.stateRequests.at(-1),
+      { video: "true", screen: "false" },
+      "broadcasts the video state exactly like mesh does"
+    );
+
+    await this.subject.toggleCamera();
+    await wait(20);
+
+    assert.deepEqual(
+      lkRoom.localParticipant.unpublishCalls.map((call) => [
+        call.track.mediaStreamTrack.id,
+        call.stopOnUnpublish,
+      ]),
+      [["camera-track", false]],
+      "unpublishes the camera without stopping the service-owned track"
+    );
+    assert.strictEqual(
+      lkRoom.localParticipant.published.length,
+      1,
+      "only the microphone remains published"
+    );
+    assert.deepEqual(
+      this.stateRequests.at(-1),
+      { video: "false", screen: "false" },
+      "broadcasts the stopped state"
+    );
+    assert.strictEqual(
+      FakeRTCPeerConnection.created,
+      0,
+      "video never creates mesh peer connections"
+    );
+  });
+
+  test("toggleScreenShare publishes the screen track and content audio", async function (assert) {
+    await this.subject.join(this.room);
+    await wait(50);
+
+    await this.subject.toggleScreenShare();
+    await wait(20);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    const videoPublication = lkRoom.localParticipant.published[1];
+    assert.strictEqual(
+      videoPublication.track.mediaStreamTrack,
+      this.screenVideoTrack,
+      "publishes the screen video track"
+    );
+    assert.deepEqual(
+      videoPublication.options,
+      {
+        source: "screen_share",
+        simulcast: true,
+        screenShareEncoding: { maxBitrate: 2_500_000, maxFramerate: 15 },
+      },
+      "publishes with the screenshare encoding preset"
+    );
+
+    const audioPublication = lkRoom.localParticipant.published[2];
+    assert.strictEqual(
+      audioPublication.track.mediaStreamTrack,
+      this.screenAudioTrack,
+      "publishes the screen audio track"
+    );
+    assert.deepEqual(
+      audioPublication.options,
+      { source: "screen_share_audio", dtx: false, audioBitrate: 128_000 },
+      "publishes content audio without DTX and with the higher Opus ceiling"
+    );
+    assert.deepEqual(
+      this.stateRequests.at(-1),
+      { video: "false", screen: "true" },
+      "broadcasts the screen-sharing state"
+    );
+
+    await this.subject.toggleScreenShare();
+    await wait(20);
+
+    assert.strictEqual(
+      lkRoom.localParticipant.published.length,
+      1,
+      "stopping the share unpublishes both screen tracks"
+    );
+    assert.deepEqual(
+      lkRoom.localParticipant.unpublishCalls.map(
+        (call) => call.stopOnUnpublish
+      ),
+      [false, false],
+      "the service keeps ownership of the capture tracks"
+    );
+  });
+
+  test("setWatching gates remote video subscriptions on the subscriber side", async function (assert) {
+    await this.subject.join(this.room);
+    await wait(50);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    const micPublication = createFakeRemotePublication("microphone", "audio");
+    const cameraPublication = createFakeRemotePublication("camera", "video");
+    const screenAudioPublication = createFakeRemotePublication(
+      "screen_share_audio",
+      "audio"
+    );
+    const publications = new Map([
+      ["mic-sid", micPublication],
+      ["camera-sid", cameraPublication],
+      ["screen-audio-sid", screenAudioPublication],
+    ]);
+    lkRoom.remoteParticipants.set("2", {
+      identity: "2",
+      trackPublications: publications,
+    });
+
+    this.subject.setWatching(1, true);
+
+    assert.deepEqual(
+      cameraPublication.subscribedCalls,
+      [true],
+      "watching subscribes the camera"
+    );
+    assert.deepEqual(
+      screenAudioPublication.subscribedCalls,
+      [true],
+      "watching subscribes screen audio"
+    );
+
+    this.subject.setWatching(1, false);
+
+    assert.deepEqual(
+      cameraPublication.subscribedCalls,
+      [true, false],
+      "leaving the page unsubscribes the camera"
+    );
+    assert.deepEqual(
+      screenAudioPublication.subscribedCalls,
+      [true, false],
+      "leaving the page unsubscribes screen audio"
+    );
+    assert.deepEqual(
+      micPublication.subscribedCalls,
+      [],
+      "microphone subscriptions are never gated"
+    );
+
+    const latePublication = createFakeRemotePublication("camera", "video");
+    publications.set("late-camera-sid", latePublication);
+    lkRoom.emit("trackPublished", latePublication, { identity: "2" });
+
+    assert.deepEqual(
+      latePublication.subscribedCalls,
+      [false],
+      "a camera published while not watching starts unsubscribed"
+    );
+
+    this.subject.setWatching(1, true);
+
+    assert.deepEqual(
+      latePublication.subscribedCalls,
+      [false, true],
+      "watching again picks the late publication up"
+    );
+  });
+
+  test("subscriptions pick simulcast layers from the publisher count", async function (assert) {
+    await this.subject.join(this.room);
+    await wait(50);
+
+    this.subject.setWatching(1, true);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    const cameraPublication = createFakeRemotePublication("camera", "video");
+    const screenPublication = createFakeRemotePublication(
+      "screen_share",
+      "video"
+    );
+    lkRoom.remoteParticipants.set("2", {
+      identity: "2",
+      trackPublications: new Map([
+        ["camera-sid", cameraPublication],
+        ["screen-sid", screenPublication],
+      ]),
+    });
+
+    lkRoom.emit(
+      "trackSubscribed",
+      {
+        kind: "video",
+        mediaStreamTrack: createFakeTrack("remote-camera-2", "video"),
+        mediaStream: null,
+      },
+      cameraPublication,
+      { identity: "2" }
+    );
+    lkRoom.emit(
+      "trackSubscribed",
+      {
+        kind: "video",
+        mediaStreamTrack: createFakeTrack("remote-screen-2", "video"),
+        mediaStream: null,
+      },
+      screenPublication,
+      { identity: "2" }
+    );
+    await wait(10);
+
+    assert.deepEqual(
+      cameraPublication.qualityCalls,
+      [1],
+      "cameras subscribe at the MEDIUM layer in small rooms"
+    );
+    assert.deepEqual(
+      screenPublication.qualityCalls,
+      [2],
+      "screenshares subscribe at the HIGH layer"
+    );
+
+    const participants = [{ id: this.currentUser.id, role: "participant" }];
+    for (let id = 2; id <= 8; id++) {
+      participants.push({ id, role: "participant", is_video_on: true });
+    }
+    this.rooms.emit(1, { type: "participants", participants });
+    await wait(20);
+
+    assert.strictEqual(
+      cameraPublication.qualityCalls.at(-1),
+      0,
+      "more than six publishers drops cameras to the LOW layer"
+    );
+    assert.strictEqual(
+      screenPublication.qualityCalls.at(-1),
+      2,
+      "screenshares stay on the HIGH layer regardless of room size"
+    );
+  });
+
+  test("a stage promotion publishes the microphone without reconnecting", async function (assert) {
+    this.room.room_type = "stage";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "listener" },
+      { id: 2, role: "moderator" },
+    ];
+
+    await this.subject.join(this.room);
+    await wait(50);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    assert.strictEqual(
+      lkRoom.localParticipant.published.length,
+      0,
+      "a stage listener publishes nothing"
+    );
+
+    this.rooms.emit(1, {
+      type: "role_change",
+      user_id: this.currentUser.id,
+      role: "speaker",
+    });
+    await waitUntil(() => lkRoom.localParticipant.published.length === 1);
+
+    const publication = lkRoom.localParticipant.published[0];
+    assert.strictEqual(
+      publication.track.mediaStreamTrack,
+      this.rawTrack,
+      "publishes the freshly acquired microphone"
+    );
+    assert.deepEqual(
+      publication.options,
+      { source: "microphone", dtx: true, red: true },
+      "publishes it as a regular microphone source"
+    );
+    assert.strictEqual(
+      this.FakeLivekitRoom.instances.length,
+      1,
+      "the promotion never reconnects the media session"
+    );
+  });
+
+  test("a stage demotion releases the microphone publication", async function (assert) {
+    this.room.room_type = "stage";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "speaker" },
+      { id: 2, role: "moderator" },
+    ];
+
+    await this.subject.join(this.room);
+    await wait(50);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    assert.strictEqual(
+      lkRoom.localParticipant.published.length,
+      1,
+      "a speaker starts out publishing the microphone"
+    );
+
+    this.rooms.emit(1, {
+      type: "role_change",
+      user_id: this.currentUser.id,
+      role: "listener",
+    });
+    await waitUntil(() => lkRoom.localParticipant.published.length === 0);
+
+    assert.deepEqual(
+      lkRoom.localParticipant.unpublishCalls.map(
+        (call) => call.stopOnUnpublish
+      ),
+      [false],
+      "the microphone is unpublished without the SDK stopping the track"
+    );
+    assert.strictEqual(
+      this.FakeLivekitRoom.instances.length,
+      1,
+      "the demotion never reconnects the media session"
+    );
+  });
+
+  test("a ladder reconnect republishes the live camera", async function (assert) {
+    pretender.post("/resenha/rooms/1/livekit_token", () =>
+      response({ url: "wss://sfu.example.com", token: "token-2" })
+    );
+
+    await this.subject.join(this.room);
+    await wait(50);
+    await this.subject.toggleCamera();
+    await wait(20);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    lkRoom.emit("disconnected", this.sdk.DisconnectReason.SERVER_SHUTDOWN);
+    await waitUntil(() => this.FakeLivekitRoom.instances.length === 2);
+    await wait(20);
+
+    const reconnectedRoom = this.FakeLivekitRoom.instances[1];
+    assert.deepEqual(
+      reconnectedRoom.localParticipant.published.map(
+        (publication) => publication.source
+      ),
+      ["microphone", "camera"],
+      "the new connection carries both the microphone and the camera"
+    );
+    assert.strictEqual(
+      reconnectedRoom.localParticipant.published[1].track.mediaStreamTrack,
+      this.cameraTrack,
+      "the same capture track is republished"
     );
   });
 });
