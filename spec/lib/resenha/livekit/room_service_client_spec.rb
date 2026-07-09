@@ -131,12 +131,30 @@ RSpec.describe Resenha::Livekit::RoomServiceClient do
   end
 
   describe ".delete_room" do
-    it "POSTs the room name" do
+    it "POSTs the room name with a roomCreate-granted token" do
       stub = twirp_stub("DeleteRoom").with(body: { room: Resenha::Livekit.room_name(room) }.to_json)
 
       expect(described_class.delete_room(room)).to eq(true)
 
       expect(stub).to have_been_requested
+      expect(
+        a_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom",
+        ).with do |req|
+          token = req.headers["Authorization"].delete_prefix("Bearer ")
+          claims =
+            JWT.decode(
+              token,
+              SiteSetting.resenha_livekit_api_secret,
+              true,
+              algorithm: "HS256",
+            ).first
+
+          # LiveKit authorizes DeleteRoom via roomCreate, not roomAdmin.
+          claims["video"] == { "roomCreate" => true, "room" => Resenha::Livekit.room_name(room) }
+        end,
+      ).to have_been_made.once
     end
   end
 
