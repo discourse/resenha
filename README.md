@@ -1,6 +1,6 @@
 # Resenha Voice Rooms
 
-Resenha is a Discourse plugin that adds Discord-style voice rooms powered by WebRTC. Rooms appear in the sidebar; users join or leave with a single click and talk peer-to-peer — no media goes through the Discourse server.
+Resenha is a Discourse plugin that adds Discord-style voice rooms powered by WebRTC. Rooms appear in the sidebar; users join or leave with a single click and talk peer-to-peer — no media goes through the Discourse server. Sites that need bigger calls can optionally route rooms through a self-hosted [LiveKit](https://livekit.io) media server.
 
 > **Status:** early alpha — test with small groups before opening to a full community.
 
@@ -15,6 +15,7 @@ Resenha is a Discourse plugin that adds Discord-style voice rooms powered by Web
 - **Video and screen sharing** — optional, off by default. Each room gets a full page at `/resenha/r/<slug>` with a tile grid; camera and screen share toggle without renegotiation, and senders only encode toward peers who are actually watching the page. Rooms can opt out individually. See [Video](#video).
 - **Video settings with background blur** — a per-room video settings modal with a live preview, camera device picker, and MediaPipe-powered background blur with an adjustable strength slider. See [Background Blur](#background-blur).
 - **Pure browser WebRTC** — signaling through Discourse + MessageBus; media stays peer-to-peer, no SFU/MCU required.
+- **Optional LiveKit SFU** — point the plugin at a self-hosted LiveKit server and route all rooms (or individually opted-in rooms) through it for enterprise-scale calls; everything else keeps working identically. See [LiveKit](#livekit-media-server-sfu).
 
 ## Installation
 
@@ -38,6 +39,9 @@ The plugin seeds a default "Watercooler" room on first enable.
 | `resenha_video_background_blur_enabled` | Allow users to blur their camera background (default on; requires video).        |
 | `resenha_stun_servers`               | STUN server addresses (pipe-separated).                                              |
 | `resenha_turn_servers`               | TURN server addresses for NAT traversal.                                             |
+| `resenha_livekit_url`                | WebSocket URL of a self-hosted LiveKit server (empty = mesh only).                   |
+| `resenha_livekit_api_key` / `_api_secret` | LiveKit API credentials used to sign short-lived room tokens.                   |
+| `resenha_livekit_room_policy`        | Which rooms use LiveKit: `disabled` (default), `per_room`, or `all_rooms`.           |
 
 ## Video
 
@@ -47,6 +51,7 @@ When `resenha_video_enabled` is on (and the room's own video toggle is too), the
 - Senders attach video only toward participants currently on the room page (`watching_video` presence flag) — every skipped peer saves a full encoder session.
 - Encoding quality scales down with watcher count (720p ≤3 watchers, 480p ≤6, 360p beyond) and is capped by `resenha_video_max_publishers`.
 - Camera and screen share are mutually exclusive per user. Stage rooms do not support video yet.
+- On LiveKit-routed rooms the mesh details above are handled by the SFU instead: each track is published once with simulcast, and per-watcher gating happens on the subscriber side. The UI, the `watching_video` flag, and the publisher cap behave identically.
 
 See `docs/roadmap/video-screenshare.md` for the full design.
 
@@ -77,6 +82,16 @@ cd plugins/resenha && bash scripts/fetch-mediapipe-assets.sh
 ```
 
 The script pins the `@mediapipe/tasks-vision` npm version and the model version, and verifies the model's SHA-256 checksum.
+
+## LiveKit media server (SFU)
+
+By default media is pure peer-to-peer, which is ideal for small rooms but scales upstream bandwidth with room size. Deploy your own [LiveKit](https://livekit.io) server and set `resenha_livekit_url`, `resenha_livekit_api_key`, `resenha_livekit_api_secret`, and `resenha_livekit_room_policy` to route rooms through it — each participant then publishes every track exactly once, whatever the room size.
+
+- The server picks each call's transport when its first participant joins and pins it for the whole call; a room is never split across transports, and setting changes only affect the next call.
+- Presence, sessions, stats, mute/deafen/PTT, noise suppression, and background blur are transport-independent — they behave identically on both paths.
+- The pinned `livekit-client` SDK is vendored under `public/javascripts/livekit/` (rebuild with `scripts/build-livekit-bundle.sh`) and is only ever loaded in the browser for LiveKit-routed rooms — mesh installs ship zero LiveKit bytes.
+
+See [docs/livekit.md](docs/livekit.md) for the full deployment runbook (provisioning, firewall/CSP notes, verification, emergency levers) and the manual browser checklist.
 
 ## Noise Suppression
 
@@ -111,5 +126,5 @@ Key entry points:
 
 ## Known Limitations
 
-- Pure peer-to-peer topology; large rooms may hit browser limits. SFU support is on the roadmap.
-- No call recording or moderation tools beyond kick.
+- The default peer-to-peer topology means large rooms may hit browser limits; rooms that outgrow it need a [LiveKit server](docs/livekit.md).
+- No call recording or moderation tools beyond kick and the admin "End call" action.
