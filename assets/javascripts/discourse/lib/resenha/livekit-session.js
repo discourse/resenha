@@ -14,7 +14,9 @@ import getURL from "discourse/lib/get-url";
 // itself be served from a CDN origin, and a dynamic import() of a bare path
 // would resolve against the chunk's origin, not the site's. The loaded
 // module stays resident so rejoins are instant; never evaluated for mesh
-// rooms.
+// rooms. The bundle keeps a .js extension (despite being ESM) because
+// module scripts require a JavaScript MIME type and neither Rails' static
+// file server nor stock nginx maps .mjs to one.
 let sdkPromise = null;
 let sdkLoaderOverride = null;
 
@@ -25,7 +27,7 @@ async function defaultLoadSdk() {
   sdkPromise ||= import(
     /* @vite-ignore */
     new URL(
-      getURL("/plugins/resenha/javascripts/livekit/livekit-client.mjs"),
+      getURL("/plugins/resenha/javascripts/livekit/livekit-client.js"),
       window.location
     ).href
   );
