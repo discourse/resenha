@@ -72,3 +72,69 @@
     margin-bottom: 0.5em;
   }
 }
+
+.resenha-livekit-status {
+  margin-top: 2em;
+  padding: 1em;
+  background: var(--primary-very-low);
+  border: 1px solid var(--primary-low);
+  border-radius: var(--d-border-radius);
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    h3 {
+      margin: 0;
+    }
+  }
+
+  &__checks {
+    list-style: none;
+    margin: 1em 0;
+    padding: 0;
+  }
+
+  &__check {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5em;
+    padding: 0.25em 0;
+  }
+
+  &__check,
+  &__room-diff {
+    .d-icon {
+      align-self: center;
+    }
+
+    &.--ok .d-icon,
+    .--ok .d-icon {
+      color: var(--success);
+    }
+
+    &.--warning .d-icon,
+    .--warning .d-icon {
+      color: var(--highlight-high);
+    }
+
+    &.--error .d-icon,
+    .--error .d-icon {
+      color: var(--danger);
+    }
+  }
+
+  &__rooms {
+    margin-top: 0.5em;
+  }
+
+  &__load-failed,
+  &__no-rooms {
+    color: var(--primary-medium);
+  }
+
+  h4 {
+    margin: 1em 0 0.25em;
+  }
+}
