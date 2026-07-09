@@ -225,5 +225,99 @@ RSpec.describe Resenha::AdminRoomsController do
       delete "/admin/plugins/resenha/rooms/99999.json"
       expect(response.status).to eq(404)
     end
+
+    it "deletes a livekit-pinned room from the SFU and clears the pin" do
+      sign_in(admin)
+      SiteSetting.resenha_livekit_url = "wss://livekit.example.com"
+      SiteSetting.resenha_livekit_api_key = "lk_api_key"
+      SiteSetting.resenha_livekit_api_secret = "lk_api_secret"
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      stub = stub_request(:post, "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom")
+
+      delete "/admin/plugins/resenha/rooms/#{room.id}.json"
+
+      expect(response.status).to eq(204)
+      expect(stub).to have_been_requested
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+    end
+  end
+
+  describe "#end_call" do
+    fab!(:participant, :user)
+    fab!(:other_participant, :user)
+
+    before do
+      Resenha::ParticipantTracker.add(room.id, participant.id)
+      Resenha::ParticipantTracker.add(room.id, other_participant.id)
+    end
+
+    after { Resenha::ParticipantTracker.clear(room.id) }
+
+    it "returns 404 for non-staff users" do
+      sign_in(user)
+      post "/admin/plugins/resenha/rooms/#{room.id}/end_call.json"
+      expect(response.status).to eq(404)
+    end
+
+    it "returns 404 for non-existent room" do
+      sign_in(admin)
+      post "/admin/plugins/resenha/rooms/99999/end_call.json"
+      expect(response.status).to eq(404)
+    end
+
+    it "kicks every participant and clears the transport pin" do
+      sign_in(admin)
+      Resenha::ParticipantTracker.pin_transport!(room.id, "mesh")
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/admin/plugins/resenha/rooms/#{room.id}/end_call.json"
+        end
+
+      expect(response.status).to eq(204)
+      kicks = messages.select { |message| message.data[:type] == "kicked" }
+      expect(kicks.map(&:user_ids)).to contain_exactly([participant.id], [other_participant.id])
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+    end
+
+    it "also deletes the SFU room when the call is pinned to livekit" do
+      sign_in(admin)
+      SiteSetting.resenha_livekit_url = "wss://livekit.example.com"
+      SiteSetting.resenha_livekit_api_key = "lk_api_key"
+      SiteSetting.resenha_livekit_api_secret = "lk_api_secret"
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      stub =
+        stub_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom",
+        ).with(body: { room: Resenha::Livekit.room_name(room) }.to_json)
+
+      post "/admin/plugins/resenha/rooms/#{room.id}/end_call.json"
+
+      expect(response.status).to eq(204)
+      expect(stub).to have_been_requested
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+    end
+
+    it "still ends the call when LiveKit is down" do
+      sign_in(admin)
+      SiteSetting.resenha_livekit_url = "wss://livekit.example.com"
+      SiteSetting.resenha_livekit_api_key = "lk_api_key"
+      SiteSetting.resenha_livekit_api_secret = "lk_api_secret"
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      stub_request(
+        :post,
+        "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom",
+      ).to_timeout
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/admin/plugins/resenha/rooms/#{room.id}/end_call.json"
+        end
+
+      expect(response.status).to eq(204)
+      expect(messages.count { |message| message.data[:type] == "kicked" }).to eq(2)
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+    end
   end
 end

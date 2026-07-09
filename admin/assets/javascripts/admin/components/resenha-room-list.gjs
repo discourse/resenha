@@ -9,12 +9,32 @@ import DButton from "discourse/components/d-button";
 import DPageSubheader from "discourse/components/d-page-subheader";
 import avatar from "discourse/helpers/avatar";
 import formatDate from "discourse/helpers/format-date";
+import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { escapeExpression } from "discourse/lib/utilities";
 import { i18n } from "discourse-i18n";
 
 export default class ResenhaRoomList extends Component {
   @service dialog;
+
+  @action
+  async endCall(room) {
+    await this.dialog.yesNoConfirm({
+      message: i18n("resenha.admin.end_call.confirm", {
+        name: escapeExpression(room.name),
+      }),
+      didConfirm: async () => {
+        try {
+          await ajax(`/admin/plugins/resenha/rooms/${room.id}/end_call`, {
+            type: "POST",
+          });
+          room.set("live_participant_count", 0);
+        } catch (e) {
+          popupAjaxError(e);
+        }
+      },
+    });
+  }
 
   @action
   async destroyRoom(room) {
@@ -116,6 +136,15 @@ export default class ResenhaRoomList extends Component {
                   {{formatDate room.created_at leaveAgo="true"}}
                 </td>
                 <td class="d-admin-row__controls resenha-rooms__controls">
+                  {{#if room.live_participant_count}}
+                    <DButton
+                      @icon="phone-slash"
+                      @title="resenha.admin.end_call.title"
+                      {{on "click" (fn this.endCall room)}}
+                      class="btn-small btn-danger resenha-rooms__end-call"
+                    />
+                  {{/if}}
+
                   <LinkTo
                     @route="adminPlugins.show.resenha-rooms.edit"
                     @model={{room.id}}

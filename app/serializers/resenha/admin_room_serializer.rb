@@ -13,6 +13,7 @@ module Resenha
                :chat_idle_minutes,
                :chat_thread_title_template,
                :member_count,
+               :live_participant_count,
                :created_at,
                :updated_at
 
@@ -20,6 +21,10 @@ module Resenha
 
     def member_count
       object.room_memberships.size
+    end
+
+    def live_participant_count
+      Resenha::ParticipantTracker.user_ids(object.id).size
     end
   end
 end

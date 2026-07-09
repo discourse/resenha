@@ -25,6 +25,7 @@ module Resenha
         Resenha::ParticipantTracker.update_metadata(@room.id, user.id, metadata)
         Resenha::RoomBroadcaster.publish_role_change(@room, user.id, membership.role_name)
         Resenha::RoomBroadcaster.publish_participants(@room)
+        Resenha::Livekit::RoomServiceClient.update_participant(@room, user)
       end
 
       render_serialized membership, Resenha::RoomMembershipSerializer, root: :membership
@@ -46,6 +47,9 @@ module Resenha
           membership.role_name,
         )
         Resenha::RoomBroadcaster.publish_participants(@room)
+        # Lets a promoted stage listener publish without reconnecting; on
+        # failure the client falls back to re-minting a token and reconnecting.
+        Resenha::Livekit::RoomServiceClient.update_participant(@room, membership.user)
       end
 
       render_serialized membership, Resenha::RoomMembershipSerializer, root: :membership
@@ -63,6 +67,9 @@ module Resenha
         Resenha::ParticipantTracker.update_metadata(@room.id, user_id, metadata)
         Resenha::RoomBroadcaster.publish_role_change(@room, user_id, "participant")
         Resenha::RoomBroadcaster.publish_participants(@room)
+        if (user = User.find_by(id: user_id))
+          Resenha::Livekit::RoomServiceClient.update_participant(@room, user)
+        end
       end
 
       head :no_content

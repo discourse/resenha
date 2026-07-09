@@ -102,6 +102,8 @@ RSpec.describe Resenha::RoomsController do
       expect(response.parsed_body["transport"]).to eq("livekit")
 
       SiteSetting.resenha_livekit_room_policy = "disabled"
+      # The last leave also deletes the now-empty room from the SFU.
+      stub_request(:post, "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom")
       delete "/resenha/rooms/#{room.id}/leave.json"
       expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
 
@@ -232,6 +234,125 @@ RSpec.describe Resenha::RoomsController do
       post "/resenha/rooms/#{room.id}/heartbeat.json"
 
       expect(Discourse.redis.ttl(key)).to be > 1
+    end
+  end
+
+  describe "#kick" do
+    fab!(:admin)
+
+    before { sign_in(admin) }
+
+    it "evicts the kicked user's media session from a livekit-pinned room" do
+      configure_livekit!
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      Resenha::ParticipantTracker.add(room.id, other_user.id)
+      stub =
+        stub_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/RemoveParticipant",
+        ).with(
+          body: { identity: other_user.id.to_s, room: Resenha::Livekit.room_name(room) }.to_json,
+        )
+
+      delete "/resenha/rooms/#{room.id}/kick.json", params: { user_id: other_user.id }
+
+      expect(response.status).to eq(204)
+      expect(stub).to have_been_requested
+    end
+
+    it "still succeeds when LiveKit is down" do
+      configure_livekit!
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      Resenha::ParticipantTracker.add(room.id, other_user.id)
+      stub_request(
+        :post,
+        "https://livekit.example.com/twirp/livekit.RoomService/RemoveParticipant",
+      ).to_timeout
+
+      delete "/resenha/rooms/#{room.id}/kick.json", params: { user_id: other_user.id }
+
+      expect(response.status).to eq(204)
+    end
+
+    it "makes zero HTTP calls for a mesh room" do
+      configure_livekit!
+      Resenha::ParticipantTracker.pin_transport!(room.id, "mesh")
+      Resenha::ParticipantTracker.add(room.id, other_user.id)
+      stub = stub_request(:post, %r{\Ahttps://livekit\.example\.com/twirp/})
+
+      delete "/resenha/rooms/#{room.id}/kick.json", params: { user_id: other_user.id }
+
+      expect(response.status).to eq(204)
+      expect(stub).not_to have_been_requested
+    end
+  end
+
+  describe "#destroy" do
+    fab!(:admin)
+
+    before { sign_in(admin) }
+
+    it "deletes a livekit-pinned room from the SFU and clears the pin" do
+      configure_livekit!
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      stub =
+        stub_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom",
+        ).with(body: { room: Resenha::Livekit.room_name(room) }.to_json)
+
+      delete "/resenha/rooms/#{room.id}.json"
+
+      expect(response.status).to eq(200)
+      expect(stub).to have_been_requested
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+    end
+
+    it "makes zero HTTP calls for a mesh room" do
+      configure_livekit!
+      Resenha::ParticipantTracker.pin_transport!(room.id, "mesh")
+      stub = stub_request(:post, %r{\Ahttps://livekit\.example\.com/twirp/})
+
+      delete "/resenha/rooms/#{room.id}.json"
+
+      expect(response.status).to eq(200)
+      expect(stub).not_to have_been_requested
+    end
+  end
+
+  describe "#leave" do
+    before do
+      configure_livekit!
+      sign_in(user)
+    end
+
+    it "deletes the SFU room when the last participant leaves" do
+      post "/resenha/rooms/#{room.id}/join.json"
+      expect(response.parsed_body["transport"]).to eq("livekit")
+      stub =
+        stub_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom",
+        ).with(body: { room: Resenha::Livekit.room_name(room) }.to_json)
+
+      delete "/resenha/rooms/#{room.id}/leave.json"
+
+      expect(response.status).to eq(204)
+      expect(stub).to have_been_requested
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+    end
+
+    it "keeps the SFU room while other participants remain" do
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      Resenha::ParticipantTracker.add(room.id, other_user.id)
+      post "/resenha/rooms/#{room.id}/join.json"
+      stub = stub_request(:post, %r{\Ahttps://livekit\.example\.com/twirp/})
+
+      delete "/resenha/rooms/#{room.id}/leave.json"
+
+      expect(response.status).to eq(204)
+      expect(stub).not_to have_been_requested
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to eq("livekit")
     end
   end
 

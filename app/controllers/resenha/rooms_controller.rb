@@ -90,6 +90,8 @@ module Resenha
       broadcaster = Resenha::DirectoryBroadcaster.new(@room, :destroyed)
       @room.destroy!
       broadcaster.broadcast
+      Resenha::Livekit::RoomServiceClient.delete_room(@room)
+      Resenha::ParticipantTracker.clear_transport_pin(@room.id)
       render json: success_json
     end
 
@@ -201,6 +203,7 @@ module Resenha
       session = close_session_for(@room.id, current_user.id)
       Resenha::ParticipantTracker.remove(@room.id, current_user.id)
       if Resenha::ParticipantTracker.user_ids(@room.id).empty?
+        Resenha::Livekit::RoomServiceClient.delete_room(@room)
         Resenha::ParticipantTracker.clear_transport_pin(@room.id)
       end
       Resenha::UserStatusManager.clear_voice_status(current_user)
@@ -320,6 +323,10 @@ module Resenha
       Resenha::BadgeGranterHooks.on_leave(kicked_user, session, room: @room) if kicked_user
       Resenha::RoomBroadcaster.publish_kick(@room, user_id)
       Resenha::RoomBroadcaster.publish_participants(@room)
+
+      # The client-side kicked handler already forces a clean leave; this
+      # additionally evicts the media session from the SFU.
+      Resenha::Livekit::RoomServiceClient.remove_participant(@room, user_id)
 
       head :no_content
     end
