@@ -40,7 +40,16 @@ Go binary) with:
 - one `key: secret` API pair (generate with `livekit-server generate-keys`),
 - `use_external_ip: true` when the server sits behind NAT (cloud VMs almost
   always do),
-- a single node — no Redis required; each room just has to fit on one node.
+- a single node — no Redis required; each room just has to fit on one node,
+- optionally, [webhook delivery](#webhook-reconciliation-optional) back to the
+  forum:
+
+  ```yaml
+  webhook:
+    api_key: <the same API key>
+    urls:
+      - https://forum.example/resenha/livekit/webhook
+  ```
 
 ## Network setup
 
@@ -132,12 +141,41 @@ the SFU fine and a room must never split across transports.
   LiveKit being down never fails a Discourse request (the client-side
   enforcement still applies either way).
 
+## Webhook reconciliation (optional)
+
+With `webhook.urls` configured on the LiveKit server (see
+[Provisioning](#provisioning-a-livekit-server)), the plugin accepts signed
+webhook deliveries at `POST /resenha/livekit/webhook` and uses them as a
+**reconcile-only backstop**:
+
+- `participant_left` / `participant_connection_aborted` expire the
+  participant's presence early, so someone whose connection died drops off the
+  roster in seconds instead of waiting out the heartbeat TTL.
+- `room_finished` clears the room's transport pin, so the next call
+  re-resolves against current settings right away.
+
+Webhooks never *create* presence and never touch session analytics — those
+ride Discourse heartbeats on both transports. If webhooks are undelivered
+(firewall, misconfigured URL), nothing breaks; the built-in TTLs just take a
+little longer to converge, so treat a stale delivery marker as a warning,
+never an outage.
+
+Deliveries are authenticated by the `Authorization` JWT LiveKit signs with the
+API secret, which includes a hash of the request body — no extra shared
+secret to configure. Rejected deliveries are logged to `/logs` prefixed
+`[resenha-livekit]`.
+
 ## Multisite / shared clusters
 
 - Use one API key pair per site.
 - Room names are namespaced with the site's database name by default
   (`{db}-r{room_id}`), so sites on a shared LiveKit server can't collide;
   `resenha_livekit_room_prefix` overrides the prefix.
+- Webhooks are a partial fit here: LiveKit signs every delivery with the
+  single `webhook.api_key`, so with per-site key pairs only the site owning
+  that key can verify deliveries — the others safely reject them (403) and
+  fall back to the heartbeat TTLs. Sites that do verify still ignore events
+  for rooms outside their own name prefix.
 
 ## Upgrades
 
