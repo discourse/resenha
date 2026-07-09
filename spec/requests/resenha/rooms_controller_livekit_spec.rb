@@ -5,6 +5,7 @@ require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 require_relative "../../../db/migrate/20260305162426_add_room_type_to_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
+require_relative "../../../db/migrate/20260709165411_add_livekit_enabled_to_resenha_rooms"
 
 RSpec.describe Resenha::RoomsController do
   before do
@@ -20,6 +21,9 @@ RSpec.describe Resenha::RoomsController do
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :chat_channel_id)
         AddChatSettingsToResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :livekit_enabled)
+        AddLivekitEnabledToResenhaRooms.new.change
       end
     end
     Resenha::Room.reset_column_information
@@ -391,6 +395,110 @@ RSpec.describe Resenha::RoomsController do
            }
 
       expect(response.status).to eq(204)
+    end
+  end
+
+  describe "per-room policy" do
+    fab!(:managed_room) { Fabricate(:resenha_room, creator: user, public: true) }
+
+    before do
+      configure_livekit!
+      SiteSetting.resenha_livekit_room_policy = "per_room"
+    end
+
+    after { Resenha::ParticipantTracker.clear(managed_room.id) }
+
+    describe "#join" do
+      before { sign_in(user) }
+
+      it "resolves the transport from the room's flag" do
+        post "/resenha/rooms/#{room.id}/join.json"
+        expect(response.parsed_body["transport"]).to eq("mesh")
+
+        managed_room.update!(livekit_enabled: true)
+        post "/resenha/rooms/#{managed_room.id}/join.json"
+        expect(response.parsed_body["transport"]).to eq("livekit")
+      end
+
+      it "keeps a live livekit call on livekit when the flag is disabled mid-call" do
+        managed_room.update!(livekit_enabled: true)
+        post "/resenha/rooms/#{managed_room.id}/join.json"
+        expect(response.parsed_body["transport"]).to eq("livekit")
+
+        managed_room.update!(livekit_enabled: false)
+
+        sign_in(other_user)
+        post "/resenha/rooms/#{managed_room.id}/join.json"
+        expect(response.parsed_body["transport"]).to eq("livekit")
+      end
+
+      it "keeps a live mesh call on mesh when the flag is enabled mid-call" do
+        post "/resenha/rooms/#{managed_room.id}/join.json"
+        expect(response.parsed_body["transport"]).to eq("mesh")
+
+        managed_room.update!(livekit_enabled: true)
+
+        sign_in(other_user)
+        post "/resenha/rooms/#{managed_room.id}/join.json"
+        expect(response.parsed_body["transport"]).to eq("mesh")
+        expect(response.parsed_body["livekit"]).to be_nil
+      end
+    end
+
+    describe "#create" do
+      it "accepts livekit_enabled" do
+        SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
+        sign_in(Fabricate(:user, trust_level: TrustLevel[2]))
+
+        post "/resenha/rooms.json",
+             params: {
+               room: {
+                 name: "Town hall",
+                 public: true,
+                 livekit_enabled: true,
+               },
+             }
+
+        expect(response.status).to eq(200)
+        expect(Resenha::Room.find_by(name: "Town hall").livekit_enabled).to eq(true)
+      end
+    end
+
+    describe "#update" do
+      it "lets a room manager toggle the flag" do
+        sign_in(user)
+
+        put "/resenha/rooms/#{managed_room.id}.json", params: { room: { livekit_enabled: true } }
+
+        expect(response.status).to eq(200)
+        expect(managed_room.reload.livekit_enabled).to eq(true)
+        expect(response.parsed_body["room"]["livekit_enabled"]).to eq(true)
+      end
+
+      it "accepts a stale form's flag but the resolver ignores it once the policy changed" do
+        SiteSetting.resenha_livekit_room_policy = "disabled"
+        sign_in(user)
+
+        put "/resenha/rooms/#{managed_room.id}.json", params: { room: { livekit_enabled: true } }
+
+        expect(response.status).to eq(200)
+        expect(managed_room.reload.livekit_enabled).to eq(true)
+
+        post "/resenha/rooms/#{managed_room.id}/join.json"
+        expect(response.parsed_body["transport"]).to eq("mesh")
+      end
+    end
+
+    describe "#show" do
+      it "serializes the flag to managers only" do
+        sign_in(user)
+        get "/resenha/rooms/#{managed_room.id}.json"
+        expect(response.parsed_body["room"]).to have_key("livekit_enabled")
+
+        sign_in(other_user)
+        get "/resenha/rooms/#{managed_room.id}.json"
+        expect(response.parsed_body["room"]).not_to have_key("livekit_enabled")
+      end
     end
   end
 end

@@ -201,6 +201,8 @@ en:
           max_participants_help: "Maximum participants allowed (2-50, or 2-200 for Stage rooms)."
           video_enabled: "Video"
           video_enabled_help: "Allow participants to share their camera and screen in this room."
+          livekit_enabled: "Use media server (SFU)"
+          livekit_enabled_help: "Route this room's calls through the site's LiveKit media server instead of the peer-to-peer mesh. A call already in progress is not affected — the room switches when its next call starts."
           chat_channel: "Chat channel"
           chat_channel_help: "Each session opens a thread here. Only channels with threading enabled are listed."
           chat_channel_none: "No channels with threading enabled. Turn it on in a channel's settings first."

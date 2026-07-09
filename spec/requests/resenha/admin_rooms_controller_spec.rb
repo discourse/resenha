@@ -3,6 +3,7 @@
 require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
+require_relative "../../../db/migrate/20260709165411_add_livekit_enabled_to_resenha_rooms"
 
 RSpec.describe Resenha::AdminRoomsController do
   before do
@@ -12,6 +13,9 @@ RSpec.describe Resenha::AdminRoomsController do
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :chat_channel_id)
         AddChatSettingsToResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :livekit_enabled)
+        AddLivekitEnabledToResenhaRooms.new.change
       end
     end
     Resenha::Room.reset_column_information
@@ -161,6 +165,21 @@ RSpec.describe Resenha::AdminRoomsController do
 
       room.reload
       expect(room.name).to eq("Updated Room")
+    end
+
+    it "persists and serializes livekit_enabled" do
+      sign_in(admin)
+
+      put "/admin/plugins/resenha/rooms/#{room.id}.json",
+          params: {
+            room: {
+              livekit_enabled: true,
+            },
+          }
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["room"]["livekit_enabled"]).to eq(true)
+      expect(room.reload.livekit_enabled).to eq(true)
     end
 
     it "persists the chat settings fields" do

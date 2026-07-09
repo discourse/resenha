@@ -135,6 +135,7 @@ end
 #  chat_thread_title_template :string
 #  cooked_description         :text
 #  description                :text
+#  livekit_enabled            :boolean          default(FALSE), not null
 #  max_participants           :integer
 #  name                       :string           not null
 #  public                     :boolean          default(FALSE), not null

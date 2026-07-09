@@ -69,6 +69,7 @@ module Resenha
         :public,
         :max_participants,
         :video_enabled,
+        :livekit_enabled,
         :chat_channel_id,
         :chat_idle_minutes,
         :chat_thread_title_template,
