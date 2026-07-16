@@ -320,6 +320,57 @@ describe "Resenha voice rooms", type: :system do
       end
     end
 
+    context "with a stage room" do
+      fab!(:stage_room) do
+        Fabricate(
+          :resenha_room,
+          name: "Stage Room",
+          creator: user,
+          public: true,
+          room_type: Resenha::Room::ROOM_TYPE_STAGE,
+        )
+      end
+
+      before do
+        other_user.activate
+        SiteSetting.resenha_video_enabled = true
+      end
+
+      it "lets a joined moderator publish camera video while a listener gets no capture buttons" do
+        using_session(:moderator) do
+          sign_in(user)
+          install_resenha_fake_media
+
+          visit("/resenha/r/#{stage_room.slug}")
+          click_button(I18n.t("js.resenha.room.join"))
+
+          # Stage rooms feature the presenter by default instead of the grid.
+          expect(page).to have_css(".resenha-room-page.--presentation")
+
+          expect(page).to have_button(I18n.t("js.resenha.video.camera_on"))
+          click_button(I18n.t("js.resenha.video.camera_on"))
+
+          video_selector =
+            ".resenha-video-tile.--video[data-user-id='#{user.id}'] video.resenha-video-tile__video"
+          expect(page).to have_css(video_selector)
+          expect(resenha_media_track_count(video_selector)).to eq(1)
+        end
+
+        using_session(:listener) do
+          sign_in(other_user)
+          install_resenha_fake_media
+
+          visit("/resenha/r/#{stage_room.slug}")
+          click_button(I18n.t("js.resenha.room.join"))
+          expect(page).to have_css(".resenha-room-page__leave")
+
+          expect(page).to have_css(".resenha-room-page.--presentation")
+          expect(page).to have_no_button(I18n.t("js.resenha.video.camera_on"))
+          expect(page).to have_no_button(I18n.t("js.resenha.video.screen_share_start"))
+        end
+      end
+    end
+
     context "as admin" do
       before do
         admin.activate

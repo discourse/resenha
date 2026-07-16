@@ -147,9 +147,22 @@ RSpec.describe Resenha::Livekit do
       expect(payload["video"]["canPublishSources"]).to eq([])
     end
 
-    it "grants the microphone to a stage speaker but never video sources" do
+    it "grants all publish sources to a stage speaker when the room has video" do
       SiteSetting.resenha_video_enabled = true
       room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE, video_enabled: true)
+      room.room_memberships.create!(user: user, role: Resenha::RoomMembership::ROLE_SPEAKER)
+
+      payload = decoded_token
+
+      expect(payload["video"]["canPublish"]).to eq(true)
+      expect(payload["video"]["canPublishSources"]).to eq(
+        %w[microphone camera screen_share screen_share_audio],
+      )
+    end
+
+    it "grants only the microphone to a stage speaker when the room has no video" do
+      SiteSetting.resenha_video_enabled = true
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE, video_enabled: false)
       room.room_memberships.create!(user: user, role: Resenha::RoomMembership::ROLE_SPEAKER)
 
       payload = decoded_token

@@ -399,6 +399,79 @@ html.discourse-touch .resenha-call-widget {
   }
 }
 
+.resenha-speak-queue-trigger {
+  position: relative;
+
+  .resenha-speak-queue-trigger__count {
+    position: absolute;
+    top: -0.4em;
+    right: -0.4em;
+    min-width: 1.6em;
+    padding: 0 0.3em;
+    border-radius: 1em;
+    background: var(--tertiary);
+    color: var(--secondary);
+    font-size: var(--font-down-2);
+    line-height: 1.6em;
+    text-align: center;
+  }
+}
+
+.resenha-speak-queue {
+  min-width: 16em;
+  padding: 0.5em;
+
+  &__title {
+    margin: 0 0 0.5em;
+    font-size: var(--font-0);
+  }
+
+  &__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.25em;
+    border-radius: var(--d-border-radius);
+
+    &.--self {
+      background: var(--tertiary-very-low);
+    }
+  }
+
+  &__position {
+    min-width: 1.5em;
+    text-align: center;
+    color: var(--primary-medium);
+    font-size: var(--font-down-1);
+  }
+
+  &__name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__actions {
+    display: inline-flex;
+    gap: 0.25em;
+  }
+
+  &__empty {
+    color: var(--primary-medium);
+    padding: 0.5em;
+  }
+}
+
 // Float-kit menus portal to a body-level layer at z("dropdown") (300), but the
 // persistent call widget sits at z("footer-nav") (900) and would otherwise
 // cover any menu opened from it. Lift the call menus above the widget. Harmless

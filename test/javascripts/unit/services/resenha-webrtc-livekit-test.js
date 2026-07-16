@@ -1266,6 +1266,53 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     );
   });
 
+  test("a stage demotion stops a live camera along with the microphone", async function (assert) {
+    this.room.room_type = "stage";
+    this.room.video_enabled = true;
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "speaker" },
+      { id: 2, role: "moderator" },
+    ];
+
+    await this.subject.join(this.room);
+    await wait(50);
+    await this.subject.toggleCamera();
+    await wait(20);
+
+    const lkRoom = this.FakeLivekitRoom.instances[0];
+    assert.deepEqual(
+      lkRoom.localParticipant.published.map(
+        (publication) => publication.source
+      ),
+      ["microphone", "camera"],
+      "a publishing speaker holds both the microphone and camera publications"
+    );
+
+    this.rooms.emit(1, {
+      type: "role_change",
+      user_id: this.currentUser.id,
+      role: "participant",
+    });
+    await waitUntil(() => lkRoom.localParticipant.published.length === 0);
+
+    assert.false(
+      lkRoom.localParticipant.published.some(
+        (publication) => publication.source === "camera"
+      ),
+      "the camera publication is unpublished on demotion"
+    );
+    assert.strictEqual(
+      this.subject.localVideoKind,
+      null,
+      "the local video capture is fully stopped"
+    );
+    assert.strictEqual(
+      this.FakeLivekitRoom.instances.length,
+      1,
+      "the demotion never reconnects the media session"
+    );
+  });
+
   test("a ladder reconnect republishes the live camera", async function (assert) {
     pretender.post("/resenha/rooms/1/livekit_token", () =>
       response({ url: "wss://sfu.example.com", token: "token-2" })

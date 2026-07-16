@@ -201,17 +201,19 @@ export default class ResenhaRoomForm extends Component {
         </form.Field>
 
         {{#if this.showVideoToggle}}
-          {{#unless (this.isStageType data.room_type)}}
-            <form.Field
-              @type="toggle"
-              @name="video_enabled"
-              @title={{i18n "resenha.admin.room.video_enabled"}}
-              @helpText={{i18n "resenha.admin.room.video_enabled_help"}}
-              as |field|
-            >
-              <field.Control />
-            </form.Field>
-          {{/unless}}
+          <form.Field
+            @type="toggle"
+            @name="video_enabled"
+            @title={{i18n "resenha.admin.room.video_enabled"}}
+            @helpText={{if
+              (this.isStageType data.room_type)
+              (i18n "resenha.admin.room.video_enabled_stage_help")
+              (i18n "resenha.admin.room.video_enabled_help")
+            }}
+            as |field|
+          >
+            <field.Control />
+          </form.Field>
         {{/if}}
 
         {{#if this.showLivekitToggle}}

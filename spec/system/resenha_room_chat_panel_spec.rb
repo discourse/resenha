@@ -75,6 +75,32 @@ describe "Resenha room chat panel", type: :system do
     expect(page).to have_css(".resenha-chat .chat-message-text", text: "kicking things off")
   end
 
+  it "opens the chat panel by default after joining a stage room" do
+    stage_room =
+      Fabricate(
+        :resenha_room,
+        name: "Stage Team Room",
+        creator: admin,
+        public: true,
+        room_type: Resenha::Room::ROOM_TYPE_STAGE,
+        chat_channel_id: channel.id,
+      )
+
+    visit("/resenha/r/#{stage_room.slug}")
+    click_button(I18n.t("js.resenha.room.join"))
+
+    expect(page).to have_css(".resenha-room-page__sidebar .resenha-chat")
+    expect(page).to have_current_path("/resenha/r/#{stage_room.slug}")
+  end
+
+  it "keeps the chat panel closed by default after joining an open room" do
+    visit("/resenha/r/#{room.slug}")
+    click_button(I18n.t("js.resenha.room.join"))
+
+    expect(page).to have_css(".resenha-room-page__leave")
+    expect(page).to have_no_css(".resenha-room-page__sidebar")
+  end
+
   it "opens the session thread from the first message sent through the starter composer" do
     visit("/resenha/r/#{room.slug}?chat=true")
     click_button(I18n.t("js.resenha.room.join"))

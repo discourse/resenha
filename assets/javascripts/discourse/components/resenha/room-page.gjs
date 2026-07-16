@@ -19,6 +19,7 @@ import {
   toggleFullscreen,
   trackFullscreen,
 } from "../../lib/resenha/fullscreen";
+import { speakQueue } from "../../lib/resenha/speak-queue";
 import {
   bestRowHeight,
   DEFAULT_TILE_ASPECT,
@@ -28,6 +29,7 @@ import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
 import ResenhaCallSubmenu from "./call-submenu";
 import ResenhaChatPanel from "./chat-panel";
+import ResenhaSpeakQueue from "./speak-queue";
 import ResenhaVideoTile from "./video-tile";
 
 const ROOM_MENU = "resenha-room-menu";
@@ -52,9 +54,10 @@ export default class ResenhaRoomPage extends Component {
   @tracked gridGap = 0;
   @tracked tileAspects = new Map();
   @tracked gridFullscreen = false;
-  @tracked chatOpen = !!this.args.openChat;
+  // Stage rooms mirror a workshop: chat panel open, presenter featured.
+  @tracked chatOpen = !!this.args.openChat || this.#isStageRoom;
   @tracked chatClosing = false;
-  @tracked layoutMode = LAYOUT_TILED;
+  @tracked layoutMode = this.#isStageRoom ? LAYOUT_PRESENTATION : LAYOUT_TILED;
 
   gridElement = null;
   trackGridSize = trackGridSize;
@@ -71,6 +74,18 @@ export default class ResenhaRoomPage extends Component {
     next(() => {
       resenhaWebrtc.setWatching(roomId, false, { keepVideo });
     });
+  }
+
+  get #isStageRoom() {
+    return this.args.room?.room_type === "stage";
+  }
+
+  get isStageRoom() {
+    return this.#isStageRoom;
+  }
+
+  get speakQueueCount() {
+    return speakQueue(this.room).length;
   }
 
   get room() {
@@ -120,6 +135,9 @@ export default class ResenhaRoomPage extends Component {
       this.tiles.find((tile) => tile.participant.is_screen_sharing) ??
       this.tiles.find((tile) => tile.showVideo && !tile.isSelf) ??
       this.tiles.find((tile) => tile.showVideo) ??
+      this.tiles.find((tile) =>
+        ["moderator", "speaker"].includes(tile.participant.role)
+      ) ??
       this.tiles[0]
     );
   }
@@ -475,6 +493,28 @@ export default class ResenhaRoomPage extends Component {
             <footer class="resenha-room-page__controls">
               {{#if this.joined}}
                 <ResenhaCallControls @room={{this.room}} />
+                {{#if this.isStageRoom}}
+                  <DMenu
+                    @identifier="resenha-speak-queue-menu"
+                    @title={{i18n "resenha.stage.queue_title"}}
+                    @ariaLabel={{i18n "resenha.stage.queue_title"}}
+                    @placement="top-end"
+                    @modalForMobile={{true}}
+                    @triggerClass="btn-default resenha-speak-queue-trigger"
+                  >
+                    <:trigger>
+                      {{dIcon "hand"}}
+                      {{#if this.speakQueueCount}}
+                        <span
+                          class="resenha-speak-queue-trigger__count"
+                        >{{this.speakQueueCount}}</span>
+                      {{/if}}
+                    </:trigger>
+                    <:content>
+                      <ResenhaSpeakQueue @room={{this.room}} />
+                    </:content>
+                  </DMenu>
+                {{/if}}
                 <DMenu
                   @identifier="resenha-room-menu"
                   @icon="ellipsis-vertical"

@@ -1825,4 +1825,75 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       audioEnvironment.restore();
     }
   });
+
+  test("videoAllowedIn denies a stage listener", function (assert) {
+    this.siteSettings.resenha_video_enabled = true;
+    this.room.video_enabled = true;
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "listener" },
+      { id: 2, role: "speaker" },
+    ];
+
+    assert.false(
+      this.subject.videoAllowedIn(this.room),
+      "a stage listener cannot publish video"
+    );
+  });
+
+  test("videoAllowedIn allows a stage speaker", function (assert) {
+    this.siteSettings.resenha_video_enabled = true;
+    this.room.video_enabled = true;
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "speaker" },
+      { id: 2, role: "listener" },
+    ];
+
+    assert.true(
+      this.subject.videoAllowedIn(this.room),
+      "a stage speaker can publish video"
+    );
+  });
+
+  test("videoAllowedIn allows a stage moderator", function (assert) {
+    this.siteSettings.resenha_video_enabled = true;
+    this.room.video_enabled = true;
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "moderator" },
+      { id: 2, role: "listener" },
+    ];
+
+    assert.true(
+      this.subject.videoAllowedIn(this.room),
+      "a stage moderator can publish video"
+    );
+  });
+
+  test("videoAllowedIn still requires the room's video flag for a stage speaker", function (assert) {
+    this.siteSettings.resenha_video_enabled = true;
+    this.room.video_enabled = false;
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "speaker" },
+      { id: 2, role: "listener" },
+    ];
+
+    assert.false(
+      this.subject.videoAllowedIn(this.room),
+      "the speaker role does not override a video-disabled room"
+    );
+  });
+
+  test("videoAllowedIn does not role-gate open rooms", function (assert) {
+    this.siteSettings.resenha_video_enabled = true;
+    this.room.room_type = "open";
+    this.room.video_enabled = true;
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant" },
+    ];
+
+    assert.true(
+      this.subject.videoAllowedIn(this.room),
+      "open-room participants can publish video regardless of role"
+    );
+  });
 });

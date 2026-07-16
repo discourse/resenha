@@ -111,6 +111,25 @@ RSpec.describe Resenha::Livekit::RoomServiceClient do
       ).to have_been_made.once
     end
 
+    it "grants all publish sources to a stage speaker in a video room" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE, video_enabled: true)
+      room.room_memberships.create!(user: user, role: Resenha::RoomMembership::ROLE_SPEAKER)
+      twirp_stub("UpdateParticipant")
+
+      described_class.update_participant(room, user)
+
+      expect(
+        a_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/UpdateParticipant",
+        ).with do |req|
+          permission = JSON.parse(req.body)["permission"]
+          permission["canPublish"] == true &&
+            permission["canPublishSources"] == %w[MICROPHONE CAMERA SCREEN_SHARE SCREEN_SHARE_AUDIO]
+        end,
+      ).to have_been_made.once
+    end
+
     it "keeps canSubscribe for a stage listener who cannot publish" do
       room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
       stub = twirp_stub("UpdateParticipant")

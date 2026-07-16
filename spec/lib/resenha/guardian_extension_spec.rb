@@ -2,6 +2,7 @@
 
 require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
+require_relative "../../../db/migrate/20260305162426_add_room_type_to_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 
 RSpec.describe Resenha::GuardianExtension do
@@ -9,6 +10,10 @@ RSpec.describe Resenha::GuardianExtension do
     ActiveRecord::Migration.suppress_messages do
       unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
         CreateResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :room_type)
+        AddRoomTypeToResenhaRooms.new.change
+        Resenha::Room.reset_column_information
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
         AddVideoEnabledToResenhaRooms.new.change
@@ -215,6 +220,42 @@ RSpec.describe Resenha::GuardianExtension do
 
     it "shows private rooms to site staff" do
       expect(staff.guardian.can_see_resenha_room?(private_room)).to eq(true)
+    end
+  end
+
+  describe "#can_request_to_speak_in_resenha_room?" do
+    before { private_room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE) }
+
+    it "is true for a stage-room member with the participant role" do
+      expect(member.guardian.can_request_to_speak_in_resenha_room?(private_room)).to eq(true)
+    end
+
+    it "is false for a stage speaker, who can already speak" do
+      expect(room_speaker.guardian.can_request_to_speak_in_resenha_room?(private_room)).to eq(false)
+    end
+
+    it "is false for a room moderator, who can already speak" do
+      expect(room_moderator.guardian.can_request_to_speak_in_resenha_room?(private_room)).to eq(
+        false,
+      )
+    end
+
+    it "is false for site staff, who can already speak" do
+      expect(staff.guardian.can_request_to_speak_in_resenha_room?(private_room)).to eq(false)
+    end
+
+    it "is false in an open room, where everyone can already speak" do
+      expect(member.guardian.can_request_to_speak_in_resenha_room?(public_room)).to eq(false)
+    end
+
+    it "is false for a non-member who cannot join the private stage room" do
+      expect(outsider.guardian.can_request_to_speak_in_resenha_room?(private_room)).to eq(false)
+    end
+
+    it "is false for anonymous visitors" do
+      public_room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+
+      expect(anonymous_guardian.can_request_to_speak_in_resenha_room?(public_room)).to eq(false)
     end
   end
 end

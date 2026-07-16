@@ -34,6 +34,40 @@ RSpec.describe Resenha::ParticipantTracker do
     end
   end
 
+  describe ".raise_hand" do
+    it "sets the raise timestamp and returns true on the first raise" do
+      freeze_time do
+        expect(described_class.raise_hand(room.id, user1.id)).to eq(true)
+
+        # The timestamp round-trips through JSON, which can shave float digits.
+        expect(described_class.get_metadata(room.id, user1.id)[:hand_raised_at]).to be_within(
+          0.001,
+        ).of(Time.now.to_f)
+      end
+    end
+
+    it "returns false and keeps the original timestamp when already raised" do
+      described_class.raise_hand(room.id, user1.id)
+      original = described_class.get_metadata(room.id, user1.id)[:hand_raised_at]
+
+      expect(described_class.raise_hand(room.id, user1.id)).to eq(false)
+      expect(described_class.get_metadata(room.id, user1.id)[:hand_raised_at]).to eq(original)
+    end
+  end
+
+  describe ".lower_hand" do
+    it "clears the raised hand and returns true" do
+      described_class.raise_hand(room.id, user1.id)
+
+      expect(described_class.lower_hand(room.id, user1.id)).to eq(true)
+      expect(described_class.get_metadata(room.id, user1.id)[:hand_raised_at]).to be_nil
+    end
+
+    it "returns false when the hand is not raised" do
+      expect(described_class.lower_hand(room.id, user1.id)).to eq(false)
+    end
+  end
+
   describe ".pin_transport!" do
     it "pins the first transport and keeps it under a race" do
       expect(described_class.pin_transport!(room.id, "livekit")).to eq("livekit")
@@ -196,6 +230,18 @@ RSpec.describe Resenha::ParticipantTracker do
       Discourse.redis.zadd(key, 1.hour.ago.to_f, user2.id)
 
       expect(described_class.participants_fingerprint(room.id)).not_to eq(before)
+    end
+
+    it "changes when a hand is raised and again when it is lowered" do
+      described_class.add(room.id, user1.id)
+      before_raise = described_class.participants_fingerprint(room.id)
+
+      described_class.raise_hand(room.id, user1.id)
+      after_raise = described_class.participants_fingerprint(room.id)
+      expect(after_raise).not_to eq(before_raise)
+
+      described_class.lower_hand(room.id, user1.id)
+      expect(described_class.participants_fingerprint(room.id)).not_to eq(after_raise)
     end
 
     it "changes when rendered metadata such as idle_state changes" do

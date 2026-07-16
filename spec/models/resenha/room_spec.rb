@@ -2,6 +2,8 @@
 
 require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
+require_relative "../../../db/migrate/20260305162426_add_room_type_to_resenha_rooms"
+require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
 
 RSpec.describe Resenha::Room do
@@ -9,6 +11,12 @@ RSpec.describe Resenha::Room do
     ActiveRecord::Migration.suppress_messages do
       unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
         CreateResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :room_type)
+        AddRoomTypeToResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
+        AddVideoEnabledToResenhaRooms.new.change
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :chat_channel_id)
         AddChatSettingsToResenhaRooms.new.change
@@ -18,6 +26,35 @@ RSpec.describe Resenha::Room do
   end
 
   fab!(:room) { Fabricate(:resenha_room) }
+
+  describe "#video_allowed?" do
+    before { SiteSetting.resenha_video_enabled = true }
+
+    it "is true for a stage room with video enabled" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE, video_enabled: true)
+
+      expect(room.video_allowed?).to eq(true)
+    end
+
+    it "is true for an open room with video enabled" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_OPEN, video_enabled: true)
+
+      expect(room.video_allowed?).to eq(true)
+    end
+
+    it "is false when the site setting is disabled" do
+      SiteSetting.resenha_video_enabled = false
+      room.update!(video_enabled: true)
+
+      expect(room.video_allowed?).to eq(false)
+    end
+
+    it "is false when the room has video disabled" do
+      room.update!(video_enabled: false)
+
+      expect(room.video_allowed?).to eq(false)
+    end
+  end
 
   describe "chat_idle_minutes validation" do
     it "rejects a value below the 2 minute floor" do

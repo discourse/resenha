@@ -1032,7 +1032,7 @@ export default class ResenhaWebrtcService extends Service {
     return !!(
       this.siteSettings.resenha_video_enabled &&
       room?.video_enabled &&
-      room?.room_type !== "stage"
+      (room?.room_type !== "stage" || this.#canSpeakInRoom(room))
     );
   }
 
@@ -1966,6 +1966,8 @@ export default class ResenhaWebrtcService extends Service {
       await this.#handleParticipants(roomId, payload);
     } else if (payload.type === "role_change") {
       await this.#handleRoleChange(roomId, payload);
+    } else if (payload.type === "hand_raise") {
+      this.#handleHandRaise(roomId, payload);
     } else if (payload.type === "kicked") {
       this.#handleKicked(roomId);
     } else if (payload.type === "room_updated") {
@@ -2364,11 +2366,6 @@ export default class ResenhaWebrtcService extends Service {
     const targetUserId = Number(payload.user_id);
     const newRole = payload.role;
 
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] role_change: user=${targetUserId}, role=${newRole}, room=${roomId}`
-    );
-
     if (targetUserId === this.currentUser?.id) {
       await this.#handleOwnRoleChange(roomId, newRole);
     } else {
@@ -2424,6 +2421,9 @@ export default class ResenhaWebrtcService extends Service {
         data: { message: i18n("resenha.stage.promoted_to_speaker") },
       });
     } else {
+      if (this.localVideoKind) {
+        await this.#stopLocalVideo();
+      }
       this.#stopLocalStream();
       this.audioEnabled = false;
       this.toasts.default({
@@ -2449,6 +2449,36 @@ export default class ResenhaWebrtcService extends Service {
           `[resenha-livekit] failed to refresh publications after a role change in room ${roomId}`,
           error
         );
+      }
+    }
+  }
+
+  #handleHandRaise(roomId, payload) {
+    const targetUserId = Number(payload.user_id);
+    const isSelf = targetUserId === this.currentUser?.id;
+
+    if (isSelf && !payload.raised && payload.reason === "dismissed") {
+      this.toasts.default({
+        duration: 5000,
+        data: { message: i18n("resenha.stage.request_dismissed") },
+      });
+      return;
+    }
+
+    const room = this.resenhaRooms?.roomById(roomId);
+    if (!isSelf && payload.raised && room?.can_manage) {
+      const participant = (room.active_participants || []).find(
+        (p) => Number(p?.id) === targetUserId
+      );
+      if (participant) {
+        this.toasts.default({
+          duration: 5000,
+          data: {
+            message: i18n("resenha.stage.hand_raised_toast", {
+              username: participant.username,
+            }),
+          },
+        });
       }
     }
   }
