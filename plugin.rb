@@ -46,6 +46,9 @@ register_svg_icon "xmark"
 register_svg_icon "up-right-from-square"
 register_svg_icon "person-chalkboard"
 register_svg_icon "table-cells"
+register_svg_icon "circle-check"
+register_svg_icon "circle-xmark"
+register_svg_icon "triangle-exclamation"
 register_asset "stylesheets/common/resenha.scss"
 register_asset "stylesheets/common/resenha-room-page.scss"
 register_asset "stylesheets/common/resenha-chat.scss"
@@ -124,6 +127,16 @@ after_initialize do
     end
 
     clear_all_resenha_statuses if name.to_sym == :resenha_auto_status_enabled && !new_value
+
+    # Surface a bad URL or key pair on the admin status panel within seconds
+    # of saving, not at the first user's failed join.
+    livekit_settings = %i[
+      resenha_livekit_url
+      resenha_livekit_api_key
+      resenha_livekit_api_secret
+      resenha_livekit_room_policy
+    ]
+    Jobs.enqueue(:resenha_livekit_probe) if livekit_settings.include?(name.to_sym)
   end
 
   def self.clear_all_resenha_statuses

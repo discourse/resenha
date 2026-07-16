@@ -2,6 +2,7 @@ import Component from "@glimmer/component";
 import DashboardPeriodSelector from "discourse/admin/components/dashboard-period-selector";
 import avatar from "discourse/helpers/avatar";
 import { i18n } from "discourse-i18n";
+import ResenhaLivekitStatus from "discourse/plugins/resenha/admin/components/resenha-livekit-status";
 
 function formatDuration(seconds) {
   if (!seconds || seconds <= 0) {
@@ -136,6 +137,8 @@ export default class ResenhaDashboard extends Component {
             "resenha.admin.dashboard.no_data"
           }}</p>
       {{/if}}
+
+      <ResenhaLivekitStatus />
     </section>
   </template>
 }
