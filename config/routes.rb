@@ -40,6 +40,7 @@ Discourse::Application.routes.draw do
       post "/rooms" => "resenha/admin_rooms#create"
       put "/rooms/:id" => "resenha/admin_rooms#update"
       delete "/rooms/:id" => "resenha/admin_rooms#destroy"
+      post "/rooms/:id/end_call" => "resenha/admin_rooms#end_call"
 
       get "/stats/overview" => "resenha/admin_stats#overview"
       get "/stats/rooms" => "resenha/admin_stats#rooms"

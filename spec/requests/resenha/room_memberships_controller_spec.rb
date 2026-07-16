@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
+require_relative "../../../db/migrate/20260305162426_add_room_type_to_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 
 RSpec.describe Resenha::RoomMembershipsController do
@@ -8,6 +9,9 @@ RSpec.describe Resenha::RoomMembershipsController do
     ActiveRecord::Migration.suppress_messages do
       unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
         CreateResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :room_type)
+        AddRoomTypeToResenhaRooms.new.change
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
         AddVideoEnabledToResenhaRooms.new.change
@@ -221,6 +225,102 @@ RSpec.describe Resenha::RoomMembershipsController do
       delete "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json"
 
       expect(response.status).to eq(204)
+    end
+  end
+
+  describe "livekit permission sync" do
+    before do
+      SiteSetting.resenha_livekit_url = "wss://livekit.example.com"
+      SiteSetting.resenha_livekit_api_key = "lk_api_key"
+      SiteSetting.resenha_livekit_api_secret = "lk_api_secret"
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      Resenha::ParticipantTracker.add(room.id, member.id)
+      sign_in(room_owner)
+    end
+
+    after { Resenha::ParticipantTracker.clear(room.id) }
+
+    def update_participant_stub
+      stub_request(:post, "https://livekit.example.com/twirp/livekit.RoomService/UpdateParticipant")
+    end
+
+    it "grants publishing on the SFU when a present stage listener is promoted" do
+      update_participant_stub
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "speaker",
+          }
+
+      expect(response.status).to eq(200)
+      expect(
+        a_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/UpdateParticipant",
+        ).with do |req|
+          body = JSON.parse(req.body)
+          body["identity"] == member.id.to_s && body["permission"]["canPublish"] == true &&
+            body["permission"]["canSubscribe"] == true
+        end,
+      ).to have_been_made.once
+    end
+
+    it "revokes publishing on the SFU when a present speaker's membership is removed" do
+      participant_membership.update!(role: Resenha::RoomMembership::ROLE_SPEAKER)
+      update_participant_stub
+
+      delete "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json"
+
+      expect(response.status).to eq(204)
+      expect(
+        a_request(
+          :post,
+          "https://livekit.example.com/twirp/livekit.RoomService/UpdateParticipant",
+        ).with do |req|
+          body = JSON.parse(req.body)
+          body["identity"] == member.id.to_s && body["permission"]["canPublish"] == false
+        end,
+      ).to have_been_made.once
+    end
+
+    it "still succeeds when LiveKit is down" do
+      update_participant_stub.to_timeout
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "speaker",
+          }
+
+      expect(response.status).to eq(200)
+      expect(participant_membership.reload).to be_speaker
+    end
+
+    it "makes zero HTTP calls for a mesh room" do
+      Resenha::ParticipantTracker.clear_transport_pin(room.id)
+      Resenha::ParticipantTracker.pin_transport!(room.id, "mesh")
+      stub = update_participant_stub
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "speaker",
+          }
+
+      expect(response.status).to eq(200)
+      expect(stub).not_to have_been_requested
+    end
+
+    it "makes zero HTTP calls when the member is not in the call" do
+      Resenha::ParticipantTracker.remove(room.id, member.id)
+      stub = update_participant_stub
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "speaker",
+          }
+
+      expect(response.status).to eq(200)
+      expect(stub).not_to have_been_requested
     end
   end
 end

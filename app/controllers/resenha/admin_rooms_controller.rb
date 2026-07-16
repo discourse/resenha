@@ -39,6 +39,24 @@ module Resenha
     def destroy
       room = Resenha::Room.find(params[:id])
       room.destroy!
+      Resenha::Livekit::RoomServiceClient.delete_room(room)
+      Resenha::ParticipantTracker.clear_transport_pin(room.id)
+      head :no_content
+    end
+
+    # Emergency lever that force-ends a room's live call: evicts the media
+    # session from the SFU, unpins the transport so the next join re-resolves
+    # against current settings, and sends every participant the same per-user
+    # `kicked` message a room-level kick uses — the client handler already
+    # forces a clean leave, so no new client message types are needed.
+    def end_call
+      room = Resenha::Room.find(params[:id])
+      participant_ids = Resenha::ParticipantTracker.user_ids(room.id)
+
+      Resenha::Livekit::RoomServiceClient.delete_room(room)
+      Resenha::ParticipantTracker.clear_transport_pin(room.id)
+      participant_ids.each { |user_id| Resenha::RoomBroadcaster.publish_kick(room, user_id) }
+
       head :no_content
     end
 

@@ -38,6 +38,17 @@ module Resenha
       "#{prefix}-r#{room.id}"
     end
 
+    # The track sources a publisher may send, matching the room's
+    # capabilities. Lowercase is the access-token grant spelling; RoomService
+    # permission updates use the same names uppercased (the proto enum).
+    def self.publish_sources(room, can_publish)
+      return [] unless can_publish
+
+      sources = ["microphone"]
+      sources.concat(%w[camera screen_share screen_share_audio]) if room.video_allowed?
+      sources
+    end
+
     # Least-privilege HS256 JWT: a leaked token can only join this one room,
     # as this one user, for TOKEN_TTL. Guardian remains the sole authority —
     # callers only mint for users who passed `ensure_can_join_resenha_room!`.
@@ -45,11 +56,7 @@ module Resenha
       raise MintError, "LiveKit is not fully configured" unless configured?
 
       can_publish = guardian.can_speak_in_resenha_room?(room)
-      sources = []
-      if can_publish
-        sources << "microphone"
-        sources.concat(%w[camera screen_share screen_share_audio]) if room.video_allowed?
-      end
+      sources = publish_sources(room, can_publish)
 
       payload = {
         iss: SiteSetting.resenha_livekit_api_key,

@@ -25,6 +25,9 @@ module Jobs
           # without one (crashed clients, missed leave) must not hold its
           # transport for the next call.
           if ::Resenha::ParticipantTracker.user_ids(room.id).empty?
+            # No-op once the pin is gone, so an emptied room is deleted from
+            # the SFU at most once, on the sweep that clears its pin.
+            ::Resenha::Livekit::RoomServiceClient.delete_room(room)
             ::Resenha::ParticipantTracker.clear_transport_pin(room.id)
           end
           ::Resenha::RoomBroadcaster.publish_participants(room)

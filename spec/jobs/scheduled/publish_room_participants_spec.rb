@@ -80,6 +80,27 @@ RSpec.describe Jobs::PublishRoomParticipants do
     expect { subject.execute({}) }.not_to raise_error
   end
 
+  it "deletes an emptied livekit-pinned room from the SFU exactly once" do
+    SiteSetting.resenha_livekit_url = "wss://livekit.example.com"
+    SiteSetting.resenha_livekit_api_key = "lk_api_key"
+    SiteSetting.resenha_livekit_api_secret = "lk_api_secret"
+    Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+    Resenha::ParticipantTracker.add(room.id, user1.id)
+    Resenha::ParticipantTracker.remove(room.id, user1.id)
+    stub = stub_request(:post, "https://livekit.example.com/twirp/livekit.RoomService/DeleteRoom")
+
+    subject.execute({})
+
+    expect(stub).to have_been_requested.once
+    expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+
+    # The room stays in the recently-active sweep for a while; with the pin
+    # gone, later sweeps must not keep re-deleting it.
+    subject.execute({})
+
+    expect(stub).to have_been_requested.once
+  end
+
   it "does not publish when plugin is disabled" do
     Resenha::ParticipantTracker.add(room.id, user1.id)
 

@@ -187,6 +187,9 @@ en:
         room_updated: "Room updated successfully."
         destroy_room:
           confirm: "Are you sure you want to delete '%{name}'?"
+        end_call:
+          title: "End live call"
+          confirm: "End the live call in '%{name}'? Everyone in the call will be disconnected."
         room:
           name: "Name"
           name_placeholder: "Room name"
