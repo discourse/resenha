@@ -8,6 +8,7 @@ import AudioMonitor from "../../lib/resenha/audio-monitor";
 import BackgroundBlurManager from "../../lib/resenha/background-blur";
 import IdleTracker from "../../lib/resenha/idle-tracker";
 import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
+import LivekitRoomSession from "../../lib/resenha/livekit-session";
 import {
   applyOutputDevice,
   audioConstraints,
@@ -79,6 +80,11 @@ export default class ResenhaWebrtcService extends Service {
   // response, tests) default to mesh, so every guard below is a tautology on
   // pure-P2P installs.
   #roomTransports = new Map();
+  #livekitSessions = new Map();
+  // Last-seen roster ids per livekit room. Mesh derives join/leave sounds and
+  // participant cleanup from peer churn; livekit rooms derive both from this
+  // roster diff instead.
+  #livekitRosterIds = new Map();
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
   #heartbeatInFlight = new Set();
@@ -197,6 +203,9 @@ export default class ResenhaWebrtcService extends Service {
     this.#idleTracker.stop();
     this.#audioMonitor.destroyAll();
     this.#peerManager.destroyAll();
+    this.#livekitSessions.forEach((session) => session.disconnect());
+    this.#livekitSessions.clear();
+    this.#livekitRosterIds.clear();
     this.#signaling.destroy();
     this.#noiseSuppression.teardown();
 
@@ -364,6 +373,128 @@ export default class ResenhaWebrtcService extends Service {
     return (this.#roomTransports.get(roomId) ?? "mesh") === "mesh";
   }
 
+  // The server already minted this room's token, so from here a failure is
+  // client-side (firewall blocking the SFU, unsupported browser). Follow the
+  // mic-failure precedent: tell the server we left, then unwind the local
+  // join. Never fall back to mesh client-side — other clients may reach the
+  // SFU fine, and a lone mesh joiner would split future joins.
+  async #connectLivekitRoom(room, livekit, revision) {
+    let failureMessage = null;
+
+    if (!LivekitRoomSession.isBrowserSupported()) {
+      failureMessage = "resenha.livekit.browser_unsupported";
+    } else if (!livekit?.url || !livekit?.token) {
+      failureMessage = "resenha.livekit.connect_failed";
+    } else {
+      const session = this.#buildLivekitSession(room.id);
+      this.#livekitSessions.set(room.id, session);
+
+      try {
+        await session.connect(livekit.url, livekit.token);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[resenha-livekit] failed to connect to the media server for room ${room.id}`,
+          error
+        );
+        failureMessage = error?.unsupportedBrowser
+          ? "resenha.livekit.browser_unsupported"
+          : "resenha.livekit.connect_failed";
+
+        if (this.#livekitSessions.get(room.id) === session) {
+          this.#livekitSessions.delete(room.id);
+        }
+        session.disconnect();
+      }
+    }
+
+    if (failureMessage) {
+      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      this.#handleJoinFailure(room.id);
+      // The failure landed after the active-mark, which #handleJoinFailure
+      // (built for pre-mark failures) doesn't unwind.
+      this.#clearActiveRoomId(room.id);
+      this.toasts.error({
+        duration: 8000,
+        data: { message: i18n(failureMessage) },
+      });
+      return false;
+    }
+
+    if (this.#joinRevision !== revision) {
+      // Superseded while connecting; the superseding join already tore this
+      // room down (disconnecting the session), so only the server needs
+      // telling.
+      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      return false;
+    }
+
+    return true;
+  }
+
+  #buildLivekitSession(roomId) {
+    return new LivekitRoomSession({
+      roomId,
+      currentUserId: this.currentUser?.id,
+      getLocalStream: () => this.localStream,
+      onTrack: (id, userId, track, streams) =>
+        this.#registerRemoteTrack(id, userId, track, streams),
+      onParticipantGone: (id, userId) => this.#removeRemoteStream(id, userId),
+      onDisconnected: (kind, reason) =>
+        this.#handleLivekitDisconnected(roomId, kind, reason),
+      onConnectionChange: () => this.#bumpConnectionRevision(),
+      mintToken: () =>
+        ajax(`/resenha/rooms/${roomId}/livekit_token`, { type: "POST" }),
+    });
+  }
+
+  async #handleLivekitDisconnected(roomId, kind, reason) {
+    const session = this.#livekitSessions.get(roomId);
+    if (!session || !this.#activeRoomIds.has(roomId)) {
+      return;
+    }
+
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[resenha-livekit] disconnected from the media server for room ${roomId} (${reason})`
+    );
+
+    if (kind === "duplicate_identity") {
+      // A newer tab for the same user took over the media session. Its join
+      // overwrote our session id server-side, so a normal leave would close
+      // the new tab's session row and drop the user from the roster —
+      // tear down locally only.
+      this.leave({ id: roomId }, { skipServer: true });
+      this.toasts.default({
+        duration: 8000,
+        data: { message: i18n("resenha.livekit.duplicate_tab") },
+      });
+      return;
+    }
+
+    this.#bumpConnectionRevision();
+    const outcome = await session.reconnectWithToken();
+
+    if (outcome === "reconnected") {
+      this.#bumpConnectionRevision();
+    } else if (outcome === "gone") {
+      // The room instance ended while we were disconnected; leave cleanly
+      // and offer a rejoin.
+      this.leave({ id: roomId });
+      this.toasts.default({
+        duration: 8000,
+        data: { message: i18n("resenha.livekit.room_ended") },
+      });
+    } else if (outcome === "failed") {
+      this.leave({ id: roomId });
+      this.toasts.error({
+        duration: 8000,
+        data: { message: i18n("resenha.livekit.reconnect_failed") },
+      });
+    }
+    // "aborted": the session was torn down (leave, new join) mid-ladder.
+  }
+
   async join(room) {
     if (!room?.id) {
       return;
@@ -475,6 +606,17 @@ export default class ResenhaWebrtcService extends Service {
     this.#activeRoomIds.add(room.id);
     this.#setActiveRoomId(room.id);
 
+    if (!this.#isMeshRoom(room.id)) {
+      const connected = await this.#connectLivekitRoom(
+        room,
+        response?.livekit,
+        revision
+      );
+      if (!connected) {
+        return;
+      }
+    }
+
     this.#addLocalParticipant(room.id);
 
     if (this.localStream) {
@@ -529,6 +671,10 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     const keepLocalStream = options.keepLocalStream === true;
+    // Local-only teardown: everything below runs except DELETE /leave. Used
+    // when the server must not close the presence/session that now belongs
+    // to someone else (e.g. a newer tab after DUPLICATE_IDENTITY).
+    const skipServer = options.skipServer === true;
     const wasConnecting = this.#connectingRoomIds.has(room.id);
     const wasConnected = this.#activeRoomIds.has(room.id);
 
@@ -544,7 +690,9 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingSignalQueue.delete(room.id);
     this.#pttManager.resetActive();
     this.pttActive = false;
-    ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+    if (!skipServer) {
+      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+    }
     this.#connectingRoomIds.delete(room.id);
     this.#activeRoomIds.delete(room.id);
     this.#clearActiveRoomId(room.id);
@@ -1719,7 +1867,14 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingParticipantSnapshots.delete(roomId);
     this.#connectingSignalQueue.delete(roomId);
     this.#roomTransports.delete(roomId);
+    this.#livekitRosterIds.delete(roomId);
     this.#clearPresencePendingPeers(roomId);
+
+    const livekitSession = this.#livekitSessions.get(roomId);
+    if (livekitSession) {
+      this.#livekitSessions.delete(roomId);
+      livekitSession.disconnect();
+    }
 
     const callback = this.#roomHandlerCallbacks.get(roomId);
     if (callback) {
@@ -2033,6 +2188,11 @@ export default class ResenhaWebrtcService extends Service {
           this.#clearPresencePendingPeer(roomId, participantId);
         }
       }
+    } else {
+      ({ hasNewPeer, hasPeerLeft } = this.#syncLivekitRoster(
+        roomId,
+        participants
+      ));
     }
 
     if (this.#activeRoomIds.has(roomId)) {
@@ -2048,6 +2208,65 @@ export default class ResenhaWebrtcService extends Service {
     if (this.localVideoKind) {
       await this.#syncVideoSenders(roomId);
     }
+  }
+
+  // Mesh gets participant cleanup for free by destroying peers on the roster
+  // diff. The SFU doesn't consult our roster, so a participant expelled from
+  // it (heartbeat TTL expiry, kick with a failed server-side eviction) would
+  // stay audible forever — voice-canvas plays every stream in
+  // `remoteStreams`. Drop registry entries and subscriptions for identities
+  // absent from the roster, and derive the join/leave sounds mesh derives
+  // from peer churn.
+  #syncLivekitRoster(roomId, participants) {
+    const known = this.#livekitRosterIds.get(roomId) || new Set();
+    const next = new Set();
+    let hasNewPeer = false;
+    let hasPeerLeft = false;
+
+    for (const participant of participants) {
+      const participantId = Number(participant?.id);
+      if (
+        !participantId ||
+        participantId <= 0 ||
+        participantId === this.currentUser?.id
+      ) {
+        continue;
+      }
+
+      next.add(participantId);
+
+      // Mirror the mesh rule: the initial roster processed while the join is
+      // still connecting represents people already there, not arrivals.
+      if (
+        !known.has(participantId) &&
+        (known.size > 0 || !this.#connectingRoomIds.has(roomId))
+      ) {
+        hasNewPeer = true;
+      }
+    }
+
+    for (const knownId of known) {
+      if (!next.has(knownId)) {
+        hasPeerLeft = true;
+      }
+    }
+
+    this.#livekitRosterIds.set(roomId, next);
+
+    const session = this.#livekitSessions.get(roomId);
+    for (const entry of [...(this.#remoteStreams.get(roomId) || [])]) {
+      const entryUserId = Number(entry?.userId);
+      if (
+        entryUserId &&
+        entryUserId !== this.currentUser?.id &&
+        !next.has(entryUserId)
+      ) {
+        session?.dropParticipant(entryUserId);
+        this.#removeRemoteStream(roomId, entryUserId);
+      }
+    }
+
+    return { hasNewPeer, hasPeerLeft };
   }
 
   #syncRemoteVideoTracks(roomId, participants) {
@@ -2135,11 +2354,15 @@ export default class ResenhaWebrtcService extends Service {
     // before the mic is ready.
     this.#roleChangeInProgress.add(roomId);
 
-    // Destroy all existing peers immediately.
-    this.#peerManager.destroyRoom(roomId);
-    this.#removeAllRemoteStreams(roomId);
-    this.#signaling.clearForRoom(roomId);
-    this.#signaling.clearHttpQueue(roomId);
+    // Destroy all existing peers immediately. Mesh-only: on other transports
+    // the media session survives a role change untouched, so wiping the
+    // remote registry would silence everyone until they republished.
+    if (this.#isMeshRoom(roomId)) {
+      this.#peerManager.destroyRoom(roomId);
+      this.#removeAllRemoteStreams(roomId);
+      this.#signaling.clearForRoom(roomId);
+      this.#signaling.clearHttpQueue(roomId);
+    }
 
     if (canSpeak) {
       if (!this.localStream) {
@@ -2658,6 +2881,18 @@ export default class ResenhaWebrtcService extends Service {
     const newTrack = this.localStream?.getAudioTracks()?.[0];
     if (!newTrack) {
       return;
+    }
+
+    for (const [roomId, session] of this.#livekitSessions) {
+      try {
+        await session.replaceAudioTrack(newTrack);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[resenha-livekit] failed to replace the published audio track for room ${roomId}`,
+          error
+        );
+      }
     }
 
     for (const [, peers] of this.#peerManager.allPeerConnections()) {
