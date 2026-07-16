@@ -82,6 +82,33 @@ module("Integration | Component | resenha-room-form", function (hooks) {
     );
   });
 
+  test("shows the media server toggle only when per-room LiveKit is available", async function (assert) {
+    this.room = {
+      name: "Town hall",
+      description: "",
+      public: true,
+      room_type: "open",
+      max_participants: null,
+      video_enabled: true,
+      livekit_enabled: false,
+      chat_channel_id: null,
+      chat_idle_minutes: 15,
+      chat_thread_title_template: "",
+    };
+
+    this.owner
+      .lookup("service:site")
+      .set("resenha_livekit_per_room_available", true);
+    await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
+    assert.dom('[data-name="livekit_enabled"]').exists();
+
+    this.owner
+      .lookup("service:site")
+      .set("resenha_livekit_per_room_available", false);
+    await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
+    assert.dom('[data-name="livekit_enabled"]').doesNotExist();
+  });
+
   test("hides the thread starter fields when no chat channel is linked", async function (assert) {
     this.room = {
       name: "Chill",

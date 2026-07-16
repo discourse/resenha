@@ -21,9 +21,7 @@ module Resenha
       when "all_rooms"
         true
       when "per_room"
-        # The per-room column ships separately; `try` keeps the resolver inert
-        # until it exists.
-        !!room.try(:livekit_enabled)
+        room.livekit_enabled
       else
         false
       end

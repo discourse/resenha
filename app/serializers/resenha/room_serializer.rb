@@ -24,7 +24,8 @@ module Resenha
                :chat_channel_id,
                :chat_idle_minutes,
                :chat_thread_title_template,
-               :chat_available
+               :chat_available,
+               :livekit_enabled
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
 
@@ -101,6 +102,12 @@ module Resenha
     end
 
     def include_chat_thread_title_template?
+      can_manage
+    end
+
+    # Only the room form consumes this; the live call's transport is never
+    # serialized — clients learn it at join.
+    def include_livekit_enabled?
       can_manage
     end
 

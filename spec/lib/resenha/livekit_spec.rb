@@ -4,6 +4,7 @@ require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 require_relative "../../../db/migrate/20260305162426_add_room_type_to_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
+require_relative "../../../db/migrate/20260709165411_add_livekit_enabled_to_resenha_rooms"
 
 RSpec.describe Resenha::Livekit do
   before do
@@ -16,6 +17,9 @@ RSpec.describe Resenha::Livekit do
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :video_enabled)
         AddVideoEnabledToResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :livekit_enabled)
+        AddLivekitEnabledToResenhaRooms.new.change
       end
     end
     Resenha::Room.reset_column_information
@@ -56,10 +60,15 @@ RSpec.describe Resenha::Livekit do
 
       SiteSetting.resenha_livekit_room_policy = "all_rooms"
       expect(described_class.available_for?(room)).to eq(true)
+    end
 
-      # The per-room column ships separately; until then per_room admits none.
+    it "follows the room's own flag under the per_room policy" do
       SiteSetting.resenha_livekit_room_policy = "per_room"
+
       expect(described_class.available_for?(room)).to eq(false)
+
+      room.update!(livekit_enabled: true)
+      expect(described_class.available_for?(room)).to eq(true)
     end
 
     it "is false when the policy allows but the config is incomplete" do

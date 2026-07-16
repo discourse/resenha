@@ -9,6 +9,7 @@ import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
 
 export default class ResenhaRoomForm extends Component {
+  @service site;
   @service siteSettings;
   @service chatApi;
 
@@ -27,6 +28,7 @@ export default class ResenhaRoomForm extends Component {
       room_type: this.args.room?.room_type || "open",
       max_participants: this.args.room?.max_participants || null,
       video_enabled: this.args.room?.video_enabled ?? true,
+      livekit_enabled: this.args.room?.livekit_enabled ?? false,
       chat_channel_id: this.args.room?.chat_channel_id || null,
       chat_idle_minutes: this.args.room?.chat_idle_minutes ?? 15,
       chat_thread_title_template:
@@ -36,6 +38,10 @@ export default class ResenhaRoomForm extends Component {
 
   get showVideoToggle() {
     return this.siteSettings.resenha_video_enabled;
+  }
+
+  get showLivekitToggle() {
+    return this.site.resenha_livekit_per_room_available;
   }
 
   get showChatSettings() {
@@ -206,6 +212,18 @@ export default class ResenhaRoomForm extends Component {
               <field.Control />
             </form.Field>
           {{/unless}}
+        {{/if}}
+
+        {{#if this.showLivekitToggle}}
+          <form.Field
+            @type="toggle"
+            @name="livekit_enabled"
+            @title={{i18n "resenha.admin.room.livekit_enabled"}}
+            @helpText={{i18n "resenha.admin.room.livekit_enabled_help"}}
+            as |field|
+          >
+            <field.Control />
+          </form.Field>
         {{/if}}
 
         <form.Field

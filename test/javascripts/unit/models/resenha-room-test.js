@@ -8,6 +8,7 @@ module("Unit | model | resenha-room", function () {
     public: true,
     max_participants: 20,
     video_enabled: true,
+    livekit_enabled: false,
     chat_channel_id: 6,
     chat_idle_minutes: 2,
     chat_thread_title_template: "Team meeting at {time} on {date}",
