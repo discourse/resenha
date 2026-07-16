@@ -52,6 +52,19 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Publish ceilings mirror the mesh sender ladder's top rungs and the
+// capture-time caps (cameras at 24 fps, screens at 15 fps); simulcast gives
+// the SFU lower layers to hand to constrained subscribers instead of the
+// mesh's per-watcher encoder ladder.
+const CAMERA_ENCODING = { maxBitrate: 1_200_000, maxFramerate: 24 };
+const SCREEN_ENCODING = { maxBitrate: 2_500_000, maxFramerate: 15 };
+// Content audio: higher Opus ceiling than the speech default so screen audio
+// doesn't sound underwater.
+const SCREEN_AUDIO_BITRATE = 128_000;
+// Camera subscriptions drop to the LOW simulcast layer above this many
+// active video publishers — the same threshold the mesh bitrate ladder uses.
+const LOW_LAYER_PUBLISHER_THRESHOLD = 6;
+
 export default class LivekitRoomSession {
   // Cheap pre-load check so obviously unsupported browsers fail with a
   // translated toast instead of a dynamic-import error; the SDK's own
@@ -67,6 +80,10 @@ export default class LivekitRoomSession {
   #currentUserId;
   #loadSdk;
   #getLocalStream;
+  #getLocalVideoTrack;
+  #getLocalScreenAudioTrack;
+  #getLocalVideoKind;
+  #getVideoPublisherCount;
   #onTrack;
   #onParticipantGone;
   #onDisconnected;
@@ -76,6 +93,10 @@ export default class LivekitRoomSession {
   #sdk = null;
   #room = null;
   #micPublication = null;
+  #videoPublication = null;
+  #videoKind = null;
+  #screenAudioPublication = null;
+  #watchingVideo = false;
   #closed = false;
   #reconnecting = false;
 
@@ -84,6 +105,10 @@ export default class LivekitRoomSession {
     currentUserId,
     loadSdk,
     getLocalStream,
+    getLocalVideoTrack,
+    getLocalScreenAudioTrack,
+    getLocalVideoKind,
+    getVideoPublisherCount,
     onTrack,
     onParticipantGone,
     onDisconnected,
@@ -94,6 +119,10 @@ export default class LivekitRoomSession {
     this.#currentUserId = currentUserId;
     this.#loadSdk = loadSdk ?? sdkLoaderOverride ?? defaultLoadSdk;
     this.#getLocalStream = getLocalStream;
+    this.#getLocalVideoTrack = getLocalVideoTrack;
+    this.#getLocalScreenAudioTrack = getLocalScreenAudioTrack;
+    this.#getLocalVideoKind = getLocalVideoKind;
+    this.#getVideoPublisherCount = getVideoPublisherCount;
     this.#onTrack = onTrack;
     this.#onParticipantGone = onParticipantGone;
     this.#onDisconnected = onDisconnected;
@@ -145,7 +174,18 @@ export default class LivekitRoomSession {
 
     this.#room = room;
     this.#micPublication = null;
+    this.#videoPublication = null;
+    this.#videoKind = null;
+    this.#screenAudioPublication = null;
     await this.#publishMicrophone();
+
+    // A ladder reconnect lands on a fresh Room; whatever camera or screen
+    // share was live before the drop must be republished.
+    await this.syncLocalVideo(
+      this.#getLocalVideoTrack?.(),
+      this.#getLocalScreenAudioTrack?.(),
+      this.#getLocalVideoKind?.()
+    );
   }
 
   async disconnect() {
@@ -153,6 +193,9 @@ export default class LivekitRoomSession {
     const room = this.#room;
     this.#room = null;
     this.#micPublication = null;
+    this.#videoPublication = null;
+    this.#videoKind = null;
+    this.#screenAudioPublication = null;
 
     try {
       await room?.disconnect();
@@ -173,6 +216,73 @@ export default class LivekitRoomSession {
     } else {
       await this.#publishMicrophone();
     }
+  }
+
+  // Brings the video and screen-audio publications in line with the local
+  // capture state. The mesh equivalent gates per watching peer; on the SFU
+  // media is published once and receive gating moves to the subscriber side.
+  async syncLocalVideo(videoTrack, screenAudioTrack, kind) {
+    if (!this.#room) {
+      return;
+    }
+
+    await this.#syncVideoPublication(videoTrack ?? null, kind ?? null);
+    await this.#syncScreenAudioPublication(
+      videoTrack ? (screenAudioTrack ?? null) : null
+    );
+  }
+
+  // Receive gating for the watching state: non-watchers unsubscribe from
+  // camera, screen, and screen-audio publications so they cost no downlink.
+  // Microphones are never gated. Publications created while not watching are
+  // caught by the TrackPublished and TrackSubscribed handlers.
+  setVideoSubscriptionsEnabled(watching) {
+    this.#watchingVideo = !!watching;
+
+    this.#room?.remoteParticipants?.forEach((participant) => {
+      participant.trackPublications?.forEach((publication) => {
+        this.#applyDesiredSubscription(publication);
+      });
+    });
+  }
+
+  // Re-picks simulcast layers for current subscriptions; called when the
+  // room's video publisher count changes.
+  updateSubscriberQuality() {
+    this.#room?.remoteParticipants?.forEach((participant) => {
+      participant.trackPublications?.forEach((publication) => {
+        if (publication?.isSubscribed) {
+          this.#applySubscriberQuality(publication);
+        }
+      });
+    });
+  }
+
+  // Role changes flip whether the local user may hold a live microphone
+  // publication; re-evaluate against the current local stream. The media
+  // session itself survives the role change (unlike mesh peer rebuilds).
+  async refreshPublications() {
+    if (!this.#room) {
+      return;
+    }
+
+    const track = this.#getLocalStream?.()?.getAudioTracks?.()?.[0];
+
+    if (!track) {
+      const publication = this.#micPublication;
+      this.#micPublication = null;
+      await this.#unpublish(publication);
+      return;
+    }
+
+    if (this.#micPublication?.track) {
+      if (this.#micPublication.track.mediaStreamTrack !== track) {
+        await this.#micPublication.track.replaceTrack(track);
+      }
+      return;
+    }
+
+    await this.#publishMicrophone();
   }
 
   // The SFU doesn't consult the plugin's roster, so a participant expelled
@@ -240,6 +350,153 @@ export default class LivekitRoomSession {
     }
   }
 
+  async #syncVideoPublication(track, kind) {
+    // A camera→screen switch changes the publication source, so the old
+    // publication can't be retracked in place.
+    if (this.#videoPublication && (!track || this.#videoKind !== kind)) {
+      const publication = this.#videoPublication;
+      this.#videoPublication = null;
+      this.#videoKind = null;
+      await this.#unpublish(publication);
+    }
+
+    if (!track || !kind) {
+      return;
+    }
+
+    if (this.#videoPublication?.track) {
+      // Same kind, new track: device switch or blur pipeline swap.
+      if (this.#videoPublication.track.mediaStreamTrack !== track) {
+        await this.#videoPublication.track.replaceTrack(track);
+      }
+      return;
+    }
+
+    const { Track } = this.#sdk;
+    const options =
+      kind === "screen"
+        ? {
+            source: Track.Source.ScreenShare,
+            simulcast: true,
+            screenShareEncoding: SCREEN_ENCODING,
+          }
+        : {
+            source: Track.Source.Camera,
+            simulcast: true,
+            videoEncoding: CAMERA_ENCODING,
+          };
+
+    try {
+      this.#videoPublication = await this.#room.localParticipant.publishTrack(
+        track,
+        options
+      );
+      this.#videoKind = kind;
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[resenha-livekit] failed to publish ${kind} video for room ${this.#roomId}`,
+        error
+      );
+    }
+  }
+
+  async #syncScreenAudioPublication(track) {
+    const current = this.#screenAudioPublication;
+    if (current && current.track?.mediaStreamTrack !== track) {
+      this.#screenAudioPublication = null;
+      await this.#unpublish(current);
+    }
+
+    if (!track || this.#screenAudioPublication) {
+      return;
+    }
+
+    try {
+      this.#screenAudioPublication =
+        await this.#room.localParticipant.publishTrack(track, {
+          source: this.#sdk.Track.Source.ScreenShareAudio,
+          // DTX is tuned for speech pauses and would gate content audio.
+          dtx: false,
+          audioBitrate: SCREEN_AUDIO_BITRATE,
+        });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[resenha-livekit] failed to publish screen audio for room ${this.#roomId}`,
+        error
+      );
+    }
+  }
+
+  async #unpublish(publication) {
+    if (!publication?.track || !this.#room) {
+      return;
+    }
+
+    try {
+      // The service owns capture-track lifecycle; never stop on unpublish
+      // (a blur pipeline may still be feeding the track).
+      await this.#room.localParticipant.unpublishTrack(
+        publication.track,
+        false
+      );
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[resenha-livekit] failed to unpublish a track for room ${this.#roomId}`,
+        error
+      );
+    }
+  }
+
+  #isWatchGatedSource(source) {
+    const { Track } = this.#sdk;
+    return (
+      source === Track.Source.Camera ||
+      source === Track.Source.ScreenShare ||
+      source === Track.Source.ScreenShareAudio
+    );
+  }
+
+  #applyDesiredSubscription(publication) {
+    if (!this.#isWatchGatedSource(publication?.source)) {
+      return;
+    }
+
+    try {
+      publication.setSubscribed(this.#watchingVideo);
+    } catch {
+      // The publication is tearing down; nothing to gate.
+    }
+  }
+
+  // With adaptiveStream off the SDK would leave every subscription on the
+  // HIGH simulcast layer, regressing downlink vs the mesh ladder in big
+  // rooms; pick layers explicitly instead.
+  #applySubscriberQuality(publication) {
+    const { Track, VideoQuality } = this.#sdk;
+
+    let quality;
+    if (publication?.source === Track.Source.ScreenShare) {
+      quality = VideoQuality.HIGH;
+    } else if (publication?.source === Track.Source.Camera) {
+      const publisherCount = this.#getVideoPublisherCount?.() ?? 0;
+      quality =
+        publisherCount > LOW_LAYER_PUBLISHER_THRESHOLD
+          ? VideoQuality.LOW
+          : VideoQuality.MEDIUM;
+    } else {
+      return;
+    }
+
+    try {
+      publication.setVideoQuality(quality);
+    } catch {
+      // The publication is tearing down; the next subscription re-applies.
+    }
+  }
+
   #userIdFrom(participant) {
     // LiveKit identity is String(user.id); registry keys must be numeric so
     // remoteStreamFor(roomId, userId) matches roster participant ids.
@@ -259,6 +516,22 @@ export default class LivekitRoomSession {
         return;
       }
 
+      // Auto-subscribe can deliver watch-gated media before the gate applies
+      // (publications that already existed when the room connected); drop the
+      // subscription instead of registering a soundtrack or video nobody is
+      // watching.
+      if (
+        this.#isWatchGatedSource(publication?.source) &&
+        !this.#watchingVideo
+      ) {
+        this.#applyDesiredSubscription(publication);
+        return;
+      }
+
+      if (track.kind === "video") {
+        this.#applySubscriberQuality(publication);
+      }
+
       // A bare audio track (empty streams argument) is how screen audio is
       // told apart from mic audio in #registerRemoteTrack; every other kind
       // must arrive with a stream attached.
@@ -269,6 +542,29 @@ export default class LivekitRoomSession {
         : [track.mediaStream ?? new MediaStream()];
 
       this.#onTrack(this.#roomId, userId, track.mediaStreamTrack, streams);
+    });
+
+    room.on(RoomEvent.TrackPublished, (publication) => {
+      // A camera or screen published while this client isn't watching must
+      // start unsubscribed; auto-subscribe only covers what existed at
+      // connect time.
+      this.#applyDesiredSubscription(publication);
+    });
+
+    room.on(RoomEvent.ParticipantPermissionsChanged, (_prev, participant) => {
+      if (participant !== room.localParticipant) {
+        return;
+      }
+
+      // A server-side permission update (e.g. a promotion synced by the
+      // backend) lets the mic publish without a reconnect.
+      this.refreshPublications().catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[resenha-livekit] failed to refresh publications for room ${this.#roomId}`,
+          error
+        );
+      });
     });
 
     room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
@@ -301,6 +597,9 @@ export default class LivekitRoomSession {
 
       this.#room = null;
       this.#micPublication = null;
+      this.#videoPublication = null;
+      this.#videoKind = null;
+      this.#screenAudioPublication = null;
 
       if (reason === DisconnectReason.CLIENT_INITIATED) {
         return;

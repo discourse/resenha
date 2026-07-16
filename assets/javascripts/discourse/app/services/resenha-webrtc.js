@@ -437,6 +437,10 @@ export default class ResenhaWebrtcService extends Service {
       roomId,
       currentUserId: this.currentUser?.id,
       getLocalStream: () => this.localStream,
+      getLocalVideoTrack: () => this.localVideoTrack,
+      getLocalScreenAudioTrack: () => this.localScreenAudioTrack,
+      getLocalVideoKind: () => this.localVideoKind,
+      getVideoPublisherCount: () => this.videoPublisherCount(roomId),
       onTrack: (id, userId, track, streams) =>
         this.#registerRemoteTrack(id, userId, track, streams),
       onParticipantGone: (id, userId) => this.#removeRemoteStream(id, userId),
@@ -1343,6 +1347,12 @@ export default class ResenhaWebrtcService extends Service {
       type: "POST",
       data,
     }).catch(() => {});
+
+    // The roster flag above drives tiles on both transports; on the SFU the
+    // watching state additionally gates the actual video subscriptions.
+    if (!this.#isMeshRoom(roomId)) {
+      this.#livekitSessions.get(roomId)?.setVideoSubscriptionsEnabled(watching);
+    }
   }
 
   @action
@@ -1574,6 +1584,20 @@ export default class ResenhaWebrtcService extends Service {
   // currently watching the room page — every skipped peer saves an entire
   // encoder session, not just bandwidth.
   async #syncVideoSenders(roomId) {
+    if (!this.#isMeshRoom(roomId)) {
+      // The SFU is published to once regardless of watchers; per-watcher
+      // receive gating happens on the subscriber side instead
+      // (setVideoSubscriptionsEnabled).
+      await this.#livekitSessions
+        .get(roomId)
+        ?.syncLocalVideo(
+          this.localVideoTrack,
+          this.localScreenAudioTrack,
+          this.localVideoKind
+        );
+      return;
+    }
+
     const peers = this.#peerManager.getRoomPeers(roomId);
     if (!peers) {
       return;
@@ -2205,6 +2229,12 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#syncRemoteVideoTracks(roomId, participants);
 
+    if (!this.#isMeshRoom(roomId)) {
+      // Publisher-count changes move camera subscriptions between simulcast
+      // layers.
+      this.#livekitSessions.get(roomId)?.updateSubscriberQuality();
+    }
+
     if (this.localVideoKind) {
       await this.#syncVideoSenders(roomId);
     }
@@ -2408,6 +2438,18 @@ export default class ResenhaWebrtcService extends Service {
     // peer rebuilds are meaningless on other transports.
     if (this.#isMeshRoom(roomId)) {
       this.#reconnectAllPeers(roomId);
+    } else {
+      // The SFU connection survives the role change; just publish or release
+      // the microphone to match the new role.
+      try {
+        await this.#livekitSessions.get(roomId)?.refreshPublications();
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[resenha-livekit] failed to refresh publications after a role change in room ${roomId}`,
+          error
+        );
+      }
     }
   }
 
