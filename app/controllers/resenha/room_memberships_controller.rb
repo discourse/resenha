@@ -22,6 +22,7 @@ module Resenha
       if Resenha::ParticipantTracker.user_ids(@room.id).include?(user.id)
         metadata = Resenha::ParticipantTracker.get_metadata(@room.id, user.id)
         metadata[:role] = membership.role_name
+        metadata.delete(:hand_raised_at) if membership.can_speak?
         Resenha::ParticipantTracker.update_metadata(@room.id, user.id, metadata)
         Resenha::RoomBroadcaster.publish_role_change(@room, user.id, membership.role_name)
         Resenha::RoomBroadcaster.publish_participants(@room)
@@ -40,6 +41,7 @@ module Resenha
       if Resenha::ParticipantTracker.user_ids(@room.id).include?(membership.user_id)
         metadata = Resenha::ParticipantTracker.get_metadata(@room.id, membership.user_id)
         metadata[:role] = membership.role_name
+        metadata.delete(:hand_raised_at) if membership.can_speak?
         Resenha::ParticipantTracker.update_metadata(@room.id, membership.user_id, metadata)
         Resenha::RoomBroadcaster.publish_role_change(
           @room,

@@ -4,6 +4,9 @@ const ResenhaParticipantSidebarSuffix = <template>
   {{! Always rendered, even with no icons — this is the element that pushes
       itself and the hover menu button to the right edge of the row. }}
   <span class="resenha-participant-suffix">
+    {{#if @suffixArgs.isHandRaised}}
+      {{dIcon "hand" title="resenha.participant.status_hand_raised"}}
+    {{/if}}
     {{#if @suffixArgs.isScreenSharing}}
       {{dIcon "display" title="resenha.participant.status_screen_sharing"}}
     {{/if}}

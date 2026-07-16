@@ -23,6 +23,8 @@ module Resenha
                     toggle_mute
                     state
                     livekit_token
+                    request_to_speak
+                    withdraw_request_to_speak
                   ]
 
     def index
@@ -276,7 +278,7 @@ module Resenha
       wants_screen = params.key?(:screen) && bool.cast(params[:screen])
 
       if wants_camera || wants_screen
-        unless @room.video_allowed?
+        unless @room.video_allowed? && guardian.can_speak_in_resenha_room?(@room)
           raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.video_not_allowed"))
         end
 
@@ -327,6 +329,51 @@ module Resenha
       # The client-side kicked handler already forces a clean leave; this
       # additionally evicts the media session from the SFU.
       Resenha::Livekit::RoomServiceClient.remove_participant(@room, user_id)
+
+      head :no_content
+    end
+
+    def request_to_speak
+      guardian.ensure_can_request_to_speak_in_resenha_room!(@room)
+
+      if Resenha::ParticipantTracker.user_ids(@room.id).exclude?(current_user.id)
+        raise Discourse::InvalidAccess.new(
+                :resenha_speak_request_requires_presence,
+                nil,
+                custom_message: "resenha.errors.speak_request_requires_presence",
+              )
+      end
+
+      if Resenha::ParticipantTracker.raise_hand(@room.id, current_user.id)
+        raised_at =
+          Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)[:hand_raised_at]
+        Resenha::RoomBroadcaster.publish_hand_raise(
+          @room,
+          current_user.id,
+          raised: true,
+          raised_at: raised_at,
+          reason: "raised",
+        )
+        Resenha::RoomBroadcaster.publish_participants(@room)
+      end
+
+      head :no_content
+    end
+
+    def withdraw_request_to_speak
+      target_id = params[:user_id].present? ? params[:user_id].to_i : current_user.id
+
+      if target_id == current_user.id
+        guardian.ensure_can_join_resenha_room!(@room)
+      else
+        guardian.ensure_can_manage_resenha_room!(@room)
+      end
+
+      if Resenha::ParticipantTracker.lower_hand(@room.id, target_id)
+        reason = target_id == current_user.id ? "withdrawn" : "dismissed"
+        Resenha::RoomBroadcaster.publish_hand_raise(@room, target_id, raised: false, reason: reason)
+        Resenha::RoomBroadcaster.publish_participants(@room)
+      end
 
       head :no_content
     end

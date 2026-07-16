@@ -52,7 +52,8 @@
   }
 
   // Every applicable state icon renders together, in a fixed order
-  // (screenshare, camera, PTT, muted, deafened), at one size and color.
+  // (hand raised, screenshare, camera, PTT, muted, deafened), at one size
+  // and color.
   .resenha-participant-suffix {
     margin-left: auto;
     display: inline-flex;
@@ -63,6 +64,12 @@
 
     .d-icon {
       color: var(--primary-medium);
+    }
+
+    // A raised hand is a request waiting on someone — accent it so it reads
+    // over the passive state icons.
+    .d-icon-hand {
+      color: var(--tertiary);
     }
   }
 

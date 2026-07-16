@@ -18,6 +18,10 @@ module Resenha
       new(room).publish_role_change(user_id, new_role)
     end
 
+    def self.publish_hand_raise(room, user_id, raised:, raised_at: nil, reason: nil)
+      new(room).publish_hand_raise(user_id, raised: raised, raised_at: raised_at, reason: reason)
+    end
+
     def initialize(room)
       @room = room
     end
@@ -81,6 +85,26 @@ module Resenha
       MessageBus.publish(
         Resenha.room_channel(room.id),
         { type: "role_change", room_id: room.id, user_id: user_id, role: new_role },
+        user_ids: participant_ids,
+      )
+    end
+
+    # Lightweight event alongside the authoritative participants broadcast, so
+    # clients can toast on raises/dismissals without diffing rosters.
+    def publish_hand_raise(user_id, raised:, raised_at: nil, reason: nil)
+      participant_ids = Resenha::ParticipantTracker.user_ids(room.id)
+      return if participant_ids.empty?
+
+      MessageBus.publish(
+        Resenha.room_channel(room.id),
+        {
+          type: "hand_raise",
+          room_id: room.id,
+          user_id: user_id,
+          raised: raised,
+          raised_at: raised_at,
+          reason: reason,
+        },
         user_ids: participant_ids,
       )
     end

@@ -89,6 +89,25 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     );
   }
 
+  get canDismissRequest() {
+    return (
+      this.canManageRoom &&
+      this.isStageRoom &&
+      !this.isCurrentUser &&
+      !!this.participant.hand_raised_at
+    );
+  }
+
+  get handRaised() {
+    return !!this.participant.hand_raised_at;
+  }
+
+  get raiseHandLabel() {
+    return this.handRaised
+      ? i18n("resenha.stage.lower_hand")
+      : i18n("resenha.stage.raise_hand");
+  }
+
   get muteLabel() {
     return this.isMuted
       ? i18n("resenha.participant.unmute")
@@ -227,6 +246,31 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
   }
 
   @action
+  async toggleRaiseHand() {
+    try {
+      await ajax(`/resenha/rooms/${this.room.id}/request_to_speak`, {
+        type: this.handRaised ? "DELETE" : "POST",
+      });
+      this.args.close();
+    } catch (error) {
+      popupAjaxError(error);
+    }
+  }
+
+  @action
+  async dismissRequest() {
+    try {
+      await ajax(`/resenha/rooms/${this.room.id}/request_to_speak`, {
+        type: "DELETE",
+        data: { user_id: this.participant.id },
+      });
+      this.args.close();
+    } catch (error) {
+      popupAjaxError(error);
+    }
+  }
+
+  @action
   async promoteToSpeaker() {
     await this.#changeParticipantRole("speaker");
   }
@@ -341,6 +385,16 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
         {{/if}}
         {{#if this.isListenerInStage}}
           <dropdown.item>
+            <DButton
+              @action={{this.toggleRaiseHand}}
+              @icon="hand"
+              @translatedLabel={{this.raiseHandLabel}}
+              @translatedTitle={{this.raiseHandLabel}}
+              class="resenha-participant-sidebar-context-menu__raise-hand-btn
+                {{if this.handRaised '--active'}}"
+            />
+          </dropdown.item>
+          <dropdown.item>
             <span
               class="resenha-participant-sidebar-context-menu__stage-hint"
             >{{i18n "resenha.room.listeners_cannot_unmute"}}</span>
@@ -421,6 +475,17 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
               @label="resenha.stage.move_to_listeners"
               @title="resenha.stage.move_to_listeners"
               class="resenha-participant-sidebar-context-menu__demote-btn"
+            />
+          </dropdown.item>
+        {{/if}}
+        {{#if this.canDismissRequest}}
+          <dropdown.item>
+            <DButton
+              @action={{this.dismissRequest}}
+              @icon="xmark"
+              @label="resenha.stage.dismiss_request_menu"
+              @title="resenha.stage.dismiss_request_menu"
+              class="resenha-participant-sidebar-context-menu__dismiss-request-btn"
             />
           </dropdown.item>
         {{/if}}

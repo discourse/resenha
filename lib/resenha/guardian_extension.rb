@@ -89,5 +89,18 @@ module Resenha
       membership = room.room_memberships.find { |m| m.user_id == user&.id }
       membership&.can_speak? || false
     end
+
+    # Only stage-room listeners have anything to request — anyone who can
+    # already speak (including admins and everyone in open rooms) cannot.
+    def can_request_to_speak_in_resenha_room?(room)
+      return false unless can_join_resenha_room?(room)
+      room.stage? && !can_speak_in_resenha_room?(room)
+    end
+
+    def ensure_can_request_to_speak_in_resenha_room!(room)
+      unless can_request_to_speak_in_resenha_room?(room)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
+      end
+    end
   end
 end

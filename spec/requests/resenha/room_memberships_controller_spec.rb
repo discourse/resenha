@@ -147,6 +147,24 @@ RSpec.describe Resenha::RoomMembershipsController do
 
       expect(response.status).to eq(200)
     end
+
+    it "clears a present listener's raised hand when granting them the speaker role" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      Resenha::ParticipantTracker.add(room.id, member.id)
+      Resenha::ParticipantTracker.raise_hand(room.id, member.id)
+      sign_in(room_owner)
+
+      post "/resenha/rooms/#{room.id}/memberships.json",
+           params: {
+             user_id: member.id,
+             role: "speaker",
+           }
+
+      expect(response.status).to eq(200)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, member.id)
+      expect(metadata[:role]).to eq("speaker")
+      expect(metadata[:hand_raised_at]).to be_nil
+    end
   end
 
   describe "#update" do
@@ -187,6 +205,40 @@ RSpec.describe Resenha::RoomMembershipsController do
       expect(response.status).to eq(200)
       metadata = Resenha::ParticipantTracker.get_metadata(room.id, member.id)
       expect(metadata[:role]).to eq("moderator")
+    end
+
+    it "clears a present listener's raised hand when promoting them to speaker" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      Resenha::ParticipantTracker.add(room.id, member.id)
+      Resenha::ParticipantTracker.raise_hand(room.id, member.id)
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "speaker",
+          }
+
+      expect(response.status).to eq(200)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, member.id)
+      expect(metadata[:role]).to eq("speaker")
+      expect(metadata[:hand_raised_at]).to be_nil
+    end
+
+    it "keeps a queued listener's raised hand when their role is set to participant" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      Resenha::ParticipantTracker.add(room.id, member.id)
+      Resenha::ParticipantTracker.raise_hand(room.id, member.id)
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{room.id}/memberships/#{participant_membership.id}.json",
+          params: {
+            role: "participant",
+          }
+
+      expect(response.status).to eq(200)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, member.id)
+      expect(metadata[:role]).to eq("participant")
+      expect(metadata[:hand_raised_at]).to be_a(Float)
     end
   end
 

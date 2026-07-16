@@ -556,12 +556,40 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(403)
     end
 
-    it "rejects video in stage rooms" do
+    it "rejects video from a stage listener" do
       room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
 
       post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
 
       expect(response.status).to eq(403)
+    end
+
+    it "rejects screen share from a stage listener" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { screen: true }
+
+      expect(response.status).to eq(403)
+    end
+
+    it "allows video from a stage speaker" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      room.room_memberships.create!(user: user, role: Resenha::RoomMembership::ROLE_SPEAKER)
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+
+      expect(response.status).to eq(204)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_video_on]).to eq(true)
+    end
+
+    it "allows screen share from a stage speaker" do
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      room.room_memberships.create!(user: user, role: Resenha::RoomMembership::ROLE_SPEAKER)
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { screen: true }
+
+      expect(response.status).to eq(204)
     end
 
     it "rejects video when the publisher limit is reached" do

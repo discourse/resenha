@@ -3,6 +3,7 @@ import Service from "@ember/service";
 import { click, render } from "@ember/test-helpers";
 import { module, test } from "qunit";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
+import pretender, { response } from "discourse/tests/helpers/create-pretender";
 import { logIn } from "discourse/tests/helpers/qunit-helpers";
 import ResenhaRoomPage from "discourse/plugins/resenha/discourse/components/resenha/room-page";
 
@@ -136,5 +137,39 @@ module("Integration | Component | resenha/room-page", function (hooks) {
     assert
       .dom(".resenha-room-page__layout-trigger")
       .exists("exposes the layout switcher in the overflow menu");
+  });
+
+  test("a stage room defaults to the presentation layout", async function (assert) {
+    this.room.room_type = "stage";
+    // Keep the chat panel out of this test; the chat-open default is covered
+    // separately.
+    this.room.chat_available = false;
+
+    await render(<template><ResenhaRoomPage @room={{this.room}} /></template>);
+
+    assert
+      .dom(".resenha-room-page")
+      .hasClass("--presentation", "stage rooms default to presentation");
+    assert
+      .dom(".resenha-room-page")
+      .doesNotHaveClass("--tiled", "the tiled default no longer applies");
+    assert
+      .dom(".resenha-room-page__presentation")
+      .exists("renders the featured-presenter layout");
+  });
+
+  test("a joined stage room with chat available opens the chat panel by default", async function (assert) {
+    // The panel prepares its chat session on mount; an empty payload keeps it
+    // in the pre-thread composer state without touching chat internals.
+    pretender.post("/resenha/rooms/1/chat_session", () => response({}));
+
+    this.room.room_type = "stage";
+
+    await render(<template><ResenhaRoomPage @room={{this.room}} /></template>);
+
+    assert
+      .dom(".resenha-room-page")
+      .hasClass("--chat-open", "the chat panel is open by default");
+    assert.dom(".resenha-chat").exists("mounts the chat panel");
   });
 });

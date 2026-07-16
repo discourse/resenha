@@ -60,4 +60,51 @@ RSpec.describe Resenha::RoomBroadcaster do
       expect(messages.first.user_ids).to contain_exactly(private_room.creator_id, participant.id)
     end
   end
+
+  describe ".publish_hand_raise" do
+    fab!(:second_participant, :user)
+
+    it "publishes the hand event to exactly the tracked participants" do
+      Resenha::ParticipantTracker.add(room.id, participant.id)
+      Resenha::ParticipantTracker.add(room.id, second_participant.id)
+      raised_at = Time.now.to_f
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          described_class.publish_hand_raise(
+            room,
+            participant.id,
+            raised: true,
+            raised_at: raised_at,
+            reason: "raised",
+          )
+        end
+
+      expect(messages.size).to eq(1)
+      message = messages.first
+      expect(message.user_ids).to contain_exactly(participant.id, second_participant.id)
+      expect(message.data).to eq(
+        type: "hand_raise",
+        room_id: room.id,
+        user_id: participant.id,
+        raised: true,
+        raised_at: raised_at,
+        reason: "raised",
+      )
+    end
+
+    it "does not publish when the room has no participants" do
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          described_class.publish_hand_raise(
+            room,
+            participant.id,
+            raised: false,
+            reason: "withdrawn",
+          )
+        end
+
+      expect(messages).to be_empty
+    end
+  end
 end

@@ -73,6 +73,25 @@ module Resenha
         redis.del(transport_key(room_id))
       end
 
+      # Never resets an existing timestamp — queue position is first-come.
+      # Returns false when already raised so callers can skip re-broadcasting.
+      def raise_hand(room_id, user_id)
+        metadata = get_metadata(room_id, user_id)
+        return false if metadata[:hand_raised_at]
+
+        metadata[:hand_raised_at] = Time.now.to_f
+        update_metadata(room_id, user_id, metadata)
+        true
+      end
+
+      def lower_hand(room_id, user_id)
+        metadata = get_metadata(room_id, user_id)
+        return false unless metadata.delete(:hand_raised_at)
+
+        update_metadata(room_id, user_id, metadata)
+        true
+      end
+
       def update_metadata(room_id, user_id, metadata)
         redis.hset(metadata_key(room_id), user_id, metadata.to_json)
         redis.expire(metadata_key(room_id), SAFETY_TTL)

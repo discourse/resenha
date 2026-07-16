@@ -6,6 +6,8 @@ import { action } from "@ember/object";
 import { service } from "@ember/service";
 import DButton from "discourse/components/d-button";
 import DMenu from "discourse/float-kit/components/d-menu";
+import { ajax } from "discourse/lib/ajax";
+import { popupAjaxError } from "discourse/lib/ajax-error";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
@@ -16,6 +18,7 @@ import {
   outputSelectionSupported,
   SYSTEM_DEFAULT_DEVICE_ID,
 } from "../../lib/resenha/media-devices";
+import { queuePosition } from "../../lib/resenha/speak-queue";
 import ResenhaVideoSettingsModal from "../modal/resenha-video-settings";
 import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
 import ResenhaCallSubmenu from "./call-submenu";
@@ -31,6 +34,7 @@ const SUBMENU = "resenha-call-submenu";
 // Hosts render this inside their own `__controls` footer and append their
 // context-specific tail (overflow menu, leave button, etc.) as siblings.
 export default class ResenhaCallControls extends Component {
+  @service currentUser;
   @service menu;
   @service modal;
   @service resenhaWebrtc;
@@ -70,6 +74,36 @@ export default class ResenhaCallControls extends Component {
 
   get showScreenShare() {
     return this.videoAllowed && this.resenhaWebrtc.screenShareSupported;
+  }
+
+  get #ownParticipant() {
+    return (this.room?.active_participants || []).find(
+      (participant) => Number(participant?.id) === this.currentUser?.id
+    );
+  }
+
+  get isStageListener() {
+    if (this.room?.room_type !== "stage") {
+      return false;
+    }
+    const role = this.#ownParticipant?.role;
+    return !!this.#ownParticipant && role !== "moderator" && role !== "speaker";
+  }
+
+  get handRaisedAt() {
+    return this.#ownParticipant?.hand_raised_at;
+  }
+
+  get raiseHandTitle() {
+    if (!this.handRaisedAt) {
+      return i18n("resenha.stage.raise_hand");
+    }
+
+    const position = queuePosition(this.room, this.currentUser?.id);
+    const lowerHand = i18n("resenha.stage.lower_hand");
+    return position
+      ? `${lowerHand} — ${i18n("resenha.stage.queue_position", { position })}`
+      : lowerHand;
   }
 
   get micTitle() {
@@ -121,6 +155,17 @@ export default class ResenhaCallControls extends Component {
   @action
   toggleScreenShare() {
     this.resenhaWebrtc.toggleScreenShare();
+  }
+
+  @action
+  async toggleRaiseHand() {
+    try {
+      await ajax(`/resenha/rooms/${this.room.id}/request_to_speak`, {
+        type: this.handRaisedAt ? "DELETE" : "POST",
+      });
+    } catch (error) {
+      popupAjaxError(error);
+    }
   }
 
   @action
@@ -294,6 +339,17 @@ export default class ResenhaCallControls extends Component {
         </:content>
       </DMenu>
     </div>
+    {{#if this.isStageListener}}
+      <DButton
+        @action={{this.toggleRaiseHand}}
+        @icon="hand"
+        @translatedTitle={{this.raiseHandTitle}}
+        class={{dConcatClass
+          "btn-default resenha-call-controls__raise-hand"
+          (if this.handRaisedAt "--active")
+        }}
+      />
+    {{/if}}
     {{! Capture buttons are plain <button>s on purpose: DButton defers its
     action via next(), which lands outside the click event dispatch — Firefox
     only allows getDisplayMedia during the actual dispatch, so a deferred call

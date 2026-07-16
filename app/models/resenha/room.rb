@@ -48,8 +48,10 @@ module Resenha
       ROOM_TYPES.key(room_type) || "open"
     end
 
+    # Room-level capability only; per-user publish rights are guardian-driven
+    # (stage listeners never publish even when this is true).
     def video_allowed?
-      SiteSetting.resenha_video_enabled && video_enabled && open?
+      SiteSetting.resenha_video_enabled && video_enabled
     end
 
     def moderator_ids

@@ -15,6 +15,8 @@ Resenha::Engine.routes.draw do
       post :state
       post :livekit_token
       delete :kick
+      post :request_to_speak
+      delete :request_to_speak, action: :withdraw_request_to_speak, as: :withdraw_request_to_speak
     end
 
     resources :memberships, controller: "room_memberships", only: %i[index create update destroy]

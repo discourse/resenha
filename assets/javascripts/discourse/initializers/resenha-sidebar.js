@@ -278,6 +278,13 @@ export default {
               );
             }
 
+            get #isHandRaised() {
+              return (
+                this.room.room_type === "stage" &&
+                !!this.participant.hand_raised_at
+              );
+            }
+
             get hoverType() {
               return this.#showMenu ? "icon" : null;
             }
@@ -344,6 +351,10 @@ export default {
                 classes.push("resenha-sidebar-participant--deafened");
               }
 
+              if (this.#isHandRaised) {
+                classes.push("resenha-sidebar-participant--hand-raised");
+              }
+
               if (this.participant.idle_state === "idle") {
                 classes.push("resenha-sidebar-participant--idle");
               } else if (this.participant.idle_state === "afk") {
@@ -390,6 +401,7 @@ export default {
 
             get suffixArgs() {
               return {
+                isHandRaised: this.#isHandRaised,
                 isScreenSharing: this.participant.is_screen_sharing,
                 isVideoOn: this.participant.is_video_on,
                 isPtt: this.#isCurrentUser && this.resenhaWebrtc.pttEnabled,
