@@ -503,7 +503,7 @@ export default class ResenhaRoomPage extends Component {
                     @triggerClass="btn-default resenha-speak-queue-trigger"
                   >
                     <:trigger>
-                      {{dIcon "hand"}}
+                      {{dIcon "list-ol"}}
                       {{#if this.speakQueueCount}}
                         <span
                           class="resenha-speak-queue-trigger__count"
