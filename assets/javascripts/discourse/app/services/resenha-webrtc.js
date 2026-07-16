@@ -74,6 +74,11 @@ export default class ResenhaWebrtcService extends Service {
   #presencePendingPeerKeys = new Set();
   #presencePendingPeerTimers = new Map();
   #remoteStreams = new Map();
+  // Per-room transport tag ("mesh" | "livekit"), read from the join response.
+  // Rooms without a tag (older servers, messages arriving before the join
+  // response, tests) default to mesh, so every guard below is a tautology on
+  // pure-P2P installs.
+  #roomTransports = new Map();
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
   #heartbeatInFlight = new Set();
@@ -212,6 +217,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingRoomIds.clear();
     this.#connectingParticipantSnapshots.clear();
     this.#connectingSignalQueue.clear();
+    this.#roomTransports.clear();
     this.#clearPresencePendingPeers();
     this.#roomMessageQueue.clearAll();
   }
@@ -354,6 +360,10 @@ export default class ResenhaWebrtcService extends Service {
     return role === "moderator" || role === "speaker";
   }
 
+  #isMeshRoom(roomId) {
+    return (this.#roomTransports.get(roomId) ?? "mesh") === "mesh";
+  }
+
   async join(room) {
     if (!room?.id) {
       return;
@@ -417,6 +427,8 @@ export default class ResenhaWebrtcService extends Service {
       `[resenha] join response, active_participants:`,
       response?.room?.active_participants
     );
+
+    this.#roomTransports.set(room.id, response?.transport ?? "mesh");
 
     const joinedRoom = response?.room;
     if (joinedRoom) {
@@ -491,8 +503,10 @@ export default class ResenhaWebrtcService extends Service {
     const queuedSignals = this.#connectingSignalQueue.get(room.id) || [];
     this.#connectingSignalQueue.delete(room.id);
 
-    for (const payload of queuedSignals) {
-      await this.#handleSignal(room.id, payload);
+    if (this.#isMeshRoom(room.id)) {
+      for (const payload of queuedSignals) {
+        await this.#handleSignal(room.id, payload);
+      }
     }
 
     this.#connectingRoomIds.delete(room.id);
@@ -1704,6 +1718,7 @@ export default class ResenhaWebrtcService extends Service {
   #teardownRoom(roomId) {
     this.#connectingParticipantSnapshots.delete(roomId);
     this.#connectingSignalQueue.delete(roomId);
+    this.#roomTransports.delete(roomId);
     this.#clearPresencePendingPeers(roomId);
 
     const callback = this.#roomHandlerCallbacks.get(roomId);
@@ -1764,7 +1779,10 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (payload.type === "signal") {
-      await this.#handleSignal(roomId, payload);
+      // Mesh-only: non-mesh transports never exchange WebRTC signals.
+      if (this.#isMeshRoom(roomId)) {
+        await this.#handleSignal(roomId, payload);
+      }
     } else if (payload.type === "participants") {
       await this.#handleParticipants(roomId, payload);
     } else if (payload.type === "role_change") {
@@ -1957,57 +1975,63 @@ export default class ResenhaWebrtcService extends Service {
     const isStage = room?.room_type === "stage";
     const iCanSpeak = room ? this.#canSpeakInRoom(room) : true;
 
-    let peers = this.#peerManager.getRoomPeers(roomId);
-    const existingPeerIds = new Set(peers?.keys() || []);
-
     let hasPeerLeft = false;
-
-    peers?.forEach((pc, remoteUserId) => {
-      if (!participantIds.has(remoteUserId)) {
-        if (this.#isPresencePendingPeer(roomId, remoteUserId)) {
-          return;
-        }
-        hasPeerLeft = true;
-        this.#peerManager.destroy(roomId, remoteUserId);
-      }
-    });
-
     let hasNewPeer = false;
 
-    for (const participant of participants) {
-      const participantId = Number(participant.id);
-      if (!participantId || participantId <= 0) {
-        continue;
-      }
-      if (participantId === this.currentUser?.id) {
-        continue;
-      }
+    // Peer create/destroy and the presence-pending machinery are mesh-only;
+    // other transports carry media outside the roster diff.
+    if (this.#isMeshRoom(roomId)) {
+      const peers = this.#peerManager.getRoomPeers(roomId);
+      const existingPeerIds = new Set(peers?.keys() || []);
 
-      if (isStage) {
-        const theyCanSpeak =
-          participant.role === "moderator" || participant.role === "speaker";
-        const shouldConnect = iCanSpeak || theyCanSpeak;
-
-        if (!shouldConnect) {
-          if (this.#peerManager.has(roomId, participantId)) {
-            this.#peerManager.destroy(roomId, participantId);
+      peers?.forEach((pc, remoteUserId) => {
+        if (!participantIds.has(remoteUserId)) {
+          if (this.#isPresencePendingPeer(roomId, remoteUserId)) {
+            return;
           }
+          hasPeerLeft = true;
+          this.#peerManager.destroy(roomId, remoteUserId);
+        }
+      });
+
+      for (const participant of participants) {
+        const participantId = Number(participant.id);
+        if (!participantId || participantId <= 0) {
           continue;
         }
-      }
-
-      if (!this.#peerManager.has(roomId, participantId)) {
-        if (existingPeerIds.size > 0 || !this.#connectingRoomIds.has(roomId)) {
-          hasNewPeer = true;
+        if (participantId === this.currentUser?.id) {
+          continue;
         }
-        // eslint-disable-next-line no-console
-        console.log(
-          `[resenha] creating peer connection to user ${participantId}`
-        );
 
-        await this.#createAndOfferPeer(roomId, participantId);
-      } else {
-        this.#clearPresencePendingPeer(roomId, participantId);
+        if (isStage) {
+          const theyCanSpeak =
+            participant.role === "moderator" || participant.role === "speaker";
+          const shouldConnect = iCanSpeak || theyCanSpeak;
+
+          if (!shouldConnect) {
+            if (this.#peerManager.has(roomId, participantId)) {
+              this.#peerManager.destroy(roomId, participantId);
+            }
+            continue;
+          }
+        }
+
+        if (!this.#peerManager.has(roomId, participantId)) {
+          if (
+            existingPeerIds.size > 0 ||
+            !this.#connectingRoomIds.has(roomId)
+          ) {
+            hasNewPeer = true;
+          }
+          // eslint-disable-next-line no-console
+          console.log(
+            `[resenha] creating peer connection to user ${participantId}`
+          );
+
+          await this.#createAndOfferPeer(roomId, participantId);
+        } else {
+          this.#clearPresencePendingPeer(roomId, participantId);
+        }
       }
     }
 
@@ -2157,8 +2181,11 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#roleChangeInProgress.delete(roomId);
 
-    // Rebuild peers now that localStream is ready (or stopped).
-    this.#reconnectAllPeers(roomId);
+    // Rebuild peers now that localStream is ready (or stopped). Mesh-only:
+    // peer rebuilds are meaningless on other transports.
+    if (this.#isMeshRoom(roomId)) {
+      this.#reconnectAllPeers(roomId);
+    }
   }
 
   #handlePeerRoleChange(roomId, userId) {

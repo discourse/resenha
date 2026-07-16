@@ -117,6 +117,7 @@ module Resenha
       end
 
       render json: {
+               transport: "mesh",
                room:
                  Resenha::RoomSerializer.new(
                    @room,
