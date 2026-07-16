@@ -8,6 +8,8 @@ module Resenha
     end
 
     TOKEN_TTL = 10.minutes
+    LAST_WEBHOOK_KEY = "resenha:livekit:last_webhook_at"
+    LAST_WEBHOOK_TTL = 7.days
 
     def self.configured?
       SiteSetting.resenha_livekit_url.present? && SiteSetting.resenha_livekit_api_key.present? &&
@@ -30,10 +32,32 @@ module Resenha
     # Room id, not slug — slugs are mutable. The database prefix keeps rooms
     # from different sites on a shared cluster apart as defense in depth.
     def self.room_name(room)
-      prefix =
-        SiteSetting.resenha_livekit_room_prefix.presence ||
-          RailsMultisite::ConnectionManagement.current_db
-      "#{prefix}-r#{room.id}"
+      "#{room_name_prefix}-r#{room.id}"
+    end
+
+    # Inverse of `room_name`, for webhook events: the room id encoded in a
+    # LiveKit room name, or nil for names outside this site's namespace
+    # (other sites on a shared server, rooms created by other tools).
+    def self.room_id_from_name(name)
+      match = /\A#{Regexp.escape(room_name_prefix)}-r(\d+)\z/.match(name.to_s)
+      match && match[1].to_i
+    end
+
+    def self.room_name_prefix
+      SiteSetting.resenha_livekit_room_prefix.presence ||
+        RailsMultisite::ConnectionManagement.current_db
+    end
+
+    # Freshness marker for the admin status panel. Webhooks are a
+    # reconcile-only backstop, so a configured server that stopped delivering
+    # them is a warning there, never an error.
+    def self.touch_last_webhook!
+      Discourse.redis.setex(LAST_WEBHOOK_KEY, LAST_WEBHOOK_TTL.to_i, Time.now.to_f)
+    end
+
+    def self.last_webhook_at
+      raw = Discourse.redis.get(LAST_WEBHOOK_KEY)
+      raw.present? ? Time.at(raw.to_f) : nil
     end
 
     # The track sources a publisher may send, matching the room's

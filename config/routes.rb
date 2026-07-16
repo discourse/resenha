@@ -20,6 +20,10 @@ Resenha::Engine.routes.draw do
     resources :memberships, controller: "room_memberships", only: %i[index create update destroy]
   end
 
+  # LiveKit server webhooks — machine-to-machine, authenticated by the
+  # signature on the request body, not by a user session.
+  post "livekit/webhook" => "livekit_webhooks#create"
+
   get "contacts" => "contacts#index"
   get "chat_threads/:id" => "chat_threads#show", :constraints => { id: /\d+/ }
   get "r/:slug" => "page#show", :format => false

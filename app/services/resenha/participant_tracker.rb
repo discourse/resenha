@@ -26,6 +26,26 @@ module Resenha
         touch_recently_active(room_id)
       end
 
+      # Reconcile-only early expiry (LiveKit webhooks): backdates the member's
+      # presence so it drops out of the roster through the exact same TTL
+      # filter a lapsed heartbeat uses. Metadata is kept — session bookkeeping
+      # stays with CloseOrphanedSessions. Never creates presence (ZADD XX) and
+      # skips members whose presence was refreshed after `gone_at` (a
+      # reconnect racing the event). Returns whether anything was expired.
+      def expire_presence(room_id, user_id, gone_at: nil)
+        # ZSCORE is not on DiscourseRedis's namespaced-command list, so it
+        # would silently read an un-namespaced key; ZRANGE is, and rooms are
+        # small (bounded by max_participants).
+        score = redis.zrange(key(room_id), 0, -1, withscores: true).to_h[user_id.to_s]
+        return false if score.nil?
+        return false if gone_at && score > gone_at.to_f
+
+        expired_score = Time.now.to_f - SiteSetting.resenha_participant_ttl_seconds - 1
+        redis.zadd(key(room_id), [score, expired_score].min, user_id, xx: true)
+        touch_recently_active(room_id)
+        true
+      end
+
       def list(room_id)
         ids = user_ids(room_id)
         User.where(id: ids)
