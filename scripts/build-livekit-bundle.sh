@@ -14,7 +14,7 @@
 # script, and commit the regenerated bundle. Document the tested LiveKit
 # server version range in the README when bumping.
 #
-# Output: public/javascripts/livekit/livekit-client.mjs
+# Output: public/javascripts/livekit/livekit-client.js
 
 set -euo pipefail
 
@@ -41,18 +41,18 @@ mkdir -p "${OUTPUT_DIR}"
   --minify \
   --target=es2022 \
   --banner:js="// livekit-client v${VERSION} — built by scripts/build-livekit-bundle.sh; do not edit." \
-  --outfile="${OUTPUT_DIR}/livekit-client.mjs" \
+  --outfile="${OUTPUT_DIR}/livekit-client.js" \
   node_modules/livekit-client/dist/livekit-client.esm.mjs
 
 # The bundle must stay self-contained: a bare import would make the browser
 # resolve a module specifier against the site origin at runtime and fail.
-if grep -qE '(^|;)import[^"]*"[^./]' "${OUTPUT_DIR}/livekit-client.mjs"; then
+if grep -qE '(^|;)import[^"]*"[^./]' "${OUTPUT_DIR}/livekit-client.js"; then
   echo "ERROR: bundle contains bare imports; it is not self-contained." >&2
   exit 1
 fi
 
 echo "==> Build complete!"
-echo "    Output: ${OUTPUT_DIR}/livekit-client.mjs"
+echo "    Output: ${OUTPUT_DIR}/livekit-client.js"
 echo ""
 echo "    Commit this file to the repository. The build only needs to be"
 echo "    re-run when updating the livekit-client dependency."

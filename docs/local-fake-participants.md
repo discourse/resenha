@@ -89,6 +89,7 @@ Do not commit real credentials.
 
 ## Notes
 
+- The harness works unchanged against rooms routed through a LiveKit server: the plugin acquires media itself (through these same fakes) and hands the SDK finished tracks, so `livekit-client` never calls `getUserMedia`.
 - Each bot uses a distinct canvas-backed camera stream with a visible label and animated frame marker.
 - Audio is a very-low-gain oscillator so the browser sees a real audio track without audible noise.
 - `getDisplayMedia` returns a separate fake screen-share canvas derived from the bot feed.

@@ -13,7 +13,7 @@ module Resenha
 
       class << self
         def remove_participant(room, user_id)
-          call(room, "RemoveParticipant", identity: user_id.to_s)
+          call(room, "RemoveParticipant", body: { identity: user_id.to_s })
         end
 
         # UpdateParticipant replaces the participant's whole permission
@@ -25,20 +25,24 @@ module Resenha
           call(
             room,
             "UpdateParticipant",
-            identity: user.id.to_s,
-            permission: {
-              canSubscribe: true,
-              canPublish: can_publish,
-              canPublishData: false,
-              canPublishSources: Livekit.publish_sources(room, can_publish).map(&:upcase),
-              hidden: false,
-              recorder: false,
+            body: {
+              identity: user.id.to_s,
+              permission: {
+                canSubscribe: true,
+                canPublish: can_publish,
+                canPublishData: false,
+                canPublishSources: Livekit.publish_sources(room, can_publish).map(&:upcase),
+                hidden: false,
+                recorder: false,
+              },
             },
           )
         end
 
         def delete_room(room)
-          call(room, "DeleteRoom")
+          # LiveKit guards DeleteRoom behind the roomCreate grant; a
+          # room-scoped roomAdmin token gets "permissions denied".
+          call(room, "DeleteRoom", grants: { roomCreate: true })
         end
 
         private
@@ -47,7 +51,7 @@ module Resenha
           Livekit.configured? && Resenha::ParticipantTracker.pinned_transport(room.id) == "livekit"
         end
 
-        def call(room, method, body = {})
+        def call(room, method, body: {}, grants: { roomAdmin: true })
           return unless sync?(room)
 
           livekit_room = Livekit.room_name(room)
@@ -57,7 +61,7 @@ module Resenha
               body: body.merge(room: livekit_room).to_json,
               headers: {
                 "Content-Type" => "application/json",
-                "Authorization" => "Bearer #{admin_token(livekit_room)}",
+                "Authorization" => "Bearer #{admin_token(livekit_room, grants)}",
               },
               connect_timeout: TIMEOUT_SECONDS,
               read_timeout: TIMEOUT_SECONDS,
@@ -86,14 +90,11 @@ module Resenha
           SiteSetting.resenha_livekit_url.sub(/\Awss:/, "https:").sub(/\Aws:/, "http:")
         end
 
-        def admin_token(livekit_room)
+        def admin_token(livekit_room, grants)
           payload = {
             iss: SiteSetting.resenha_livekit_api_key,
             exp: TOKEN_TTL.from_now.to_i,
-            video: {
-              roomAdmin: true,
-              room: livekit_room,
-            },
+            video: grants.merge(room: livekit_room),
           }
           JWT.encode(payload, SiteSetting.resenha_livekit_api_secret, "HS256")
         end
