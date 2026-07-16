@@ -89,6 +89,12 @@ after_initialize do
   # visitors without exposing the configured group ids.
   add_to_serializer(:site, :resenha_public_access) { scope.resenha_public_access? }
 
+  # Gates the room-form SFU checkbox only — the client never needs the policy
+  # enum itself, and a live room's transport is learned at join, not here.
+  add_to_serializer(:site, :resenha_livekit_per_room_available) do
+    SiteSetting.resenha_livekit_room_policy == "per_room" && Resenha::Livekit.configured?
+  end
+
   # Mediapipe assets live in the plugin's public dir, which is served by the
   # app (and any CDN proxying it) but never uploaded to a static asset CDN,
   # so the client cannot build a working URL with getURLWithCDN.
