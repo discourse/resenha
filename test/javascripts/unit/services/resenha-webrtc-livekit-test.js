@@ -474,14 +474,16 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     });
     setLivekitReconnectDelaysForTesting([0, 0, 0]);
 
+    this.joinRequests = 0;
     this.leaveRequests = 0;
-    pretender.post("/resenha/rooms/1/join", () =>
-      response({
+    pretender.post("/resenha/rooms/1/join", () => {
+      this.joinRequests++;
+      return response({
         transport: "livekit",
         livekit: { url: "wss://sfu.example.com", token: "token-1" },
         room: JSON.parse(JSON.stringify(this.room)),
-      })
-    );
+      });
+    });
     pretender.post("/resenha/rooms/1/toggle_mute", () => response({}));
     pretender.post("/resenha/rooms/1/signal", () => response({}));
     this.stateRequests = [];
@@ -644,6 +646,24 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
       FakeRTCPeerConnection.created,
       0,
       "never creates mesh peer connections for a livekit room"
+    );
+  });
+
+  test("joining an active room does not create a second LiveKit session", async function (assert) {
+    await this.subject.join(this.room);
+    await wait(50);
+
+    await this.subject.join(this.room);
+
+    assert.strictEqual(
+      this.joinRequests,
+      1,
+      "does not request a second room join"
+    );
+    assert.strictEqual(
+      this.FakeLivekitRoom.instances.length,
+      1,
+      "does not create a second media session with the same identity"
     );
   });
 

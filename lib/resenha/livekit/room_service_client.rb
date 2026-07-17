@@ -9,7 +9,6 @@ module Resenha
     # the call, and mesh rooms must make zero HTTP requests.
     class RoomServiceClient
       TIMEOUT_SECONDS = 2
-      TOKEN_TTL = 1.minute
 
       class << self
         def remove_participant(room, user_id)
@@ -120,32 +119,13 @@ module Resenha
         end
 
         def post(method, body, grants)
-          Excon.post(
-            "#{api_base_url}/twirp/livekit.RoomService/#{method}",
-            body: body.to_json,
-            headers: {
-              "Content-Type" => "application/json",
-              "Authorization" => "Bearer #{admin_token(grants)}",
-            },
-            connect_timeout: TIMEOUT_SECONDS,
-            read_timeout: TIMEOUT_SECONDS,
-            write_timeout: TIMEOUT_SECONDS,
+          Twirp.post(
+            service: "RoomService",
+            method: method,
+            body: body,
+            grants: grants,
+            timeout: TIMEOUT_SECONDS,
           )
-        end
-
-        # RoomService listens over HTTP(S) on the same host that serves the
-        # SFU's WebSocket signaling.
-        def api_base_url
-          SiteSetting.resenha_livekit_url.sub(/\Awss:/, "https:").sub(/\Aws:/, "http:")
-        end
-
-        def admin_token(grants)
-          payload = {
-            iss: SiteSetting.resenha_livekit_api_key,
-            exp: TOKEN_TTL.from_now.to_i,
-            video: grants,
-          }
-          JWT.encode(payload, SiteSetting.resenha_livekit_api_secret, "HS256")
         end
       end
     end

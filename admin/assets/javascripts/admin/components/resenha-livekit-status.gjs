@@ -162,6 +162,21 @@ export default class ResenhaLivekitStatus extends Component {
     }));
   }
 
+  // Rendered only until the first webhook arrives. The api_key line is a
+  // placeholder on purpose: status payloads never echo setting values.
+  get showWebhookConfig() {
+    return this.status?.configured && !this.status?.last_webhook_at;
+  }
+
+  get webhookConfigSnippet() {
+    return [
+      "webhook:",
+      "  urls:",
+      `    - ${this.status.webhook_url}`,
+      "  api_key: your_api_key # the value of resenha_livekit_api_key",
+    ].join("\n");
+  }
+
   get roomRows() {
     return (this.status?.rooms || []).map((room) => {
       const probed = room.livekit_user_ids !== undefined || !!room.error;
@@ -226,6 +241,15 @@ export default class ResenhaLivekitStatus extends Component {
                 </li>
               {{/each}}
             </ul>
+
+            {{#if this.showWebhookConfig}}
+              <div class="resenha-livekit-status__webhook-config">
+                <p>{{i18n
+                    "resenha.admin.dashboard.livekit.webhook_config_hint"
+                  }}</p>
+                <pre><code>{{this.webhookConfigSnippet}}</code></pre>
+              </div>
+            {{/if}}
 
             {{#if this.status.configured}}
               <h4>{{i18n "resenha.admin.dashboard.livekit.rooms_title"}}</h4>

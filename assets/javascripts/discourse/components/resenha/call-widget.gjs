@@ -14,6 +14,7 @@ import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import { i18n } from "discourse-i18n";
 import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
+import ResenhaRecordingBadge from "./recording-badge";
 import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
@@ -574,6 +575,7 @@ export default class ResenhaCallWidget extends Component {
               <span
                 class="resenha-call-widget__room-name"
               >{{this.room.name}}</span>
+              <ResenhaRecordingBadge @room={{this.room}} />
             </div>
           </header>
 

@@ -20,6 +20,8 @@ en:
     resenha_livekit_room_policy: "Which rooms use the LiveKit media server instead of the peer-to-peer mesh. Changes never affect calls already in progress — each room switches when its next call starts."
     resenha_livekit_room_prefix: "Namespace prefix for room names on the LiveKit server. Leave empty to use the site's database name."
     resenha_livekit_mesh_fallback: "When a LiveKit access token cannot be issued and the room is empty, start the call on the peer-to-peer mesh instead of failing the join. Off by default because silent degradation can hide a LiveKit outage."
+    resenha_livekit_recording_enabled: "Allow room moderators to record calls that run on the LiveKit media server. Recordings are produced by LiveKit's Egress service and stored wherever that deployment is configured to write (S3, GCS, local disk) — they are not uploaded to this site."
+    resenha_livekit_recording_filepath: "Filepath passed to LiveKit Egress for recordings. Supports LiveKit's template placeholders such as {room_name}, {room_id}, {time} and {utc}; the file extension is added automatically."
     errors:
       resenha_livekit_policy_requires_url: "Set resenha_livekit_url to a ws:// or wss:// URL before enabling a LiveKit room policy."
       resenha_livekit_policy_requires_api_key: "Set resenha_livekit_api_key before enabling a LiveKit room policy."
@@ -46,6 +48,28 @@ en:
       livekit_unavailable: "The voice server is unavailable. Contact your site administrator."
       livekit_room_instance_ended: "This call has ended. Rejoin the room to start a new one."
       livekit_no_signaling: "This room's call uses a media server; peer-to-peer signaling is disabled."
+      recording_unavailable: "Recording is not available for this call."
+      recording_already_active: "This call is already being recorded."
+      recording_not_active: "This call is not being recorded."
+      recording_failed: "The recording could not be started. Contact your site administrator."
+      recording_stop_failed: "The recording could not be stopped. Please try again."
+    recording_ready_pm:
+      title: "Your recording of %{room_name} is ready"
+      body_with_link: |
+        Your recording of the voice room **%{room_name}** (%{duration}) is ready:
+
+        [Download the recording](%{link})
+
+        Anyone with this link can access the recording — share it carefully.
+      body_with_path: |
+        Your recording of the voice room **%{room_name}** (%{duration}) has finished.
+
+        It is stored on the recording server at:
+
+        `%{filepath}`
+
+        Ask your site administrator for access.
+      unknown_duration: "unknown duration"
   badges:
     mic_check:
       name: "Mic Check"

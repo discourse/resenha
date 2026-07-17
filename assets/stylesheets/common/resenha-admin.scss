@@ -138,3 +138,57 @@
     margin: 1em 0 0.25em;
   }
 }
+
+.resenha-recordings {
+  &__status-badge {
+    display: inline-block;
+    padding: 0.1em 0.5em;
+    border-radius: var(--d-border-radius);
+    font-size: var(--font-down-1);
+
+    &.--recording {
+      background: var(--danger-low);
+      color: var(--danger);
+    }
+
+    &.--completed {
+      background: var(--success-low);
+      color: var(--success);
+    }
+
+    &.--failed {
+      background: var(--primary-low);
+      color: var(--primary-high);
+    }
+  }
+
+  &__file code {
+    font-size: var(--font-down-1);
+    word-break: break-all;
+  }
+
+  &__empty {
+    color: var(--primary-medium);
+  }
+
+  &__load-more {
+    margin-top: 0.5em;
+  }
+}
+
+.resenha-livekit-status__webhook-config {
+  margin: 0.5em 0 1em;
+
+  p {
+    margin-bottom: 0.25em;
+    color: var(--primary-medium);
+  }
+
+  pre {
+    margin: 0;
+    padding: 0.5em 0.75em;
+    background: var(--primary-very-low);
+    font-size: var(--font-down-1);
+    overflow-x: auto;
+  }
+}

@@ -71,6 +71,7 @@ module Resenha
         redis.del(metadata_key(room_id))
         redis.del(fingerprint_key(room_id))
         redis.del(transport_key(room_id))
+        redis.del(recording_key(room_id))
       end
 
       # Never resets an existing timestamp — queue position is first-come.
@@ -155,10 +156,29 @@ module Resenha
 
       def refresh_transport_pin(room_id)
         redis.expire(transport_key(room_id), transport_pin_ttl)
+        # An active recording rides the same heartbeat: its TTL is only a
+        # backstop for a room whose call died without a clean teardown.
+        redis.expire(recording_key(room_id), SAFETY_TTL)
       end
 
       def clear_transport_pin(room_id)
         redis.del(transport_key(room_id))
+        # A recording is a property of the live room instance; when the
+        # instance ends, so does anything the SFU was capturing.
+        redis.del(recording_key(room_id))
+      end
+
+      def set_recording(room_id, info)
+        redis.set(recording_key(room_id), info.to_json, ex: SAFETY_TTL)
+      end
+
+      def recording(room_id)
+        raw = redis.get(recording_key(room_id))
+        raw.present? ? JSON.parse(raw, symbolize_names: true) : nil
+      end
+
+      def clear_recording(room_id)
+        redis.del(recording_key(room_id))
       end
 
       def transport_pin_ttl
@@ -199,6 +219,10 @@ module Resenha
 
       def transport_key(room_id)
         "#{KEY_NAMESPACE}:#{room_id}:transport"
+      end
+
+      def recording_key(room_id)
+        "#{KEY_NAMESPACE}:#{room_id}:recording"
       end
     end
   end

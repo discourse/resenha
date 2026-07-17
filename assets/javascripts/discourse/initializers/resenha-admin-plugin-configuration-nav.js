@@ -22,6 +22,10 @@ export default {
           label: "resenha.admin.rooms_title",
           route: "adminPlugins.show.resenha-rooms",
         },
+        {
+          label: "resenha.admin.recordings_title",
+          route: "adminPlugins.show.resenha-recordings",
+        },
       ]);
     });
   },

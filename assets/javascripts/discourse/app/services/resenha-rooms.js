@@ -186,6 +186,8 @@ export default class ResenhaRoomsService extends Service {
         payload.user_id,
         payload.raised ? payload.raised_at : null
       );
+    } else if (payload.type === "recording") {
+      this.setRoomRecording(payload.room_id, payload.recording);
     }
 
     this.#forwardToRoomHandlers(payload.room_id, payload);
@@ -218,6 +220,16 @@ export default class ResenhaRoomsService extends Service {
       return;
     }
     handlers.forEach((callback) => callback(payload));
+  }
+
+  setRoomRecording(roomId, recording) {
+    const room = this.#roomsById.get(roomId);
+    if (!room) {
+      return;
+    }
+
+    room.recording = recording ?? null;
+    this.rooms = [...this.rooms];
   }
 
   addParticipant(roomId, participant) {

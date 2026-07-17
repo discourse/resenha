@@ -82,6 +82,14 @@ RSpec.describe Resenha::AdminLivekitController do
       get_status
       expect(response.status).to eq(200)
     end
+
+    it "includes the site's webhook endpoint for the config snippet" do
+      sign_in(admin)
+      get_status
+      expect(response.parsed_body["webhook_url"]).to eq(
+        "#{Discourse.base_url}/resenha/livekit/webhook",
+      )
+    end
   end
 
   describe "when LiveKit is not configured" do

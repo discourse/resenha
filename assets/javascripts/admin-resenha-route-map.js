@@ -5,6 +5,7 @@ export default {
 
   map() {
     this.route("resenha-dashboard");
+    this.route("resenha-recordings");
     this.route(
       "resenha-rooms",
 

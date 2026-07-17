@@ -35,13 +35,16 @@ const SUBMENU = "resenha-call-submenu";
 // context-specific tail (overflow menu, leave button, etc.) as siblings.
 export default class ResenhaCallControls extends Component {
   @service currentUser;
+  @service dialog;
   @service menu;
   @service modal;
   @service resenhaWebrtc;
+  @service siteSettings;
 
   @tracked audioInputDevices = [];
   @tracked audioOutputDevices = [];
   @tracked videoInputDevices = [];
+  @tracked recordingPending = false;
 
   get room() {
     return this.args.room;
@@ -137,6 +140,24 @@ export default class ResenhaCallControls extends Component {
     return outputSelectionSupported();
   }
 
+  get canRecord() {
+    return (
+      this.room?.can_manage &&
+      this.siteSettings.resenha_livekit_recording_enabled &&
+      this.resenhaWebrtc.isLivekitRoom(this.room?.id)
+    );
+  }
+
+  get recordingActive() {
+    return !!this.room?.recording;
+  }
+
+  get recordTitle() {
+    return this.recordingActive
+      ? i18n("resenha.room.recording_stop")
+      : i18n("resenha.room.recording_start");
+  }
+
   @action
   toggleMute() {
     this.resenhaWebrtc.toggleMute();
@@ -166,6 +187,31 @@ export default class ResenhaCallControls extends Component {
     } catch (error) {
       popupAjaxError(error);
     }
+  }
+
+  @action
+  toggleRecording() {
+    const stopping = this.recordingActive;
+
+    this.dialog.yesNoConfirm({
+      message: stopping
+        ? i18n("resenha.room.recording_stop_confirm")
+        : i18n("resenha.room.recording_confirm"),
+      didConfirm: async () => {
+        this.recordingPending = true;
+        try {
+          // The room-wide "recording" broadcast flips the button and shows
+          // the indicator; no local state to update here.
+          await ajax(`/resenha/rooms/${this.room.id}/recording`, {
+            type: stopping ? "DELETE" : "POST",
+          });
+        } catch (error) {
+          popupAjaxError(error);
+        } finally {
+          this.recordingPending = false;
+        }
+      },
+    });
   }
 
   @action
@@ -416,6 +462,18 @@ export default class ResenhaCallControls extends Component {
         (if this.resenhaWebrtc.deafened "--off" "")
       }}
     />
+    {{#if this.canRecord}}
+      <DButton
+        @action={{this.toggleRecording}}
+        @icon="record-vinyl"
+        @translatedTitle={{this.recordTitle}}
+        @disabled={{this.recordingPending}}
+        class={{dConcatClass
+          "btn-default resenha-call-controls__record"
+          (if this.recordingActive "--recording")
+        }}
+      />
+    {{/if}}
     {{#if this.showScreenShare}}
       <button
         type="button"

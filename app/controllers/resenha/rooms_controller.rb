@@ -23,6 +23,8 @@ module Resenha
                     toggle_mute
                     state
                     livekit_token
+                    start_recording
+                    stop_recording
                     request_to_speak
                     withdraw_request_to_speak
                   ]
@@ -198,6 +200,21 @@ module Resenha
       end
 
       render json: livekit
+    end
+
+    def start_recording
+      guardian.ensure_can_manage_resenha_room!(@room)
+      render json: { recording: Resenha::RecordingManager.start!(@room, current_user) }
+    rescue Resenha::RecordingManager::Error => e
+      render_json_error(e.message, status: 422)
+    end
+
+    def stop_recording
+      guardian.ensure_can_manage_resenha_room!(@room)
+      Resenha::RecordingManager.stop!(@room)
+      head :no_content
+    rescue Resenha::RecordingManager::Error => e
+      render_json_error(e.message, status: 422)
     end
 
     def leave

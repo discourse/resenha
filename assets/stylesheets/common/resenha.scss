@@ -899,3 +899,56 @@
     color: var(--danger);
   }
 }
+
+// A quiet pill: the label stays muted like any secondary metadata; only the
+// small dot carries the "live" red.
+.resenha-recording-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 0.4em;
+  padding: 0.15em 0.65em;
+  border: 1px solid var(--primary-low-mid);
+  border-radius: 1em;
+  background: var(--primary-very-low);
+  color: var(--primary-high);
+  font-size: var(--font-down-1);
+  font-weight: normal;
+  line-height: var(--line-height-medium);
+  vertical-align: middle;
+
+  .d-icon {
+    width: 0.5em;
+    height: 0.5em;
+    color: var(--danger);
+    animation: resenha-recording-pulse 2s ease-in-out infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
+}
+
+.resenha-call-controls__record {
+  &.--recording {
+    .d-icon {
+      color: var(--danger);
+      animation: resenha-recording-pulse 2s ease-in-out infinite;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+      }
+    }
+  }
+}
+
+@keyframes resenha-recording-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
