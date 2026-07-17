@@ -173,6 +173,13 @@ html.discourse-touch .resenha-call-widget {
   // whole page and pushes the control bar below the fold.
   height: calc(100dvh - var(--header-offset, 4em) - 6em);
 
+  &__title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75em;
+    min-width: 0;
+  }
+
   &__title {
     margin: 0;
   }

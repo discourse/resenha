@@ -418,10 +418,10 @@ export default class ResenhaRoomPage extends Component {
       <div class="resenha-room-page__body">
         <div class="resenha-room-page__main">
           <header class="resenha-room-page__header">
-            <h1 class="resenha-room-page__title">
-              {{this.room.name}}
+            <div class="resenha-room-page__title-row">
+              <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
               <ResenhaRecordingBadge @room={{this.room}} />
-            </h1>
+            </div>
             {{#if this.room.description_excerpt}}
               <p class="resenha-room-page__description">
                 {{this.room.description_excerpt}}
