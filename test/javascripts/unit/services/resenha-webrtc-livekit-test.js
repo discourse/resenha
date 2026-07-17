@@ -7,6 +7,21 @@ import {
   setLivekitReconnectDelaysForTesting,
   setLivekitSdkLoaderForTesting,
 } from "discourse/plugins/resenha/discourse/lib/resenha/livekit-session";
+import { setPeerTimingForTesting } from "discourse/plugins/resenha/discourse/lib/resenha/peer-manager";
+
+// Park the mesh peer machinery's wall-clock timers far outside any test's
+// window. This suite mostly runs on the livekit transport, but its mesh
+// tests still create peers whose fallback-offer/restart timers would
+// otherwise fire mid-test under CI load (QUnit shuffles test order every
+// run, so a late firing poisons whichever test happens to be running).
+const SAFE_PEER_TIMING = {
+  offerRetryBaseDelayMs: 60_000,
+  maxOfferRetryDelayMs: 60_000,
+  restartImmediateDelayMs: 60_000,
+  restartDisconnectedDelayMs: 60_000,
+  maxRestartDelayMs: 60_000,
+  connectionTimeoutMs: 60_000,
+};
 
 class ResenhaRoomsStub extends Service {
   #roomHandlers = new Map();
@@ -438,6 +453,7 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
   setupTest(hooks);
 
   hooks.beforeEach(function () {
+    setPeerTimingForTesting(SAFE_PEER_TIMING);
     this.currentUser = logIn(this.owner);
     this.currentUser.id = 10;
     this.siteSettings = this.owner.lookup("service:site-settings");
@@ -566,6 +582,7 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
   hooks.afterEach(function () {
     this.subject?.leave({ id: 1 }, { keepLocalStream: true });
 
+    setPeerTimingForTesting(null);
     setLivekitSdkLoaderForTesting(null);
     setLivekitReconnectDelaysForTesting(null);
     localStorage.removeItem("resenha:noise-suppression");

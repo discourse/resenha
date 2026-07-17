@@ -88,6 +88,7 @@ export default class ResenhaWebrtcService extends Service {
   #roomHandlerCallbacks = new Map();
   #heartbeatTimers = new Map();
   #heartbeatInFlight = new Set();
+  #deferredTeardownTimers = new Set();
   #participantVolumes = new Map();
   #participantMuted = new Map();
   #audioElements = new Map();
@@ -223,6 +224,8 @@ export default class ResenhaWebrtcService extends Service {
     this.#heartbeatTimers.forEach((timer) => clearInterval(timer));
     this.#heartbeatTimers.clear();
     this.#heartbeatInFlight.clear();
+    this.#deferredTeardownTimers.forEach((timer) => clearTimeout(timer));
+    this.#deferredTeardownTimers.clear();
     this.#connectingRoomIds.clear();
     this.#connectingParticipantSnapshots.clear();
     this.#connectingSignalQueue.clear();
@@ -737,7 +740,11 @@ export default class ResenhaWebrtcService extends Service {
     };
 
     if (wasConnected && !keepLocalStream) {
-      setTimeout(teardown, 500);
+      const timer = setTimeout(() => {
+        this.#deferredTeardownTimers.delete(timer);
+        teardown();
+      }, 500);
+      this.#deferredTeardownTimers.add(timer);
     } else {
       teardown();
     }
@@ -1954,11 +1961,20 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #handleRoomMessage(roomId, payload) {
+    if (this.isDestroying || this.isDestroyed) {
+      return;
+    }
+
     // Serialize all message processing per room to prevent async
     // handlers from interleaving (e.g. concurrent participant broadcasts,
     // signals arriving mid-peer-setup, role changes overlapping signals).
     this.#roomMessageQueue
-      .enqueue(roomId, () => this.#processRoomMessage(roomId, payload))
+      .enqueue(roomId, () => {
+        if (this.isDestroying || this.isDestroyed) {
+          return;
+        }
+        return this.#processRoomMessage(roomId, payload);
+      })
       .catch((error) => {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to process room message", error);
@@ -2055,6 +2071,9 @@ export default class ResenhaWebrtcService extends Service {
       `[resenha] 📥 received ${data.type} from user ${remoteUserId} in room ${roomId}`
     );
     let pc = await this.#peerManager.create(roomId, remoteUserId);
+    if (!pc) {
+      return;
+    }
 
     if (!this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
       this.#peerManager.destroy(roomId, remoteUserId);
@@ -2084,6 +2103,9 @@ export default class ResenhaWebrtcService extends Service {
           );
           this.#peerManager.destroy(roomId, remoteUserId);
           pc = await this.#peerManager.create(roomId, remoteUserId);
+          if (!pc) {
+            return;
+          }
         }
       }
 
