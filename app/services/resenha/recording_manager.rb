@@ -62,17 +62,18 @@ module Resenha
         result = Resenha::Livekit::EgressClient.start_room_composite(room, filepath: filepath)
         raise Error, I18n.t("resenha.errors.recording_failed") unless result[:ok]
 
+        egress_id = result[:data]["egress_id"] || result[:data]["egressId"]
         started_at = Time.zone.now
         Resenha::Recording.create!(
           room: room,
           started_by: user,
-          egress_id: result[:data]["egressId"],
+          egress_id: egress_id,
           filepath: filepath,
           started_at: started_at,
         )
         Resenha::ParticipantTracker.set_recording(
           room.id,
-          egress_id: result[:data]["egressId"],
+          egress_id: egress_id,
           user_id: user.id,
           username: user.username,
           started_at: started_at.to_f,
@@ -101,7 +102,7 @@ module Resenha
       # the Recording row with the file's whereabouts and messages the
       # requester, then clears any still-live room state.
       def handle_egress_ended(room, egress_info)
-        egress_id = egress_info["egressId"].to_s
+        egress_id = (egress_info["egress_id"] || egress_info["egressId"]).to_s
         recording = Resenha::Recording.find_by(egress_id: egress_id)
 
         if recording&.recording?
@@ -147,7 +148,7 @@ module Resenha
       private
 
       def finalize_recording(recording, egress_info)
-        file = Array(egress_info["fileResults"]).first || {}
+        file = Array(egress_info["file_results"] || egress_info["fileResults"]).first || {}
         failed = egress_info["error"].present? || file.blank?
 
         recording.update!(

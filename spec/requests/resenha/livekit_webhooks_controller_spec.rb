@@ -286,17 +286,25 @@ RSpec.describe Resenha::LivekitWebhooksController do
     end
 
     context "with an egress_ended event" do
-      def egress_event(egress_id: "EG_1", room_name: Resenha::Livekit.room_name(room))
-        {
+      def egress_event(
+        egress_id: "EG_1",
+        room_name: Resenha::Livekit.room_name(room),
+        snake_case: false
+      )
+        egress_info =
+          if snake_case
+            { "egress_id" => egress_id, "room_name" => room_name, "status" => "EGRESS_COMPLETE" }
+          else
+            { "egressId" => egress_id, "roomName" => room_name, "status" => "EGRESS_COMPLETE" }
+          end
+
+        event = {
           "event" => "egress_ended",
           "id" => "EV_egress",
           "createdAt" => 1.minute.from_now.to_i.to_s,
-          "egressInfo" => {
-            "egressId" => egress_id,
-            "roomName" => room_name,
-            "status" => "EGRESS_COMPLETE",
-          },
         }
+        event[snake_case ? "egress_info" : "egressInfo"] = egress_info
+        event
       end
 
       before do
@@ -319,6 +327,13 @@ RSpec.describe Resenha::LivekitWebhooksController do
         recording_messages = messages.select { |message| message.data[:type] == "recording" }
         expect(recording_messages.size).to eq(1)
         expect(recording_messages.first.data[:recording]).to be_nil
+      end
+
+      it "handles a snake_case egress webhook" do
+        post_webhook(egress_event(snake_case: true))
+
+        expect(response.status).to eq(200)
+        expect(Resenha::RecordingManager.status(room.id)).to be_nil
       end
 
       it "ignores an egress that is not the active recording" do

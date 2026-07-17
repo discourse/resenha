@@ -40,11 +40,11 @@ RSpec.describe Resenha::RecordingManager do
 
   after { Resenha::ParticipantTracker.clear(room.id) }
 
-  def stub_start(egress_id: "EG_1", status: 200)
+  def stub_start(egress_id: "EG_1", status: 200, response_key: "egressId")
     stub_request(
       :post,
       "https://livekit.example.com/twirp/livekit.Egress/StartRoomCompositeEgress",
-    ).to_return(status: status, body: { egressId: egress_id }.to_json)
+    ).to_return(status: status, body: { response_key => egress_id }.to_json)
   end
 
   def stub_stop(status: 200)
@@ -97,6 +97,14 @@ RSpec.describe Resenha::RecordingManager do
           "https://livekit.example.com/twirp/livekit.Egress/StartRoomCompositeEgress",
         ).with { |req| JSON.parse(req.body)["fileOutputs"] == [{ "filepath" => filepath }] },
       ).to have_been_made.once
+    end
+
+    it "persists the egress ID from a snake_case API response" do
+      stub_start(response_key: "egress_id")
+
+      described_class.start!(room, moderator)
+
+      expect(Resenha::Recording.find_by(egress_id: "EG_1")).to be_present
     end
 
     it "refuses when recordings are disabled" do
@@ -239,6 +247,22 @@ RSpec.describe Resenha::RecordingManager do
 
       expect(Resenha::Recording.find_by(egress_id: "EG_1").status).to eq("failed")
       expect(Topic.private_messages_for_user(moderator)).to be_empty
+    end
+
+    it "finalizes a recording from a snake_case egress response" do
+      stub_start
+      described_class.start!(room, moderator)
+
+      described_class.handle_egress_ended(
+        room,
+        {
+          "egress_id" => "EG_1",
+          "status" => "EGRESS_COMPLETE",
+          "file_results" => [{ "filename" => "test.mp4", "location" => nil }],
+        },
+      )
+
+      expect(Resenha::Recording.find_by(egress_id: "EG_1")).to be_completed
     end
 
     it "finalizes the row even when the live room state is already gone" do

@@ -35,6 +35,9 @@ export default class ResenhaRecordingList extends Component {
 
   statusLabel = (status) => i18n(`${PREFIX}.status_${status}`);
   formatDuration = (durationMs) => formatDuration(durationMs);
+  isDownloadUrl = (location) => /^https?:\/\//.test(location);
+  filePath = (recording) =>
+    recording.location || recording.filename || recording.filepath;
 
   @action
   async loadMore() {
@@ -114,7 +117,7 @@ export default class ResenhaRecordingList extends Component {
                   <div class="d-admin-row__mobile-label">
                     {{i18n "resenha.admin.recordings.file"}}
                   </div>
-                  {{#if recording.location}}
+                  {{#if (this.isDownloadUrl recording.location)}}
                     <a
                       href={{recording.location}}
                       rel="noopener noreferrer"
@@ -123,7 +126,7 @@ export default class ResenhaRecordingList extends Component {
                       {{i18n "resenha.admin.recordings.download"}}
                     </a>
                   {{else}}
-                    <code>{{recording.filepath}}</code>
+                    <code>{{this.filePath recording}}</code>
                   {{/if}}
                 </td>
               </tr>

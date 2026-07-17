@@ -508,6 +508,16 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    // Several call controls can request a join. Once this room already owns
+    // a media session, a second request would connect another LiveKit client
+    // with the same user identity and evict the first one.
+    if (
+      this.#activeRoomIds.has(room.id) ||
+      this.#connectingRoomIds.has(room.id)
+    ) {
+      return;
+    }
+
     // Bump the join revision so any in-flight join for a different room
     // will detect it has been superseded and abort.
     const revision = ++this.#joinRevision;
