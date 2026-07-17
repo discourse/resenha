@@ -137,6 +137,7 @@ after_initialize do
       resenha_livekit_api_key
       resenha_livekit_api_secret
       resenha_livekit_room_policy
+      resenha_livekit_mesh_fallback
     ]
     Jobs.enqueue(:resenha_livekit_probe) if livekit_settings.include?(name.to_sym)
   end

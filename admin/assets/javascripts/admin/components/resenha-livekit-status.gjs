@@ -27,17 +27,25 @@ export default class ResenhaLivekitStatus extends Component {
   }
 
   @action
-  async load() {
+  async load({ refreshProbe = false } = {}) {
     this.loading = true;
     this.loadFailed = false;
 
     try {
-      this.status = await ajax("/admin/plugins/resenha/livekit/status.json");
+      this.status = await ajax(
+        `/admin/plugins/resenha/livekit/${refreshProbe ? "probe" : "status"}.json`,
+        refreshProbe ? { type: "POST" } : {}
+      );
     } catch {
       this.loadFailed = true;
     } finally {
       this.loading = false;
     }
+  }
+
+  @action
+  async refresh() {
+    await this.load({ refreshProbe: true });
   }
 
   // Pure-mesh installs (no LiveKit setting touched) never see the card.
@@ -193,7 +201,7 @@ export default class ResenhaLivekitStatus extends Component {
             class="btn-default btn-small resenha-livekit-status__refresh"
             @icon="arrows-rotate"
             @label="resenha.admin.dashboard.livekit.refresh"
-            @action={{this.load}}
+            @action={{this.refresh}}
             @disabled={{this.loading}}
           />
         </div>

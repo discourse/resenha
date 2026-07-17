@@ -8,19 +8,39 @@ module Resenha
     requires_plugin "resenha"
 
     def status
+      render json: status_payload
+    end
+
+    def probe
+      return render json: status_payload unless Livekit.configured?
+
+      result = Livekit::HealthCheck.connectivity_check
+      Livekit::HealthCheck.store_probe!(result)
+
+      render json:
+               status_payload(
+                 probe_result: result,
+                 token_check: result[:token],
+                 server_check: result[:server],
+               )
+    end
+
+    private
+
+    def status_payload(probe_result: nil, token_check: nil, server_check: nil)
       configured = Livekit.configured?
 
       payload = {
         configured:,
         settings: Livekit::HealthCheck.settings_status,
         last_webhook_at: Livekit.last_webhook_at&.iso8601,
-        last_probe: Livekit::HealthCheck.last_probe,
+        last_probe: probe_result || Livekit::HealthCheck.last_probe,
         rooms: [],
       }
 
       if configured
-        payload[:token_check] = Livekit::HealthCheck.token_check
-        payload[:server_check] = Livekit::HealthCheck.server_check
+        payload[:token_check] = token_check || Livekit::HealthCheck.token_check
+        payload[:server_check] = server_check || Livekit::HealthCheck.server_check
 
         # When the server is already known unreachable, per-room participant
         # probes would only stack timeouts onto the response.
@@ -30,10 +50,8 @@ module Resenha
         payload[:usernames] = usernames_for(rooms)
       end
 
-      render json: payload
+      payload
     end
-
-    private
 
     # Id → username for every id in the roster diffs, so the panel can show
     # who is ghosting instead of bare ids.
