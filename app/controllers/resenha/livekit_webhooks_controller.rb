@@ -38,6 +38,8 @@ module Resenha
         expire_participant(event)
       when "room_finished"
         finish_room(event)
+      when "egress_ended"
+        egress_ended(event)
       end
 
       head :ok
@@ -73,6 +75,19 @@ module Resenha
       return if room.nil?
 
       Resenha::ParticipantTracker.clear_transport_pin(room.id)
+    end
+
+    # Egress events name the room inside egressInfo, not in a room object,
+    # and are handled regardless of the transport pin: by the time the final
+    # egress of a finished room reports in, the pin may already be gone.
+    def egress_ended(event)
+      room_id = Livekit.room_id_from_name(event.dig("egressInfo", "roomName"))
+      return if room_id.nil?
+
+      room = Resenha::Room.find_by(id: room_id)
+      return if room.nil?
+
+      Resenha::RecordingManager.handle_egress_ended(room, event["egressInfo"])
     end
 
     # Resolves the event's LiveKit room name back to a room, ignoring events

@@ -14,6 +14,8 @@ Resenha::Engine.routes.draw do
       post :toggle_mute
       post :state
       post :livekit_token
+      post :recording, action: :start_recording, as: :start_recording
+      delete :recording, action: :stop_recording, as: :stop_recording
       delete :kick
       post :request_to_speak
       delete :request_to_speak, action: :withdraw_request_to_speak, as: :withdraw_request_to_speak
@@ -38,6 +40,7 @@ Discourse::Application.routes.draw do
       get "/resenha-rooms/new" => "resenha/admin#new"
       get "/resenha-rooms/:id" => "resenha/admin#edit"
       get "/resenha-dashboard" => "resenha/admin#index"
+      get "/resenha-recordings" => "resenha/admin#index"
     end
 
     scope format: :json do
@@ -54,6 +57,8 @@ Discourse::Application.routes.draw do
 
       get "/livekit/status" => "resenha/admin_livekit#status"
       post "/livekit/probe" => "resenha/admin_livekit#probe"
+
+      get "/recordings" => "resenha/admin_recordings#index"
     end
   end
 end

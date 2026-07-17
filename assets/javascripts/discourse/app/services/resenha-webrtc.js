@@ -373,6 +373,10 @@ export default class ResenhaWebrtcService extends Service {
     return (this.#roomTransports.get(roomId) ?? "mesh") === "mesh";
   }
 
+  isLivekitRoom(roomId) {
+    return this.#roomTransports.get(roomId) === "livekit";
+  }
+
   // The server already minted this room's token, so from here a failure is
   // client-side (firewall blocking the SFU, unsupported browser). Follow the
   // mic-failure precedent: tell the server we left, then unwind the local
@@ -1740,6 +1744,31 @@ export default class ResenhaWebrtcService extends Service {
     });
   }
 
+  // Room state updates in resenhaRooms; this only surfaces the change to
+  // people in the call. The moderator who pressed the button gets no toast —
+  // their button state already changed under their pointer.
+  #handleRecordingChanged(payload) {
+    const startedBySelf =
+      payload.recording?.started_by?.id === this.currentUser?.id;
+
+    if (payload.recording) {
+      if (!startedBySelf) {
+        this.toasts.default({
+          duration: 8000,
+          data: {
+            icon: "record-vinyl",
+            message: i18n("resenha.room.recording_started_toast"),
+          },
+        });
+      }
+    } else {
+      this.toasts.default({
+        duration: 5000,
+        data: { message: i18n("resenha.room.recording_stopped_toast") },
+      });
+    }
+  }
+
   #handleRoomUpdated(roomId) {
     if (!this.localVideoKind) {
       return;
@@ -1972,6 +2001,8 @@ export default class ResenhaWebrtcService extends Service {
       this.#handleKicked(roomId);
     } else if (payload.type === "room_updated") {
       this.#handleRoomUpdated(roomId);
+    } else if (payload.type === "recording") {
+      this.#handleRecordingChanged(payload);
     }
   }
 

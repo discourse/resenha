@@ -25,7 +25,8 @@ module Resenha
                :chat_idle_minutes,
                :chat_thread_title_template,
                :chat_available,
-               :livekit_enabled
+               :livekit_enabled,
+               :recording
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
 
@@ -109,6 +110,17 @@ module Resenha
     # serialized — clients learn it at join.
     def include_livekit_enabled?
       can_manage
+    end
+
+    # Not gated per user: an active recording is something everyone who can
+    # see the room is entitled to know about.
+    def recording
+      return @recording if defined?(@recording)
+      @recording = Resenha::RecordingManager.status(object.id)
+    end
+
+    def include_recording?
+      recording.present?
     end
 
     private

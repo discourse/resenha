@@ -29,6 +29,7 @@ import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
 import ResenhaCallSubmenu from "./call-submenu";
 import ResenhaChatPanel from "./chat-panel";
+import ResenhaRecordingBadge from "./recording-badge";
 import ResenhaSpeakQueue from "./speak-queue";
 import ResenhaVideoTile from "./video-tile";
 
@@ -417,7 +418,10 @@ export default class ResenhaRoomPage extends Component {
       <div class="resenha-room-page__body">
         <div class="resenha-room-page__main">
           <header class="resenha-room-page__header">
-            <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
+            <h1 class="resenha-room-page__title">
+              {{this.room.name}}
+              <ResenhaRecordingBadge @room={{this.room}} />
+            </h1>
             {{#if this.room.description_excerpt}}
               <p class="resenha-room-page__description">
                 {{this.room.description_excerpt}}

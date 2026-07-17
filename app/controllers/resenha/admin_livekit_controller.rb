@@ -34,6 +34,9 @@ module Resenha
         configured:,
         settings: Livekit::HealthCheck.settings_status,
         last_webhook_at: Livekit.last_webhook_at&.iso8601,
+        # For the ready-to-paste server config snippet; derived from the
+        # site's own URL, not from any LiveKit setting.
+        webhook_url: "#{Discourse.base_url}/resenha/livekit/webhook",
         last_probe: probe_result || Livekit::HealthCheck.last_probe,
         rooms: [],
       }

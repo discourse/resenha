@@ -50,6 +50,11 @@ plugins:
     default: ""
   resenha_livekit_mesh_fallback:
     default: false
+  resenha_livekit_recording_enabled:
+    default: false
+    client: true
+  resenha_livekit_recording_filepath:
+    default: "resenha/{room_name}-{utc}"
   resenha_video_enabled:
     default: false
     client: true

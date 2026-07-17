@@ -6,6 +6,7 @@ require_relative "../../../db/migrate/20260305162426_add_room_type_to_resenha_ro
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
 require_relative "../../../db/migrate/20260709165411_add_livekit_enabled_to_resenha_rooms"
+require_relative "../../../db/migrate/20260717172530_create_resenha_recordings"
 
 RSpec.describe Resenha::LivekitWebhooksController do
   before do
@@ -25,8 +26,12 @@ RSpec.describe Resenha::LivekitWebhooksController do
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :livekit_enabled)
         AddLivekitEnabledToResenhaRooms.new.change
       end
+      unless ActiveRecord::Base.connection.table_exists?(:resenha_recordings)
+        CreateResenhaRecordings.new.change
+      end
     end
     Resenha::Room.reset_column_information
+    Resenha::Recording.reset_column_information
   end
 
   fab!(:user)
@@ -277,6 +282,89 @@ RSpec.describe Resenha::LivekitWebhooksController do
 
         expect(response.status).to eq(200)
         expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to eq("mesh")
+      end
+    end
+
+    context "with an egress_ended event" do
+      def egress_event(egress_id: "EG_1", room_name: Resenha::Livekit.room_name(room))
+        {
+          "event" => "egress_ended",
+          "id" => "EV_egress",
+          "createdAt" => 1.minute.from_now.to_i.to_s,
+          "egressInfo" => {
+            "egressId" => egress_id,
+            "roomName" => room_name,
+            "status" => "EGRESS_COMPLETE",
+          },
+        }
+      end
+
+      before do
+        Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+        Resenha::ParticipantTracker.set_recording(
+          room.id,
+          egress_id: "EG_1",
+          user_id: user.id,
+          username: user.username,
+          started_at: Time.now.to_f,
+        )
+      end
+
+      it "clears the recording state and broadcasts the end" do
+        messages =
+          MessageBus.track_publish(Resenha.room_channel(room.id)) { post_webhook(egress_event) }
+
+        expect(response.status).to eq(200)
+        expect(Resenha::RecordingManager.status(room.id)).to be_nil
+        recording_messages = messages.select { |message| message.data[:type] == "recording" }
+        expect(recording_messages.size).to eq(1)
+        expect(recording_messages.first.data[:recording]).to be_nil
+      end
+
+      it "ignores an egress that is not the active recording" do
+        post_webhook(egress_event(egress_id: "EG_other"))
+
+        expect(response.status).to eq(200)
+        expect(Resenha::RecordingManager.status(room.id)).to be_present
+      end
+
+      it "ignores events for rooms outside this site's namespace" do
+        post_webhook(egress_event(room_name: "othersite-r#{room.id}"))
+
+        expect(response.status).to eq(200)
+        expect(Resenha::RecordingManager.status(room.id)).to be_present
+      end
+
+      it "finalizes the recording row and PMs the requester the file location" do
+        recording =
+          Resenha::Recording.create!(
+            room: room,
+            started_by: user,
+            egress_id: "EG_1",
+            filepath: "resenha/test-abc123",
+            started_at: 10.minutes.ago,
+          )
+
+        event = egress_event
+        event["egressInfo"]["fileResults"] = [
+          {
+            "filename" => "resenha/test-abc123.mp4",
+            "location" => "https://cdn.example.com/resenha/test-abc123.mp4",
+            "duration" => (300 * 1_000_000_000).to_s,
+            "size" => "1000",
+          },
+        ]
+        post_webhook(event)
+
+        expect(response.status).to eq(200)
+        expect(recording.reload.status).to eq("completed")
+        expect(recording.location).to eq("https://cdn.example.com/resenha/test-abc123.mp4")
+
+        pm_topic =
+          Topic.private_messages_for_user(user).find_by(
+            title: I18n.t("resenha.recording_ready_pm.title", room_name: room.name),
+          )
+        expect(pm_topic.first_post.raw).to include(recording.location)
       end
     end
 
