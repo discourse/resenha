@@ -38,6 +38,7 @@ export default class SignalingManager {
   #candidateBatchSize;
   #httpBatchDelayMs;
 
+  #destroyed = false;
   #signalQueues = new Map();
   #signalFlushTimers = new Map();
   #httpSignalQueues = new Map();
@@ -68,7 +69,7 @@ export default class SignalingManager {
   }
 
   async send(roomId, recipientId, payload) {
-    if (!roomId || !recipientId || !payload) {
+    if (this.#destroyed || !roomId || !recipientId || !payload) {
       return;
     }
 
@@ -156,7 +157,7 @@ export default class SignalingManager {
   }
 
   #enqueueHttp(roomId, recipientId, events) {
-    if (!roomId || !recipientId || !events?.length) {
+    if (this.#destroyed || !roomId || !recipientId || !events?.length) {
       return Promise.resolve();
     }
 
@@ -190,7 +191,7 @@ export default class SignalingManager {
   }
 
   #scheduleHttpFlush(roomId) {
-    if (this.#httpSignalFlushTimers.has(roomId)) {
+    if (this.#destroyed || this.#httpSignalFlushTimers.has(roomId)) {
       return;
     }
 
@@ -350,7 +351,11 @@ export default class SignalingManager {
     this.#httpSignalQueues.delete(roomId);
   }
 
+  // Terminal: no further signals are queued or flushed afterwards, so a
+  // continuation resumed after teardown cannot schedule a late HTTP flush.
   destroy() {
+    this.#destroyed = true;
+
     this.#signalFlushTimers.forEach((timer) => clearTimeout(timer));
     this.#signalFlushTimers.clear();
     this.#httpSignalFlushTimers.forEach((timer) => clearTimeout(timer));

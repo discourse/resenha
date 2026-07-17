@@ -4,18 +4,36 @@
 // order at every lookup.
 const screenAudioTransceivers = new WeakMap();
 
+const DEFAULT_TIMING = {
+  offerRetryBaseDelayMs: 400,
+  maxOfferRetryDelayMs: 5000,
+  restartImmediateDelayMs: 200,
+  restartDisconnectedDelayMs: 1500,
+  maxRestartDelayMs: 5000,
+  // A healthy connect completes in ~1s (sub-second once ICE checks start).
+  // With a relay-only transport there are no host/srflx fallback candidates,
+  // so an initial negotiation race or a slow/failed relay allocation can
+  // leave the peer stuck in "new" with nothing to fall back to — this timeout
+  // is the only thing that rescues it via a restart. Keep it short so a stall
+  // recovers in seconds rather than tens of seconds; the generous headroom
+  // over a real connect avoids tearing down a peer that is merely still
+  // connecting.
+  connectionTimeoutMs: 8000,
+};
+
+let timing = DEFAULT_TIMING;
+
+// Tests race these wall-clock delays against their own progress, which flakes
+// under CI load; overriding them keeps each test's timers either far out of
+// its window or fast enough to await deterministically. Pass null to restore
+// the defaults.
+export function setPeerTimingForTesting(overrides) {
+  timing = overrides ? { ...DEFAULT_TIMING, ...overrides } : DEFAULT_TIMING;
+}
+
 export default class PeerManager {
   static #maxRestartAttempts = 5;
   static #maxOfferRetries = 8;
-  static #maxOfferRetryDelayMs = 5000;
-  // A healthy connect completes in ~1s (sub-second once ICE checks start). With
-  // a relay-only transport there are no host/srflx fallback candidates, so an
-  // initial negotiation race or a slow/failed relay allocation can leave the
-  // peer stuck in "new" with nothing to fall back to — this timeout is the only
-  // thing that rescues it via a restart. Keep it short so a stall recovers in
-  // seconds rather than tens of seconds; the generous headroom over a real
-  // connect avoids tearing down a peer that is merely still connecting.
-  static #connectionTimeoutMs = 8000;
 
   static peerKey(roomId, userId) {
     return `${roomId}:${userId}`;
@@ -118,6 +136,7 @@ export default class PeerManager {
   }
 
   #peerConnections = new Map();
+  #destroyed = false;
   #offerRetryTimers = new Map();
   #offerRetryAttempts = new Map();
   #peerReconnectTimers = new Map();
@@ -190,6 +209,10 @@ export default class PeerManager {
   }
 
   async create(roomId, remoteUserId) {
+    if (this.#destroyed) {
+      return null;
+    }
+
     let roomPeers = this.#peerConnections.get(roomId);
     if (!roomPeers) {
       roomPeers = new Map();
@@ -424,12 +447,14 @@ export default class PeerManager {
     }
   }
 
-  scheduleOfferRetry(roomId, remoteUserId, delay = 400) {
+  scheduleOfferRetry(roomId, remoteUserId, delay = null) {
     const key = PeerManager.peerKey(roomId, remoteUserId);
 
-    if (this.#offerRetryTimers.has(key)) {
+    if (this.#destroyed || this.#offerRetryTimers.has(key)) {
       return;
     }
+
+    delay ??= timing.offerRetryBaseDelayMs;
 
     const attempts = this.#offerRetryAttempts.get(key) || 0;
 
@@ -443,7 +468,7 @@ export default class PeerManager {
 
     const actualDelay = Math.min(
       delay * Math.pow(2, attempts),
-      PeerManager.#maxOfferRetryDelayMs
+      timing.maxOfferRetryDelayMs
     );
 
     // eslint-disable-next-line no-console
@@ -507,6 +532,10 @@ export default class PeerManager {
   }
 
   async restart(roomId, remoteUserId) {
+    if (this.#destroyed) {
+      return;
+    }
+
     if (!this.#shouldRestartPeer(roomId, remoteUserId)) {
       this.#clearPeerRestart(roomId, remoteUserId);
       return;
@@ -524,7 +553,12 @@ export default class PeerManager {
     await this.initiateOffer(roomId, remoteUserId);
   }
 
+  // Terminal: the manager schedules no further timers and creates no further
+  // connections afterwards, so in-flight async (a restart mid-await, a late
+  // retry) lands on a no-op instead of resurrecting state.
   destroyAll() {
+    this.#destroyed = true;
+
     for (const [roomId, peers] of this.#peerConnections) {
       for (const remoteUserId of Array.from(peers.keys())) {
         this.destroy(roomId, remoteUserId);
@@ -548,7 +582,7 @@ export default class PeerManager {
   #startConnectionTimeout(roomId, remoteUserId, pc) {
     const key = PeerManager.peerKey(roomId, remoteUserId);
 
-    if (this.#connectionTimeouts.has(key)) {
+    if (this.#destroyed || this.#connectionTimeouts.has(key)) {
       return;
     }
 
@@ -567,11 +601,11 @@ export default class PeerManager {
       if (pc.connectionState === "new") {
         // eslint-disable-next-line no-console
         console.warn(
-          `[resenha] connection stuck in "new" (${PeerManager.#connectionTimeoutMs}ms) for user ${remoteUserId}; restarting`
+          `[resenha] connection stuck in "new" (${timing.connectionTimeoutMs}ms) for user ${remoteUserId}; restarting`
         );
         this.#schedulePeerRestart(roomId, remoteUserId, { immediate: true });
       }
-    }, PeerManager.#connectionTimeoutMs);
+    }, timing.connectionTimeoutMs);
 
     this.#connectionTimeouts.set(key, timer);
   }
@@ -601,7 +635,7 @@ export default class PeerManager {
   #schedulePeerRestart(roomId, remoteUserId, options = {}) {
     const key = PeerManager.peerKey(roomId, remoteUserId);
 
-    if (this.#peerReconnectTimers.has(key)) {
+    if (this.#destroyed || this.#peerReconnectTimers.has(key)) {
       return;
     }
 
@@ -615,8 +649,13 @@ export default class PeerManager {
       return;
     }
 
-    const baseDelay = options.immediate ? 200 : 1500;
-    const delay = Math.min(baseDelay * Math.pow(2, attempts), 5000);
+    const baseDelay = options.immediate
+      ? timing.restartImmediateDelayMs
+      : timing.restartDisconnectedDelayMs;
+    const delay = Math.min(
+      baseDelay * Math.pow(2, attempts),
+      timing.maxRestartDelayMs
+    );
 
     // eslint-disable-next-line no-console
     console.log(

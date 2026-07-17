@@ -3,6 +3,22 @@ import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
 import pretender, { response } from "discourse/tests/helpers/create-pretender";
 import { logIn } from "discourse/tests/helpers/qunit-helpers";
+import { setPeerTimingForTesting } from "discourse/plugins/resenha/discourse/lib/resenha/peer-manager";
+
+// Park the service's wall-clock timers far outside any test's window so a
+// CPU-starved run can't have a fallback offer, peer restart, or stuck-"new"
+// rescue fire mid-test (QUnit shuffles test order every run, so an unexpected
+// firing poisons whichever test happens to be running). Tests that exercise
+// one of these timers override just that delay with something small enough to
+// await deterministically.
+const SAFE_PEER_TIMING = {
+  offerRetryBaseDelayMs: 60_000,
+  maxOfferRetryDelayMs: 60_000,
+  restartImmediateDelayMs: 60_000,
+  restartDisconnectedDelayMs: 60_000,
+  maxRestartDelayMs: 60_000,
+  connectionTimeoutMs: 60_000,
+};
 
 class ResenhaRoomsStub extends Service {
   #roomHandlers = new Map();
@@ -415,6 +431,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
   setupTest(hooks);
 
   hooks.beforeEach(function () {
+    setPeerTimingForTesting(SAFE_PEER_TIMING);
     this.currentUser = logIn(this.owner);
     this.siteSettings = this.owner.lookup("service:site-settings");
     this.siteSettings.resenha_auto_status_enabled = true;
@@ -502,6 +519,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
   hooks.afterEach(function () {
     this.subject?.leave({ id: 1 }, { keepLocalStream: true });
 
+    setPeerTimingForTesting(null);
     globalThis.RTCPeerConnection = this.originalRTCPeerConnection;
     globalThis.RTCIceCandidate = this.originalRTCIceCandidate;
     globalThis.RTCSessionDescription = this.originalRTCSessionDescription;
@@ -755,9 +773,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
     joinResponse.resolve();
     await join;
-    // Wait past the signaling HTTP batch window (200ms) but below the
-    // ~400ms offer fallback retry, so a single request proves the answer was
-    // sent via the immediate replay rather than the fallback.
+    // Wait past the signaling HTTP batch window (200ms); the offer fallback
+    // retry is parked far out by SAFE_PEER_TIMING, so a single request proves
+    // the answer was sent via the immediate replay rather than the fallback.
     await wait(300);
 
     assert.strictEqual(
@@ -784,7 +802,8 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     // Current user id is higher than the existing peer's, so it must NOT
     // offer immediately (that is what caused glare); the lower-id peer owns
     // the immediate offer. A short fallback offer fires only if the peer
-    // never offers.
+    // never offers — shrink its delay so the test can await it.
+    setPeerTimingForTesting({ ...SAFE_PEER_TIMING, offerRetryBaseDelayMs: 50 });
     this.currentUser.id = 50;
     this.room.room_type = "open";
     this.room.membership.role_name = "participant";
@@ -1078,7 +1097,13 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
     // Local user is higher-id, so the lower-id peer owns the offer. That
     // offer lands while the mic prompt is open; on grant the local user
-    // must answer it rather than racing it with a fallback offer.
+    // must answer it rather than racing it with a fallback offer. Keep the
+    // fallback delay small so a broken cancelation would fire well inside
+    // the observation window below.
+    setPeerTimingForTesting({
+      ...SAFE_PEER_TIMING,
+      offerRetryBaseDelayMs: 200,
+    });
     this.currentUser.id = 50;
     this.room.room_type = "open";
     this.room.membership.role_name = "participant";
@@ -1106,8 +1131,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       micGranted.resolve();
       await join;
       await waitUntil(() => signalRequests.length === 1, 1000);
-      // Wait past the fallback delay to prove no late competing offer fires.
-      await wait(500);
+      // Wait 3x past the 200ms fallback delay to prove no late competing
+      // offer fires.
+      await wait(600);
 
       const pc = FakeRTCPeerConnection.instances[0];
       assert.deepEqual(
@@ -1493,6 +1519,13 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
   test("inbound recovery signals cancel a pending peer restart", async function (assert) {
     assert.timeout(5000);
 
+    // Short restart delay so a restart that survives the cancelation would
+    // fire well inside the observation window below.
+    setPeerTimingForTesting({
+      ...SAFE_PEER_TIMING,
+      restartDisconnectedDelayMs: 400,
+    });
+
     let signalRequests = 0;
 
     pretender.post("/resenha/rooms/1/signal", () => {
@@ -1507,13 +1540,17 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     pc.connectionState = "disconnected";
     pc.onconnectionstatechange();
 
+    // The recovery offer is emitted immediately, so its handling (which
+    // cancels the pending restart) only races the restart timer across a
+    // microtask hop, not across fixed waits.
     this.rooms.emit(1, {
       type: "signal",
       sender_id: 2,
       data: { type: "offer", sdp: "recovery-offer" },
     });
-    await wait(50);
-    await wait(1600);
+    await waitUntil(() => signalRequests === 1, 1000);
+    // Wait 3x past the restart delay to prove the canceled timer stays dead.
+    await wait(1200);
 
     assert.strictEqual(
       signalRequests,
