@@ -1,3 +1,25 @@
+// Site settings express the idle ladder in minutes; a later stage set at or
+// below an earlier one disables the earlier stage rather than firing out of
+// order.
+export function idleThresholds(siteSettings) {
+  let idleMs = siteSettings.resenha_idle_threshold_minutes * 60 * 1000;
+  let afkMs = siteSettings.resenha_afk_auto_mute_threshold_minutes * 60 * 1000;
+  let disconnectMs =
+    siteSettings.resenha_afk_disconnect_threshold_minutes * 60 * 1000;
+
+  if (afkMs > 0 && idleMs > 0 && idleMs >= afkMs) {
+    idleMs = 0;
+  }
+  if (disconnectMs > 0 && afkMs > 0 && afkMs >= disconnectMs) {
+    afkMs = 0;
+  }
+  if (disconnectMs > 0 && idleMs > 0 && idleMs >= disconnectMs) {
+    idleMs = 0;
+  }
+
+  return { idleMs, afkMs, disconnectMs };
+}
+
 export default class IdleTracker {
   #lastActivityAt = 0;
   #idleCheckTimerId = null;
