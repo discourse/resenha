@@ -53,6 +53,7 @@ Discourse::Application.routes.draw do
       get "/stats/users" => "resenha/admin_stats#users"
 
       get "/livekit/status" => "resenha/admin_livekit#status"
+      post "/livekit/probe" => "resenha/admin_livekit#probe"
     end
   end
 end

@@ -61,6 +61,10 @@ RSpec.describe Resenha::AdminLivekitController do
     get "/admin/plugins/resenha/livekit/status.json"
   end
 
+  def post_probe
+    post "/admin/plugins/resenha/livekit/probe.json"
+  end
+
   describe "access control" do
     it "is hidden from anonymous users" do
       get_status
@@ -193,6 +197,22 @@ RSpec.describe Resenha::AdminLivekitController do
       expect(Time.parse(body["last_webhook_at"]).to_i).to eq(Time.now.to_i)
       expect(body["last_probe"]["ok"]).to eq(true)
       expect(body["last_probe"]["checked_at"]).to eq(Time.now.utc.iso8601)
+    end
+
+    it "stores a fresh connectivity result when an admin refreshes the probe" do
+      list_rooms_stub.to_return(status: 200, body: { rooms: [] }.to_json)
+      freeze_time
+
+      post_probe
+
+      expect(response.status).to eq(200)
+      probe = response.parsed_body["last_probe"]
+      expect(probe["ok"]).to eq(true)
+      expect(probe["checked_at"]).to eq(Time.now.utc.iso8601)
+      expect(probe["token"]).to eq("ok" => true)
+      expect(probe["server"]["latency_ms"]).to be_a(Integer)
+      expect(probe["server"]["room_count"]).to eq(0)
+      expect(Resenha::Livekit::HealthCheck.last_probe[:ok]).to eq(true)
     end
 
     describe "pinned livekit rooms" do

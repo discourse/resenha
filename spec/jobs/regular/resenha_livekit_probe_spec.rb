@@ -68,6 +68,12 @@ RSpec.describe Jobs::ResenhaLivekitProbe do
       end
     end
 
+    it "is enqueued when the mesh fallback changes" do
+      expect_enqueued_with(job: :resenha_livekit_probe) do
+        SiteSetting.resenha_livekit_mesh_fallback = true
+      end
+    end
+
     it "is not enqueued for unrelated settings" do
       expect_not_enqueued_with(job: :resenha_livekit_probe) do
         SiteSetting.resenha_max_rooms_per_user = 6
