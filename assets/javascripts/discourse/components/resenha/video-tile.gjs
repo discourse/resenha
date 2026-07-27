@@ -21,6 +21,7 @@ import {
   DEFAULT_TILE_ASPECT,
   trackVideoAspect,
 } from "../../lib/resenha/video-grid-layout";
+import virtualElementFromEvent from "../../lib/resenha/virtual-element-from-event";
 import ResenhaParticipantSidebarContextMenu from "../resenha-participant-sidebar-context-menu";
 
 export default class ResenhaVideoTile extends Component {
@@ -62,7 +63,7 @@ export default class ResenhaVideoTile extends Component {
     event.preventDefault();
     event.stopPropagation();
 
-    this.menu.show(event.currentTarget, {
+    this.menu.show(virtualElementFromEvent(event), {
       identifier: "resenha-participant-menu",
       component: ResenhaParticipantSidebarContextMenu,
       placement: "bottom-start",
