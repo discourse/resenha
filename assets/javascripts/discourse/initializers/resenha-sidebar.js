@@ -10,6 +10,7 @@ import ResenhaParticipantSidebarSuffix from "discourse/plugins/resenha/discourse
 import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-room-sidebar-context-menu";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
 import roomIcon from "../lib/resenha/room-icon";
+import virtualElementFromEvent from "../lib/resenha/virtual-element-from-event";
 
 const LINK_NAME_PREFIX = "resenha-room-";
 const CHAT_PANEL = "chat";
@@ -719,10 +720,10 @@ export default {
             return;
           }
 
-          menuService.show(participantAnchor, {
+          menuService.show(virtualElementFromEvent(event), {
             identifier: "resenha-participant-menu",
             component: ResenhaParticipantSidebarContextMenu,
-            placement: "right",
+            placement: "bottom-start",
             data: {
               room,
               participant,
@@ -761,10 +762,10 @@ export default {
           return;
         }
 
-        menuService.show(roomAnchor, {
+        menuService.show(virtualElementFromEvent(event), {
           identifier: "resenha-room-menu",
           component: ResenhaRoomSidebarContextMenu,
-          placement: "right",
+          placement: "bottom-start",
           data: { room },
         });
       };
