@@ -83,6 +83,19 @@ module Resenha
       end
     end
 
+    def can_flag_resenha_user?(room, target_user)
+      return false unless can_join_resenha_room?(room)
+      return false if target_user.blank? || target_user.bot?
+
+      target_user.id != user.id
+    end
+
+    def ensure_can_flag_resenha_user!(room, target_user)
+      unless can_flag_resenha_user?(room, target_user)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
+      end
+    end
+
     def can_speak_in_resenha_room?(room)
       return true if room.open?
       return true if user&.admin?

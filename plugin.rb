@@ -52,6 +52,10 @@ register_svg_icon "triangle-exclamation"
 register_svg_icon "hand"
 register_svg_icon "check"
 register_svg_icon "record-vinyl"
+register_svg_icon "flag"
+register_svg_icon "thumbs-up"
+register_svg_icon "thumbs-down"
+register_svg_icon "ban"
 register_asset "stylesheets/common/resenha.scss"
 register_asset "stylesheets/common/resenha-room-page.scss"
 register_asset "stylesheets/common/resenha-chat.scss"
@@ -69,6 +73,8 @@ after_initialize do
   Discourse::Application.routes.append { mount ::Resenha::Engine, at: "/resenha" }
 
   Guardian.prepend Resenha::GuardianExtension
+
+  register_reviewable_type ReviewableResenhaUser
 
   # Chat snapshots the hashtag orderings into Site.markdown_additional_options
   # at its own after_initialize, which runs before this one (plugins load

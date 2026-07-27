@@ -152,6 +152,7 @@ en:
         mute: "Mute"
         unmute: "Unmute"
         kick: "Kick from room"
+        flag: "Flag"
         status_speaking: "Speaking"
         status_muted: "Muted"
         status_deafened: "Deafened"
@@ -159,6 +160,27 @@ en:
         status_video: "Camera on"
         status_ptt: "Push to talk enabled"
         status_hand_raised: "Wants to speak"
+      flagging:
+        notify_moderators_description: "This participant requires staff attention for a reason not listed above."
+      review:
+        flagged_in: "Flagged in"
+      reviewables:
+        actions:
+          agree_and_keep:
+            title: "Agree"
+            description: "Agree with the flag."
+          agree_and_suspend:
+            title: "Suspend user"
+            description: "Agree with the flag and suspend the user."
+          agree_and_silence:
+            title: "Silence user"
+            description: "Agree with the flag and silence the user."
+          disagree:
+            title: "Disagree"
+            description: "Disagree with the flag."
+          ignore:
+            title: "Ignore flag"
+            description: "Remove the flag from the queue without taking action."
       room_info:
         title: "Room Info"
         status: "Status"
@@ -279,3 +301,7 @@ en:
           member_count: "Members"
           creator: "Created by"
           created_at: "Created"
+    review:
+      types:
+        reviewable_resenha_user:
+          title: "Flagged voice room participant"

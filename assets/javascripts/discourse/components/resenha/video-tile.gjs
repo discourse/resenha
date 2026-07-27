@@ -21,8 +21,10 @@ import {
   DEFAULT_TILE_ASPECT,
   trackVideoAspect,
 } from "../../lib/resenha/video-grid-layout";
+import ResenhaParticipantSidebarContextMenu from "../resenha-participant-sidebar-context-menu";
 
 export default class ResenhaVideoTile extends Component {
+  @service menu;
   @service resenhaWebrtc;
 
   @tracked aspect = null;
@@ -53,6 +55,24 @@ export default class ResenhaVideoTile extends Component {
   @action
   toggleFullscreen(event) {
     toggleTileFullscreen(event.currentTarget.closest(".resenha-video-tile"));
+  }
+
+  @action
+  openContextMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    this.menu.show(event.currentTarget, {
+      identifier: "resenha-participant-menu",
+      component: ResenhaParticipantSidebarContextMenu,
+      placement: "bottom-start",
+      data: {
+        room: this.args.room,
+        participant: this.participant,
+        canManageRoom: this.args.room?.can_manage,
+        isCurrentUser: this.args.isSelf,
+      },
+    });
   }
 
   get fullscreenTitle() {
@@ -114,6 +134,7 @@ export default class ResenhaVideoTile extends Component {
       data-user-id={{this.participant.id}}
       style={{this.tileStyle}}
       {{this.trackFullscreen this.setFullscreen}}
+      {{on "contextmenu" this.openContextMenu}}
     >
       {{#if this.showVideo}}
         <video
