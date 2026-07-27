@@ -19,6 +19,7 @@ module Resenha
                     ensure_chat_session
                     chat_message
                     kick
+                    flag
                     heartbeat
                     toggle_mute
                     state
@@ -348,6 +349,39 @@ module Resenha
       Resenha::Livekit::RoomServiceClient.remove_participant(@room, user_id)
 
       head :no_content
+    end
+
+    def flag
+      RateLimiter.new(current_user, "flag_resenha_user", 4, 1.minute).performed!
+
+      permitted = params.permit(:user_id, :flag_type_id, :message)
+
+      target_user = User.find_by(id: permitted[:user_id].to_i)
+      raise Discourse::InvalidParameters.new(:user_id) if target_user.blank?
+
+      # A room participant carries no implied context the way a post or chat
+      # message does, so the free-form notify_moderators flag is the only one
+      # that can be raised here.
+      if permitted[:flag_type_id].to_i != ReviewableScore.types[:notify_moderators]
+        raise Discourse::InvalidParameters.new(:flag_type_id)
+      end
+
+      raise Discourse::InvalidParameters.new(:message) if permitted[:message].blank?
+
+      result =
+        Resenha::ReviewQueue.new.flag_user(
+          @room,
+          target_user,
+          guardian,
+          permitted[:flag_type_id].to_i,
+          message: permitted[:message],
+        )
+
+      if result[:success]
+        render json: success_json
+      else
+        render_json_error(result[:errors])
+      end
     end
 
     def request_to_speak

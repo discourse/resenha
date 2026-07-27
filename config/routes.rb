@@ -17,6 +17,7 @@ Resenha::Engine.routes.draw do
       post :recording, action: :start_recording, as: :start_recording
       delete :recording, action: :stop_recording, as: :stop_recording
       delete :kick
+      post :flag
       post :request_to_speak
       delete :request_to_speak, action: :withdraw_request_to_speak, as: :withdraw_request_to_speak
     end

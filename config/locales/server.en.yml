@@ -44,6 +44,29 @@ en:
       chat_unavailable: "Chat is not available for this room."
       chat_requires_presence: "Join the voice room to use its chat."
       speak_request_requires_presence: "Join the room's call to request to speak."
+      flag_target_never_joined: "That user has not joined this room."
+      flag_already_handled: "Thanks, we have already been notified about this user and are looking into it."
+    reviewable_score_types:
+      notify_moderators:
+        pm_title: "A voice room participant requires staff attention"
+        pm_body: "@%{username} in the voice room [%{room_name}](%{link}) requires staff attention:\n\n%{message}"
+    reviewables:
+      actions:
+        agree_and_keep:
+          title: "Agree"
+          description: "Agree with the flag."
+        agree_and_suspend:
+          title: "Suspend user"
+          description: "Agree with the flag and suspend the user."
+        agree_and_silence:
+          title: "Silence user"
+          description: "Agree with the flag and silence the user."
+        disagree:
+          title: "Disagree"
+          description: "Disagree with the flag."
+        ignore:
+          title: "Ignore flag"
+          description: "Remove the flag from the queue without taking action."
       chat_threading_disabled: "The linked chat channel no longer has threading enabled, so a chat session can't be started."
       livekit_unavailable: "The voice server is unavailable. Contact your site administrator."
       livekit_room_instance_ended: "This call has ended. Rejoin the room to start a new one."

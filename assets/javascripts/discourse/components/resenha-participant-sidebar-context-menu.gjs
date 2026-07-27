@@ -5,15 +5,18 @@ import { action } from "@ember/object";
 import { service } from "@ember/service";
 import DButton from "discourse/components/d-button";
 import DropdownMenu from "discourse/components/dropdown-menu";
+import FlagModal from "discourse/components/modal/flag";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { not } from "discourse/truth-helpers";
 import { i18n } from "discourse-i18n";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
+import ResenhaFlag from "../lib/resenha-flag";
 import ResenhaVoiceSettingsModal from "./modal/resenha-voice-settings";
 import ResenhaPttKeyCapture from "./resenha-ptt-key-capture";
 
 export default class ResenhaParticipantSidebarContextMenu extends Component {
+  @service currentUser;
   @service modal;
   @service resenhaWebrtc;
   @service siteSettings;
@@ -52,6 +55,10 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
 
   get canKick() {
     return this.canManageRoom && this.participant.id !== this.room.creator_id;
+  }
+
+  get canFlag() {
+    return !!this.currentUser && this.participant.id > 0;
   }
 
   get isStageRoom() {
@@ -197,6 +204,22 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     } catch (error) {
       popupAjaxError(error);
     }
+  }
+
+  @action
+  flag() {
+    this.args.close();
+    this.modal.show(FlagModal, {
+      model: {
+        flagTarget: new ResenhaFlag(this.room),
+        flagModel: {
+          id: this.participant.id,
+          user_id: this.participant.id,
+          username: this.participant.username,
+        },
+        setHidden: () => {},
+      },
+    });
   }
 
   @action
@@ -486,6 +509,17 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
               @label="resenha.stage.dismiss_request_menu"
               @title="resenha.stage.dismiss_request_menu"
               class="resenha-participant-sidebar-context-menu__dismiss-request-btn"
+            />
+          </dropdown.item>
+        {{/if}}
+        {{#if this.canFlag}}
+          <dropdown.item>
+            <DButton
+              @action={{this.flag}}
+              @icon="flag"
+              @label="resenha.participant.flag"
+              @title="resenha.participant.flag"
+              class="resenha-participant-sidebar-context-menu__flag-btn"
             />
           </dropdown.item>
         {{/if}}
