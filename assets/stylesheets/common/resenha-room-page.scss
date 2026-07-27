@@ -573,9 +573,9 @@ html.discourse-touch .resenha-call-widget {
     object-fit: cover;
   }
 
-  &__fullscreen {
+  &__fullscreen,
+  &__menu {
     position: absolute;
-    inset-block-start: 0.35em;
     inset-inline-end: 0.35em;
     color: #fff;
     background: rgb(0 0 0 / 45%);
@@ -592,8 +592,18 @@ html.discourse-touch .resenha-call-widget {
     }
   }
 
+  &__fullscreen {
+    inset-block-start: 0.35em;
+  }
+
+  &__menu {
+    inset-block-end: 0.35em;
+  }
+
   html.discourse-no-touch &:hover &__fullscreen,
-  &__fullscreen:focus-visible {
+  html.discourse-no-touch &:hover &__menu,
+  &__fullscreen:focus-visible,
+  &__menu:focus-visible {
     opacity: 1;
   }
 
@@ -628,6 +638,9 @@ html.discourse-touch .resenha-call-widget {
     align-items: center;
     gap: 0.35em;
     padding: 0.25em 0.5em;
+
+    // Keep the name and status icons clear of the corner menu trigger.
+    padding-inline-end: 2.75em;
     font-size: var(--font-down-1);
 
     // Subtitle-style fixed colors, deliberately not palette vars: this text

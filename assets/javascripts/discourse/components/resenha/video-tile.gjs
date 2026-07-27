@@ -62,11 +62,21 @@ export default class ResenhaVideoTile extends Component {
   openContextMenu(event) {
     event.preventDefault();
     event.stopPropagation();
+    this.#showParticipantMenu(virtualElementFromEvent(event), "bottom-start");
+  }
 
-    this.menu.show(virtualElementFromEvent(event), {
+  @action
+  openTileMenu(event) {
+    event.stopPropagation();
+    this.#showParticipantMenu(event.currentTarget, "top-end");
+  }
+
+  #showParticipantMenu(anchor, placement) {
+    this.menu.show(anchor, {
       identifier: "resenha-participant-menu",
       component: ResenhaParticipantSidebarContextMenu,
-      placement: "bottom-start",
+      placement,
+      modalForMobile: true,
       data: {
         room: this.args.room,
         participant: this.participant,
@@ -168,6 +178,16 @@ export default class ResenhaVideoTile extends Component {
           {{dIcon "display"}}
         {{/if}}
       </div>
+
+      <button
+        type="button"
+        class="btn btn-icon no-text resenha-video-tile__menu"
+        title={{i18n "resenha.participant.menu_title"}}
+        aria-label={{i18n "resenha.participant.menu_title"}}
+        {{on "click" this.openTileMenu}}
+      >
+        {{dIcon "ellipsis-vertical"}}
+      </button>
 
       {{#if this.showVideo}}
         <button
