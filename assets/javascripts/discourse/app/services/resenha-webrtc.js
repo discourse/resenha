@@ -6,7 +6,9 @@ import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
 import BackgroundBlurManager from "../../lib/resenha/background-blur";
-import IdleTracker from "../../lib/resenha/idle-tracker";
+import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
+import { iceServers, iceTransportPolicy } from "../../lib/resenha/ice-config";
+import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
 import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
 import LivekitRoomSession from "../../lib/resenha/livekit-session";
 import {
@@ -21,9 +23,13 @@ import {
   setPreferredVideoInputDeviceId,
 } from "../../lib/resenha/media-devices";
 import NoiseSuppressionManager from "../../lib/resenha/noise-suppression";
+import ParticipantAudio from "../../lib/resenha/participant-audio";
 import PeerManager from "../../lib/resenha/peer-manager";
+import PresencePendingPeers from "../../lib/resenha/presence-pending-peers";
 import PttManager from "../../lib/resenha/ptt-manager";
+import RemoteStreamRegistry from "../../lib/resenha/remote-stream-registry";
 import RoomMessageQueue from "../../lib/resenha/room-message-queue";
+import { iceUfrag } from "../../lib/resenha/sdp-utils";
 import SignalingManager from "../../lib/resenha/signaling";
 import {
   playConnectedSound,
@@ -36,6 +42,11 @@ import {
   playUserLeftSound,
   schedulePlaybackResume,
 } from "../../lib/resenha/sound-effects";
+import { participantCanSpeak } from "../../lib/resenha/stage-roles";
+import {
+  applyScreenAudioQuality,
+  applyVideoQuality,
+} from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
@@ -72,9 +83,6 @@ export default class ResenhaWebrtcService extends Service {
   #joinRevision = 0;
   #connectingParticipantSnapshots = new Map();
   #connectingSignalQueue = new Map();
-  #presencePendingPeerKeys = new Set();
-  #presencePendingPeerTimers = new Map();
-  #remoteStreams = new Map();
   // Per-room transport tag ("mesh" | "livekit"), read from the join response.
   // Rooms without a tag (older servers, messages arriving before the join
   // response, tests) default to mesh, so every guard below is a tautology on
@@ -86,13 +94,7 @@ export default class ResenhaWebrtcService extends Service {
   // roster diff instead.
   #livekitRosterIds = new Map();
   #roomHandlerCallbacks = new Map();
-  #heartbeatTimers = new Map();
-  #heartbeatInFlight = new Set();
   #deferredTeardownTimers = new Set();
-  #participantVolumes = new Map();
-  #participantMuted = new Map();
-  #audioElements = new Map();
-  #streamToParticipant = new WeakMap();
   #pendingPlaybackElements = new WeakSet();
   #rawLocalStream = null;
   #upstreamStream = null;
@@ -115,6 +117,10 @@ export default class ResenhaWebrtcService extends Service {
   #inputGate;
   #pttManager;
   #roomMessageQueue;
+  #remoteStreamRegistry;
+  #participantAudio;
+  #heartbeat;
+  #presencePending;
 
   constructor() {
     super(...arguments);
@@ -147,7 +153,7 @@ export default class ResenhaWebrtcService extends Service {
       flushQueuedSignals: (roomId, uid) =>
         this.#signaling.flushQueued(roomId, uid),
       onTrack: (roomId, uid, track, streams) =>
-        this.#registerRemoteTrack(roomId, uid, track, streams),
+        this.#remoteStreamRegistry.register(roomId, uid, track, streams),
       clearSignalQueue: (roomId, uid) =>
         this.#signaling.clearForPeer(roomId, uid),
       onPeerDestroyed: (roomId, uid) => this.#removeRemoteStream(roomId, uid),
@@ -166,7 +172,7 @@ export default class ResenhaWebrtcService extends Service {
         this.#handleIdleStateChange(state, wasAfk),
       onAutoMute: () => this.#handleAutoMute(),
       onDisconnect: () => this.#handleIdleDisconnect(),
-      getThresholds: () => this.#getIdleThresholds(),
+      getThresholds: () => idleThresholds(this.siteSettings),
     });
 
     this.#noiseSuppression = new NoiseSuppressionManager({
@@ -180,6 +186,30 @@ export default class ResenhaWebrtcService extends Service {
     this.outputDeviceId = preferredOutputDeviceId();
 
     this.#roomMessageQueue = new RoomMessageQueue();
+
+    this.#remoteStreamRegistry = new RemoteStreamRegistry({
+      onChange: () => this.remoteStreamsRevision++,
+      onMicTrack: (roomId, userId, stream) =>
+        this.#audioMonitor.ensure(roomId, userId, stream, false),
+    });
+
+    this.#participantAudio = new ParticipantAudio({
+      isDeafened: () => this.deafened,
+    });
+
+    this.#heartbeat = new HeartbeatManager({
+      isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
+      buildPayload: () => this.#heartbeatPayload(),
+      onExpelled: (roomId) => this.leave({ id: roomId }),
+    });
+
+    this.#presencePending = new PresencePendingPeers({
+      onExpired: (roomId, userId) => {
+        if (!this.#shouldMaintainPeerConnection(roomId, userId)) {
+          this.#peerManager.destroy(roomId, userId);
+        }
+      },
+    });
 
     try {
       const stored = localStorage.getItem("resenha_auto_status_enabled");
@@ -221,96 +251,43 @@ export default class ResenhaWebrtcService extends Service {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
     });
     this.#roomHandlerCallbacks.clear();
-    this.#heartbeatTimers.forEach((timer) => clearInterval(timer));
-    this.#heartbeatTimers.clear();
-    this.#heartbeatInFlight.clear();
+    this.#heartbeat.stopAll();
     this.#deferredTeardownTimers.forEach((timer) => clearTimeout(timer));
     this.#deferredTeardownTimers.clear();
     this.#connectingRoomIds.clear();
     this.#connectingParticipantSnapshots.clear();
     this.#connectingSignalQueue.clear();
     this.#roomTransports.clear();
-    this.#clearPresencePendingPeers();
+    this.#presencePending.clearAll();
     this.#roomMessageQueue.clearAll();
   }
 
-  #parseServerList(setting) {
-    return (setting || "")
-      .split("|")
-      .map((url) => url.trim())
-      .filter(Boolean);
-  }
-
   get iceServers() {
-    const servers = [];
-
-    this.#parseServerList(this.siteSettings.resenha_stun_servers).forEach(
-      (url) => {
-        servers.push({ urls: url });
-      }
-    );
-
-    const turnServers = this.#parseServerList(
-      this.siteSettings.resenha_turn_servers
-    );
-    if (turnServers.length) {
-      const username = this.siteSettings.resenha_turn_username;
-      const credential = this.siteSettings.resenha_turn_credential;
-
-      turnServers.forEach((url) => {
-        const server = { urls: url };
-        if (username) {
-          server.username = username;
-        }
-        if (credential) {
-          server.credential = credential;
-        }
-        servers.push(server);
-      });
-    }
-
-    return servers;
+    return iceServers(this.siteSettings);
   }
 
-  // When only TURN servers are configured (no STUN), force all traffic
-  // through the relay so peers don't waste time on host/srflx candidates
-  // that can never connect.
   get iceTransportPolicy() {
-    const hasStun =
-      this.#parseServerList(this.siteSettings.resenha_stun_servers).length > 0;
-    const hasTurn =
-      this.#parseServerList(this.siteSettings.resenha_turn_servers).length > 0;
-
-    return !hasStun && hasTurn ? "relay" : "all";
+    return iceTransportPolicy(this.siteSettings);
   }
 
   get remoteStreams() {
     this.remoteStreamsRevision;
-    return Array.from(this.#remoteStreams.values())
-      .filter(Array.isArray)
-      .flat()
-      .map((entry) => entry.stream);
+    return this.#remoteStreamRegistry.allStreams();
   }
 
   get remoteScreenAudioStreams() {
     this.remoteStreamsRevision;
-    return Array.from(this.#remoteStreams.values())
-      .filter(Array.isArray)
-      .flat()
-      .map((entry) => entry.screenAudioStream)
-      .filter(Boolean);
+    return this.#remoteStreamRegistry.allScreenAudioStreams();
   }
 
   remoteStreamsFor(roomId) {
     this.remoteStreamsRevision;
-    return (this.#remoteStreams.get(roomId) || []).map((entry) => entry.stream);
+    return this.#remoteStreamRegistry.streamsFor(roomId);
   }
 
   remoteStreamFor(roomId, userId) {
     this.remoteStreamsRevision;
-    return (this.#remoteStreams.get(roomId) || []).find(
-      (entry) => Number(entry?.userId) === Number(userId)
-    )?.stream;
+    return this.#remoteStreamRegistry.streamFor(roomId, userId);
   }
 
   connectionStateFor(roomId) {
@@ -351,25 +328,7 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #canSpeakInRoom(room) {
-    if (room.room_type !== "stage") {
-      return true;
-    }
-    const participant = (room.active_participants || []).find(
-      (p) => Number(p?.id) === this.currentUser?.id
-    );
-    const role = participant?.role;
-    return role === "moderator" || role === "speaker";
-  }
-
-  #participantCanSpeak(room, participantId) {
-    if (room.room_type !== "stage") {
-      return true;
-    }
-    const participant = (room.active_participants || []).find(
-      (p) => Number(p?.id) === Number(participantId)
-    );
-    const role = participant?.role;
-    return role === "moderator" || role === "speaker";
+    return participantCanSpeak(room, this.currentUser?.id);
   }
 
   #isMeshRoom(roomId) {
@@ -449,7 +408,7 @@ export default class ResenhaWebrtcService extends Service {
       getLocalVideoKind: () => this.localVideoKind,
       getVideoPublisherCount: () => this.videoPublisherCount(roomId),
       onTrack: (id, userId, track, streams) =>
-        this.#registerRemoteTrack(id, userId, track, streams),
+        this.#remoteStreamRegistry.register(id, userId, track, streams),
       onParticipantGone: (id, userId) => this.#removeRemoteStream(id, userId),
       onDisconnected: (kind, reason) =>
         this.#handleLivekitDisconnected(roomId, kind, reason),
@@ -649,7 +608,7 @@ export default class ResenhaWebrtcService extends Service {
       );
     }
 
-    this.#startHeartbeat(room.id);
+    this.#heartbeat.start(room.id);
     this.#idleTracker.start();
 
     const latestParticipants =
@@ -723,7 +682,7 @@ export default class ResenhaWebrtcService extends Service {
       playDisconnectedSound();
     }
     this.#removeLocalParticipant(room.id);
-    this.#stopHeartbeat(room.id);
+    this.#heartbeat.stop(room.id);
 
     if (this.#activeRoomIds.size === 0) {
       this.#idleTracker.stop();
@@ -769,16 +728,16 @@ export default class ResenhaWebrtcService extends Service {
       element.muted = true;
       element.volume = 0;
     } else {
-      const participant = this.#streamToParticipant.get(stream);
+      const participant = this.#remoteStreamRegistry.participantFor(stream);
       if (participant) {
         const { roomId, userId, screenAudio } = participant;
-        this.#trackAudioElement(
+        this.#participantAudio.trackElement(
           roomId,
           userId,
           element,
           screenAudio ? "screen" : "voice"
         );
-        this.#applyAudioSettings(roomId, userId);
+        this.#participantAudio.apply(roomId, userId);
       }
       applyOutputDevice(element, this.outputDeviceId);
     }
@@ -805,35 +764,22 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  remotePeerKey(roomId, userId) {
-    return `${roomId}:${userId}`;
-  }
-
   setParticipantVolume(roomId, userId, volume) {
-    const key = this.remotePeerKey(roomId, userId);
-    const clampedVolume = Math.max(0, Math.min(1, volume));
-    this.#participantVolumes.set(key, clampedVolume);
-    this.#applyAudioSettings(roomId, userId);
+    this.#participantAudio.setVolume(roomId, userId, volume);
   }
 
   getParticipantVolume(roomId, userId) {
-    const key = this.remotePeerKey(roomId, userId);
-    return this.#participantVolumes.get(key) ?? 1;
+    return this.#participantAudio.volumeFor(roomId, userId);
   }
 
   toggleParticipantMute(roomId, userId) {
-    const key = this.remotePeerKey(roomId, userId);
-    const currentlyMuted = this.#participantMuted.get(key) ?? false;
-    const newMutedState = !currentlyMuted;
-    this.#participantMuted.set(key, newMutedState);
-    this.#applyAudioSettings(roomId, userId);
+    const newMutedState = this.#participantAudio.toggleMuted(roomId, userId);
     this.resenhaRooms?.setParticipantMuted(roomId, userId, newMutedState);
     return newMutedState;
   }
 
   isParticipantMuted(roomId, userId) {
-    const key = this.remotePeerKey(roomId, userId);
-    return this.#participantMuted.get(key) ?? false;
+    return this.#participantAudio.isMuted(roomId, userId);
   }
 
   toggleMute() {
@@ -898,16 +844,7 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    for (const [key, elements] of this.#audioElements) {
-      const muted = this.deafened || (this.#participantMuted.get(key) ?? false);
-      const volume = this.#participantVolumes.get(key) ?? 1;
-      for (const element of Object.values(elements)) {
-        element.muted = muted;
-        if (!muted) {
-          element.volume = volume;
-        }
-      }
-    }
+    this.#participantAudio.applyAll();
 
     this.#broadcastMuteState();
   }
@@ -1011,12 +948,7 @@ export default class ResenhaWebrtcService extends Service {
   setOutputDevice(deviceId) {
     this.outputDeviceId = deviceId;
     setPreferredOutputDeviceId(deviceId);
-
-    for (const [, elements] of this.#audioElements) {
-      for (const element of Object.values(elements)) {
-        applyOutputDevice(element, deviceId);
-      }
-    }
+    this.#participantAudio.setOutputDevice(deviceId);
   }
 
   async setGateThreshold(value) {
@@ -1648,7 +1580,7 @@ export default class ResenhaWebrtcService extends Service {
         try {
           await audioTransceiver.sender.replaceTrack(desiredAudio);
           if (desiredAudio) {
-            await this.#applyScreenAudioQuality(audioTransceiver.sender);
+            await applyScreenAudioQuality(audioTransceiver.sender);
           }
         } catch (error) {
           // eslint-disable-next-line no-console
@@ -1663,9 +1595,6 @@ export default class ResenhaWebrtcService extends Service {
     await this.#applyVideoQuality(roomId);
   }
 
-  // Mesh budget: every watcher costs the sender a full encode, so resolution
-  // and bitrate scale down as the watcher count grows. Each connection's
-  // bandwidth estimator still adapts per-link below these ceilings.
   async #applyVideoQuality(roomId) {
     const peers = this.#peerManager.getRoomPeers(roomId);
     if (!peers || !this.localVideoKind) {
@@ -1680,70 +1609,7 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    if (!sendingSenders.length) {
-      return;
-    }
-
-    let encoding;
-    if (this.localVideoKind === "screen") {
-      encoding = {
-        maxBitrate: 2_500_000,
-        scaleResolutionDownBy: 1,
-        maxFramerate: 15,
-      };
-    } else if (sendingSenders.length <= 3) {
-      encoding = {
-        maxBitrate: 1_200_000,
-        scaleResolutionDownBy: 1,
-        maxFramerate: 24,
-      };
-    } else if (sendingSenders.length <= 6) {
-      encoding = {
-        maxBitrate: 700_000,
-        scaleResolutionDownBy: 1.5,
-        maxFramerate: 24,
-      };
-    } else {
-      encoding = {
-        maxBitrate: 400_000,
-        scaleResolutionDownBy: 2,
-        maxFramerate: 15,
-      };
-    }
-
-    for (const sender of sendingSenders) {
-      try {
-        const parameters = sender.getParameters();
-        parameters.degradationPreference =
-          this.localVideoKind === "screen"
-            ? "maintain-resolution"
-            : "maintain-framerate";
-        if (!parameters.encodings?.length) {
-          parameters.encodings = [{}];
-        }
-        Object.assign(parameters.encodings[0], encoding);
-        await sender.setParameters(parameters);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to apply video quality", error);
-      }
-    }
-  }
-
-  // Opus defaults target speech bitrates; content audio gets a higher ceiling
-  // so music doesn't sound underwater. Still small next to the video budget.
-  async #applyScreenAudioQuality(sender) {
-    try {
-      const parameters = sender.getParameters();
-      if (!parameters.encodings?.length) {
-        parameters.encodings = [{}];
-      }
-      parameters.encodings[0].maxBitrate = 128_000;
-      await sender.setParameters(parameters);
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to apply screen audio quality", error);
-    }
+    await applyVideoQuality(sendingSenders, this.localVideoKind);
   }
 
   #broadcastVideoState(roomId) {
@@ -1893,36 +1759,6 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  #applyAudioSettings(roomId, userId) {
-    const key = this.remotePeerKey(roomId, userId);
-    const elements = this.#audioElements.get(key);
-    if (!elements) {
-      return;
-    }
-
-    const muted = this.deafened || (this.#participantMuted.get(key) ?? false);
-    const volume = this.#participantVolumes.get(key) ?? 1;
-
-    for (const element of Object.values(elements)) {
-      element.muted = muted;
-      if (!muted) {
-        element.volume = volume;
-      }
-    }
-  }
-
-  #trackAudioElement(roomId, userId, element, role = "voice") {
-    const key = this.remotePeerKey(roomId, userId);
-    const elements = this.#audioElements.get(key) || {};
-    elements[role] = element;
-    this.#audioElements.set(key, elements);
-  }
-
-  #untrackAudioElement(roomId, userId) {
-    const key = this.remotePeerKey(roomId, userId);
-    this.#audioElements.delete(key);
-  }
-
   #registerRoomHandler(roomId) {
     if (this.#roomHandlerCallbacks.has(roomId)) {
       return;
@@ -1938,7 +1774,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingSignalQueue.delete(roomId);
     this.#roomTransports.delete(roomId);
     this.#livekitRosterIds.delete(roomId);
-    this.#clearPresencePendingPeers(roomId);
+    this.#presencePending.clearAll(roomId);
 
     const livekitSession = this.#livekitSessions.get(roomId);
     if (livekitSession) {
@@ -2083,7 +1919,7 @@ export default class ResenhaWebrtcService extends Service {
     if (data.type === "offer") {
       this.#peerManager.clearOfferRetry(roomId, remoteUserId);
       if (!this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
-        this.#markPresencePendingPeer(roomId, remoteUserId);
+        this.#presencePending.mark(roomId, remoteUserId);
       }
 
       // If the remote restarted its ICE session — it left and rejoined, so its
@@ -2094,8 +1930,8 @@ export default class ResenhaWebrtcService extends Service {
       // alone. Skip while mid-glare (have-local-offer), which the block below
       // already resolves.
       if (pc.signalingState !== "have-local-offer") {
-        const priorUfrag = this.#iceUfrag(pc.remoteDescription?.sdp);
-        const incomingUfrag = this.#iceUfrag(data.sdp);
+        const priorUfrag = iceUfrag(pc.remoteDescription?.sdp);
+        const incomingUfrag = iceUfrag(data.sdp);
         if (priorUfrag && incomingUfrag && priorUfrag !== incomingUfrag) {
           // eslint-disable-next-line no-console
           console.log(
@@ -2230,7 +2066,7 @@ export default class ResenhaWebrtcService extends Service {
 
       peers?.forEach((pc, remoteUserId) => {
         if (!participantIds.has(remoteUserId)) {
-          if (this.#isPresencePendingPeer(roomId, remoteUserId)) {
+          if (this.#presencePending.has(roomId, remoteUserId)) {
             return;
           }
           hasPeerLeft = true;
@@ -2274,7 +2110,7 @@ export default class ResenhaWebrtcService extends Service {
 
           await this.#createAndOfferPeer(roomId, participantId);
         } else {
-          this.#clearPresencePendingPeer(roomId, participantId);
+          this.#presencePending.clear(roomId, participantId);
         }
       }
     } else {
@@ -2349,8 +2185,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#livekitRosterIds.set(roomId, next);
 
     const session = this.#livekitSessions.get(roomId);
-    for (const entry of [...(this.#remoteStreams.get(roomId) || [])]) {
-      const entryUserId = Number(entry?.userId);
+    for (const entryUserId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
       if (
         entryUserId &&
         entryUserId !== this.currentUser?.id &&
@@ -2377,7 +2212,7 @@ export default class ResenhaWebrtcService extends Service {
 
       const track = this.#peerManager.remoteVideoTrack(roomId, participantId);
       if (track) {
-        this.#registerRemoteTrack(roomId, participantId, track);
+        this.#remoteStreamRegistry.register(roomId, participantId, track);
       }
     }
   }
@@ -2622,14 +2457,6 @@ export default class ResenhaWebrtcService extends Service {
     );
   }
 
-  // Extract the ICE username fragment from an SDP. A new value vs the prior
-  // remote description signals the peer restarted its ICE session (e.g. left
-  // and rejoined), which needs a fresh peer rather than a renegotiation.
-  #iceUfrag(sdp) {
-    const match = sdp?.match(/^a=ice-ufrag:(\S+)/m);
-    return match ? match[1] : null;
-  }
-
   #reconnectAllPeers(roomId) {
     this.#peerManager.destroyRoom(roomId);
     this.#removeAllRemoteStreams(roomId);
@@ -2650,7 +2477,7 @@ export default class ResenhaWebrtcService extends Service {
         continue;
       }
 
-      const theyCanSpeak = this.#participantCanSpeak(room, participantId);
+      const theyCanSpeak = participantCanSpeak(room, participantId);
       const shouldConnect = iCanSpeak || theyCanSpeak;
 
       if (shouldConnect) {
@@ -2700,240 +2527,39 @@ export default class ResenhaWebrtcService extends Service {
     this.resenhaRooms?.removeParticipant(roomId, this.currentUser.id);
   }
 
-  #presencePendingPeerKey(roomId, userId) {
-    return `${roomId}:${userId}`;
-  }
-
-  #markPresencePendingPeer(roomId, userId) {
-    const key = this.#presencePendingPeerKey(roomId, userId);
-    if (this.#presencePendingPeerKeys.has(key)) {
-      return;
-    }
-
-    this.#presencePendingPeerKeys.add(key);
-
-    const timer = setTimeout(() => {
-      this.#presencePendingPeerTimers.delete(key);
-      this.#presencePendingPeerKeys.delete(key);
-
-      if (!this.#shouldMaintainPeerConnection(roomId, userId)) {
-        this.#peerManager.destroy(roomId, userId);
-      }
-    }, 15000);
-
-    this.#presencePendingPeerTimers.set(key, timer);
-  }
-
-  #clearPresencePendingPeer(roomId, userId) {
-    const key = this.#presencePendingPeerKey(roomId, userId);
-    const timer = this.#presencePendingPeerTimers.get(key);
-
-    if (timer) {
-      clearTimeout(timer);
-      this.#presencePendingPeerTimers.delete(key);
-    }
-
-    this.#presencePendingPeerKeys.delete(key);
-  }
-
-  #isPresencePendingPeer(roomId, userId) {
-    return this.#presencePendingPeerKeys.has(
-      this.#presencePendingPeerKey(roomId, userId)
-    );
-  }
-
-  #clearPresencePendingPeers(roomId = null) {
-    for (const [key, timer] of this.#presencePendingPeerTimers) {
-      if (roomId === null || key.startsWith(`${roomId}:`)) {
-        clearTimeout(timer);
-        this.#presencePendingPeerTimers.delete(key);
-        this.#presencePendingPeerKeys.delete(key);
-      }
-    }
-  }
-
   #removeAllRemoteStreams(roomId) {
-    const entries = this.#remoteStreams.get(roomId);
-    if (!entries?.length) {
-      if (this.#remoteStreams.delete(roomId)) {
-        this.#bumpRemoteStreamsRevision();
-      }
-      return;
-    }
-
-    entries.forEach((entry) =>
-      this.#audioMonitor.teardown(roomId, Number(entry.userId))
-    );
-    this.#remoteStreams.delete(roomId);
-    this.#bumpRemoteStreamsRevision();
-  }
-
-  // Each remote user gets one service-owned MediaStream that incoming mic
-  // audio and video tracks are merged into. Mic audio arrives with the
-  // sender's stream attached, but the pre-negotiated video and screen-audio
-  // transceivers deliver bare tracks (no stream), so keying the registry on
-  // incoming stream identity would make those tracks clobber the user's
-  // audio entry — and a bare audio track is how screen audio is told apart
-  // from mic audio. Screen audio lives in its own per-user stream with its
-  // own sink, keeping it out of the speaking detector and letting one media
-  // element never juggle two audio tracks.
-  #registerRemoteTrack(roomId, remoteUserId, track, streams) {
-    if (!roomId || !remoteUserId || !track) {
-      return;
-    }
-
-    const roomStreams = this.#remoteStreams.get(roomId) || [];
-    const existingIndex = roomStreams.findIndex(
-      (entry) => Number(entry?.userId) === Number(remoteUserId)
-    );
-
-    let entry;
-    const next = [...roomStreams];
-    if (existingIndex >= 0) {
-      entry = next[existingIndex];
-    } else {
-      entry = { userId: remoteUserId, stream: new MediaStream() };
-      next.push(entry);
-    }
-
-    const isScreenAudio = track.kind === "audio" && !streams?.length;
-
-    if (isScreenAudio) {
-      if (!entry.screenAudioStream) {
-        entry.screenAudioStream = new MediaStream();
-      }
-      const existingTracks = entry.screenAudioStream.getTracks();
-      if (!existingTracks.includes(track)) {
-        existingTracks.forEach((existing) =>
-          entry.screenAudioStream.removeTrack(existing)
-        );
-        entry.screenAudioStream.addTrack(track);
-      }
-      this.#streamToParticipant.set(entry.screenAudioStream, {
-        roomId,
-        userId: remoteUserId,
-        screenAudio: true,
-      });
-    } else {
-      const existingTracks = entry.stream.getTracks();
-      if (!existingTracks.includes(track)) {
-        existingTracks
-          .filter((existing) => existing.kind === track.kind)
-          .forEach((existing) => entry.stream.removeTrack(existing));
-        entry.stream.addTrack(track);
-      }
-    }
-
-    this.#remoteStreams.set(roomId, next);
-    this.#streamToParticipant.set(entry.stream, {
-      roomId,
-      userId: remoteUserId,
-    });
-    this.#bumpRemoteStreamsRevision();
-
-    if (track.kind === "audio" && !isScreenAudio) {
-      this.#audioMonitor.ensure(roomId, remoteUserId, entry.stream, false);
-    }
+    this.#remoteStreamRegistry
+      .clearRoom(roomId)
+      .forEach((userId) => this.#audioMonitor.teardown(roomId, userId));
   }
 
   #removeRemoteStream(roomId, remoteUserId) {
-    if (!roomId || !remoteUserId) {
+    if (!this.#remoteStreamRegistry.remove(roomId, remoteUserId)) {
       return;
     }
 
-    const roomStreams = this.#remoteStreams.get(roomId);
-    if (!roomStreams?.length) {
-      return;
-    }
-
-    const filtered = roomStreams.filter(
-      (entry) => Number(entry?.userId) !== Number(remoteUserId)
-    );
-
-    if (filtered.length === roomStreams.length) {
-      return;
-    }
-
-    if (filtered.length) {
-      this.#remoteStreams.set(roomId, filtered);
-    } else {
-      this.#remoteStreams.delete(roomId);
-    }
-
-    this.#bumpRemoteStreamsRevision();
     this.#audioMonitor.teardown(roomId, remoteUserId);
-    this.#untrackAudioElement(roomId, remoteUserId);
-  }
-
-  #bumpRemoteStreamsRevision() {
-    this.remoteStreamsRevision++;
+    this.#participantAudio.untrackElement(roomId, remoteUserId);
   }
 
   #bumpConnectionRevision() {
     this.connectionRevision++;
   }
 
-  #startHeartbeat(roomId) {
-    if (this.#heartbeatTimers.has(roomId)) {
-      return;
+  #heartbeatPayload() {
+    const data = {};
+    if (this.idleState !== this.#idleTracker.lastBroadcastedIdleState) {
+      data.idle_state = this.idleState;
+      this.#idleTracker.lastBroadcastedIdleState = this.idleState;
     }
-
-    const timer = setInterval(async () => {
-      if (!this.#activeRoomIds.has(roomId)) {
-        this.#stopHeartbeat(roomId);
-        return;
-      }
-
-      if (this.#heartbeatInFlight.has(roomId)) {
-        return;
-      }
-
-      this.#heartbeatInFlight.add(roomId);
-
-      try {
-        const data = {};
-        if (this.idleState !== this.#idleTracker.lastBroadcastedIdleState) {
-          data.idle_state = this.idleState;
-          this.#idleTracker.lastBroadcastedIdleState = this.idleState;
-        }
-        await ajax(`/resenha/rooms/${roomId}/heartbeat`, {
-          type: "POST",
-          data,
-        });
-        // eslint-disable-next-line no-console
-        console.log(`[resenha] heartbeat sent for room ${roomId}`);
-      } catch (error) {
-        const status = error?.jqXHR?.status || error?.status;
-        // eslint-disable-next-line no-console
-        console.warn(`[resenha] heartbeat failed for room ${roomId}`, error);
-
-        if (status === 403 || status === 404 || status === 410) {
-          this.leave({ id: roomId });
-        }
-      } finally {
-        this.#heartbeatInFlight.delete(roomId);
-      }
-    }, 10000);
-
-    this.#heartbeatTimers.set(roomId, timer);
-  }
-
-  #stopHeartbeat(roomId) {
-    const timer = this.#heartbeatTimers.get(roomId);
-    if (timer) {
-      clearInterval(timer);
-      this.#heartbeatTimers.delete(roomId);
-      this.#heartbeatInFlight.delete(roomId);
-      // eslint-disable-next-line no-console
-      console.log(`[resenha] heartbeat stopped for room ${roomId}`);
-    }
+    return data;
   }
 
   #handleJoinFailure(roomId) {
     this.#connectingRoomIds.delete(roomId);
     this.#bumpConnectionRevision();
     this.#activeRoomIds.delete(roomId);
-    this.#stopHeartbeat(roomId);
+    this.#heartbeat.stop(roomId);
     this.#removeLocalParticipant(roomId);
     this.#teardownRoom(roomId);
 
@@ -3137,26 +2763,6 @@ export default class ResenhaWebrtcService extends Service {
       duration: 8000,
       data: { message: i18n("resenha.idle.disconnected", { room: name }) },
     });
-  }
-
-  #getIdleThresholds() {
-    let idleMs = this.siteSettings.resenha_idle_threshold_minutes * 60 * 1000;
-    let afkMs =
-      this.siteSettings.resenha_afk_auto_mute_threshold_minutes * 60 * 1000;
-    let disconnectMs =
-      this.siteSettings.resenha_afk_disconnect_threshold_minutes * 60 * 1000;
-
-    if (afkMs > 0 && idleMs > 0 && idleMs >= afkMs) {
-      idleMs = 0;
-    }
-    if (disconnectMs > 0 && afkMs > 0 && afkMs >= disconnectMs) {
-      afkMs = 0;
-    }
-    if (disconnectMs > 0 && idleMs > 0 && idleMs >= disconnectMs) {
-      idleMs = 0;
-    }
-
-    return { idleMs, afkMs, disconnectMs };
   }
 
   // --- Push-to-Talk ---
