@@ -46,6 +46,15 @@ en:
       speak_request_requires_presence: "Join the room's call to request to speak."
       flag_target_never_joined: "That user has not joined this room."
       flag_already_handled: "Thanks, we have already been notified about this user and are looking into it."
+      chat_threading_disabled: "The linked chat channel no longer has threading enabled, so a chat session can't be started."
+      livekit_unavailable: "The voice server is unavailable. Contact your site administrator."
+      livekit_room_instance_ended: "This call has ended. Rejoin the room to start a new one."
+      livekit_no_signaling: "This room's call uses a media server; peer-to-peer signaling is disabled."
+      recording_unavailable: "Recording is not available for this call."
+      recording_already_active: "This call is already being recorded."
+      recording_not_active: "This call is not being recorded."
+      recording_failed: "The recording could not be started. Contact your site administrator."
+      recording_stop_failed: "The recording could not be stopped. Please try again."
     reviewable_score_types:
       notify_moderators:
         pm_title: "A voice room participant requires staff attention"
@@ -67,15 +76,6 @@ en:
         ignore:
           title: "Ignore flag"
           description: "Remove the flag from the queue without taking action."
-      chat_threading_disabled: "The linked chat channel no longer has threading enabled, so a chat session can't be started."
-      livekit_unavailable: "The voice server is unavailable. Contact your site administrator."
-      livekit_room_instance_ended: "This call has ended. Rejoin the room to start a new one."
-      livekit_no_signaling: "This room's call uses a media server; peer-to-peer signaling is disabled."
-      recording_unavailable: "Recording is not available for this call."
-      recording_already_active: "This call is already being recorded."
-      recording_not_active: "This call is not being recorded."
-      recording_failed: "The recording could not be started. Contact your site administrator."
-      recording_stop_failed: "The recording could not be stopped. Please try again."
     recording_ready_pm:
       title: "Your recording of %{room_name} is ready"
       body_with_link: |
