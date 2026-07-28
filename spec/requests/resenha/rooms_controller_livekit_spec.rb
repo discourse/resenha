@@ -54,7 +54,7 @@ RSpec.describe Resenha::RoomsController do
       post "/resenha/rooms/#{room.id}/join.json"
 
       expect(response.status).to eq(200)
-      expect(response.parsed_body.keys).to contain_exactly("transport", "room")
+      expect(response.parsed_body.keys).to contain_exactly("transport", "ice", "room")
       expect(response.parsed_body["transport"]).to eq("mesh")
     end
 
