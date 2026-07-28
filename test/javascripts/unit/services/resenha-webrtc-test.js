@@ -436,8 +436,6 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     this.siteSettings = this.owner.lookup("service:site-settings");
     this.siteSettings.resenha_auto_status_enabled = true;
     localStorage.removeItem("resenha:noise-suppression");
-    this.siteSettings.resenha_stun_servers = "";
-    this.siteSettings.resenha_turn_servers = "";
 
     this.owner.unregister("service:resenha-rooms");
     this.owner.register("service:resenha-rooms", ResenhaRoomsStub);
@@ -526,32 +524,55 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     globalThis.MediaStream = this.originalMediaStream;
   });
 
-  test("iceTransportPolicy forces relay when only TURN servers are configured", function (assert) {
-    this.siteSettings.resenha_stun_servers = "";
-    this.siteSettings.resenha_turn_servers = "turn:turn.example.com:3478";
-
-    assert.strictEqual(this.subject.iceTransportPolicy, "relay");
-  });
-
-  test("iceTransportPolicy stays 'all' when STUN servers are present", function (assert) {
-    this.siteSettings.resenha_stun_servers = "stun:stun.example.com:3478";
-    this.siteSettings.resenha_turn_servers = "turn:turn.example.com:3478";
-
+  test("ICE configuration defaults to no servers and policy 'all' before any join", function (assert) {
+    assert.deepEqual(this.subject.iceServers, []);
     assert.strictEqual(this.subject.iceTransportPolicy, "all");
   });
 
-  test("iceTransportPolicy stays 'all' when only STUN servers are configured", function (assert) {
-    this.siteSettings.resenha_stun_servers = "stun:stun.example.com:3478";
-    this.siteSettings.resenha_turn_servers = "";
+  test("ICE configuration comes from the join response", async function (assert) {
+    const servers = [
+      { urls: "stun:stun.example.com:3478" },
+      {
+        urls: "turn:turn.example.com:3478",
+        username: "1750000000:1",
+        credential: "hmac-credential",
+      },
+    ];
 
-    assert.strictEqual(this.subject.iceTransportPolicy, "all");
+    pretender.post("/resenha/rooms/1/join", () =>
+      response({
+        room: JSON.parse(JSON.stringify(this.room)),
+        ice: { servers, transport_policy: "relay" },
+      })
+    );
+
+    await this.subject.join(this.room);
+
+    assert.deepEqual(this.subject.iceServers, servers);
+    assert.strictEqual(this.subject.iceTransportPolicy, "relay");
   });
 
-  test("iceTransportPolicy ignores blank/whitespace STUN entries", function (assert) {
-    this.siteSettings.resenha_stun_servers = "  |  ";
-    this.siteSettings.resenha_turn_servers = "turn:turn.example.com:3478";
+  test("ICE configuration survives a join response without an ice payload", async function (assert) {
+    const servers = [{ urls: "stun:stun.example.com:3478" }];
 
-    assert.strictEqual(this.subject.iceTransportPolicy, "relay");
+    pretender.post("/resenha/rooms/1/join", () =>
+      response({
+        room: JSON.parse(JSON.stringify(this.room)),
+        ice: { servers, transport_policy: "all" },
+      })
+    );
+
+    await this.subject.join(this.room);
+    this.subject.leave(this.room, { keepLocalStream: true });
+
+    pretender.post("/resenha/rooms/1/join", () =>
+      response({ room: JSON.parse(JSON.stringify(this.room)) })
+    );
+
+    await this.subject.join(this.room);
+
+    assert.deepEqual(this.subject.iceServers, servers);
+    assert.strictEqual(this.subject.iceTransportPolicy, "all");
   });
 
   test("ignores stale signals after a participant has left the room", async function (assert) {

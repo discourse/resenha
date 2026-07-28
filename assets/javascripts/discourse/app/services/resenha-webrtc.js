@@ -7,7 +7,6 @@ import { i18n } from "discourse-i18n";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
 import BackgroundBlurManager from "../../lib/resenha/background-blur";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
-import { iceServers, iceTransportPolicy } from "../../lib/resenha/ice-config";
 import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
 import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
 import LivekitRoomSession from "../../lib/resenha/livekit-session";
@@ -88,6 +87,12 @@ export default class ResenhaWebrtcService extends Service {
   // response, tests) default to mesh, so every guard below is a tautology on
   // pure-P2P installs.
   #roomTransports = new Map();
+  // ICE configuration from the most recent join response. Server-provided so
+  // TURN credentials can be minted per user and per session instead of being
+  // exposed as client site settings. Peers are only created for active rooms,
+  // and a room only becomes active after its join response arrives, so this
+  // is always populated before it is read.
+  #iceConfig = null;
   #livekitSessions = new Map();
   // Last-seen roster ids per livekit room. Mesh derives join/leave sounds and
   // participant cleanup from peer churn; livekit rooms derive both from this
@@ -263,11 +268,11 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   get iceServers() {
-    return iceServers(this.siteSettings);
+    return this.#iceConfig?.servers ?? [];
   }
 
   get iceTransportPolicy() {
-    return iceTransportPolicy(this.siteSettings);
+    return this.#iceConfig?.transport_policy ?? "all";
   }
 
   get remoteStreams() {
@@ -540,6 +545,7 @@ export default class ResenhaWebrtcService extends Service {
     );
 
     this.#roomTransports.set(room.id, response?.transport ?? "mesh");
+    this.#iceConfig = response?.ice ?? this.#iceConfig;
 
     const joinedRoom = response?.room;
     if (joinedRoom) {
