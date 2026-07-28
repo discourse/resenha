@@ -193,6 +193,30 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(200)
     end
 
+    it "returns the ICE configuration with per-user TURN credentials" do
+      SiteSetting.resenha_stun_servers = ""
+      SiteSetting.resenha_turn_secret = "coturn-shared-secret"
+      SiteSetting.resenha_turn_secret_servers = "turn:turn.example.com:3478"
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(200)
+
+      ice = response.parsed_body["ice"]
+      turn_server = ice["servers"].first
+      expiry, credential_user_id = turn_server["username"].split(":")
+
+      expect(credential_user_id).to eq(user.id.to_s)
+      expect(expiry.to_i).to be > Time.zone.now.to_i
+      expect(turn_server["credential"]).to eq(
+        Base64.strict_encode64(
+          OpenSSL::HMAC.digest("SHA1", "coturn-shared-secret", turn_server["username"]),
+        ),
+      )
+      expect(ice["transport_policy"]).to eq("all")
+    end
+
     it "tracks users when they join a room" do
       sign_in(user)
 

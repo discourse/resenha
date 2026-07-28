@@ -163,6 +163,7 @@ module Resenha
 
       payload = {
         transport: transport,
+        ice: Resenha::IceConfig.payload(current_user),
         room:
           Resenha::RoomSerializer.new(
             @room,

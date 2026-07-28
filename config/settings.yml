@@ -20,17 +20,19 @@ plugins:
     default: 30
   resenha_stun_servers:
     default: "stun:stun.l.google.com:19302|stun:global.stun.twilio.com:3478"
-    client: true
   resenha_turn_servers:
     default: ""
-    client: true
   resenha_turn_username:
     default: ""
-    client: true
   resenha_turn_credential:
     default: ""
-    client: true
     secret: true
+  resenha_turn_secret:
+    default: ""
+    secret: true
+  resenha_turn_secret_servers:
+    default: ""
+    validator: "ResenhaTurnSecretServersValidator"
   resenha_livekit_url:
     default: ""
   resenha_livekit_api_key:
