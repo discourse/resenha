@@ -61,19 +61,33 @@ export function audioConstraints(deviceId = preferredInputDeviceId()) {
   return { deviceId: { ideal: deviceId } };
 }
 
+// Capture dimensions per quality tier; the encoder ceilings in
+// video-quality.js scale from whatever was captured, so both move together.
+const CAMERA_CAPTURE = {
+  standard: { width: 1280, height: 720, frameRate: 24 },
+  high: { width: 1920, height: 1080, frameRate: 24 },
+  maximum: { width: 1920, height: 1080, frameRate: 30 },
+};
+
 // Ideal dimensions match the device orientation so a phone held in portrait
 // sends an upright portrait frame; the grid lays out whatever aspect the
 // camera actually delivers. `ideal` deviceId (not `exact`) so a remembered
 // camera that is unplugged falls back to another one instead of failing.
-export function cameraConstraints(deviceId = preferredVideoInputDeviceId()) {
+export function cameraConstraints(
+  deviceId = preferredVideoInputDeviceId(),
+  tier = "standard"
+) {
+  const capture = CAMERA_CAPTURE[tier] ?? CAMERA_CAPTURE.standard;
   const portrait =
     window.matchMedia?.("(orientation: portrait)")?.matches ?? false;
-  const [idealWidth, idealHeight] = portrait ? [720, 1280] : [1280, 720];
+  const [idealWidth, idealHeight] = portrait
+    ? [capture.height, capture.width]
+    : [capture.width, capture.height];
 
   const constraints = {
     width: { ideal: idealWidth },
     height: { ideal: idealHeight },
-    frameRate: { max: 24 },
+    frameRate: { max: capture.frameRate },
   };
 
   if (deviceId && deviceId !== SYSTEM_DEFAULT_DEVICE_ID) {

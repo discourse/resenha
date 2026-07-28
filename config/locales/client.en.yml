@@ -100,6 +100,10 @@ en:
       devices:
         system_default: "System default"
         unknown_device: "Device %{index}"
+      quality:
+        standard: "Standard"
+        high: "High"
+        maximum: "Maximum"
       video_settings:
         title: "Video settings"
         camera: "Camera"
@@ -108,6 +112,14 @@ en:
         blur_failed: "Background blur couldn't be started, so it was turned off."
         camera_error: "We couldn't access your camera. Check your browser permissions."
         not_supported: "Background blur isn't supported by this browser."
+        camera_quality: "Camera quality"
+        camera_quality_hint: "Higher settings send sharper video but use more bandwidth and CPU, especially with several viewers. Maximum keeps full quality no matter how many people are watching."
+        screen_quality: "Screen share quality"
+        screen_quality_hint: "Higher settings allow sharper, smoother screen shares at the cost of bandwidth. Maximum suits fast, stable connections sharing high-resolution screens."
+        screen_content: "Optimize screen share for"
+        screen_content_text: "Text sharpness"
+        screen_content_motion: "Smooth motion"
+        screen_content_hint: "Text keeps the image crisp and lets the frame rate drop; motion keeps playback smooth and lets sharpness drop."
       voice_settings:
         title: "Voice settings"
         open: "Voice settings"
@@ -126,6 +138,8 @@ en:
         noise_suppression_failed: "Noise suppression couldn't be started, so it was turned off."
         test_output: "Test"
         choose_output: "Choose output device"
+        quality: "Audio quality"
+        quality_hint: "Higher settings improve fidelity for good microphones at a small bandwidth cost. Standard is tuned for speech."
       stage:
         promoted_to_speaker: "You've been made a speaker."
         demoted_to_listener: "You've been moved to listeners."
@@ -298,6 +312,10 @@ en:
           chat_thread_title_placeholder: "Team meeting at {time} on {date}"
           chat_thread_title_preview: "Preview:"
           chat_no_template_hint: "No starter — the first message someone sends starts the thread."
+          quality_section: "Quality"
+          max_quality_profile: "Maximum quality"
+          max_quality_profile_help: "Caps the voice, camera and screen share quality participants can pick in this room. Site default applies no room-level cap; site settings always apply."
+          quality_site_default: "Site default"
           member_count: "Members"
           creator: "Created by"
           created_at: "Created"

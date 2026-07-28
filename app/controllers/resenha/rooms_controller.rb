@@ -604,10 +604,16 @@ module Resenha
           :chat_channel_id,
           :chat_idle_minutes,
           :chat_thread_title_template,
+          :max_quality_profile,
         )
       if permitted.key?(:room_type)
         permitted[:room_type] = Resenha::Room::ROOM_TYPES[permitted[:room_type].to_s] ||
           Resenha::Room::ROOM_TYPE_OPEN
+      end
+      if permitted.key?(:max_quality_profile)
+        permitted[:max_quality_profile] = Resenha::Room::QUALITY_PROFILES[
+          permitted[:max_quality_profile].to_s
+        ]
       end
       permitted
     end

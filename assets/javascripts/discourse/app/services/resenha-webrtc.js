@@ -26,6 +26,20 @@ import ParticipantAudio from "../../lib/resenha/participant-audio";
 import PeerManager from "../../lib/resenha/peer-manager";
 import PresencePendingPeers from "../../lib/resenha/presence-pending-peers";
 import PttManager from "../../lib/resenha/ptt-manager";
+import {
+  allowedQualityTiers,
+  clampQuality,
+  preferredCameraQuality,
+  preferredScreenContent,
+  preferredScreenQuality,
+  preferredVoiceQuality,
+  QUALITY_STANDARD,
+  SCREEN_CONTENT_MOTION,
+  setPreferredCameraQuality,
+  setPreferredScreenContent,
+  setPreferredScreenQuality,
+  setPreferredVoiceQuality,
+} from "../../lib/resenha/quality-preferences";
 import RemoteStreamRegistry from "../../lib/resenha/remote-stream-registry";
 import RoomMessageQueue from "../../lib/resenha/room-message-queue";
 import { iceUfrag } from "../../lib/resenha/sdp-utils";
@@ -45,6 +59,8 @@ import { participantCanSpeak } from "../../lib/resenha/stage-roles";
 import {
   applyScreenAudioQuality,
   applyVideoQuality,
+  applyVoiceQuality,
+  screenCaptureFramerate,
 } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
@@ -75,6 +91,10 @@ export default class ResenhaWebrtcService extends Service {
   @tracked videoBlurEnabled = BackgroundBlurManager.isPreferred();
   @tracked videoBlurAmount = BackgroundBlurManager.storedAmount();
   @tracked videoInputDeviceId = preferredVideoInputDeviceId();
+  @tracked voiceQuality = preferredVoiceQuality();
+  @tracked cameraQuality = preferredCameraQuality();
+  @tracked screenQuality = preferredScreenQuality();
+  @tracked screenContent = preferredScreenContent();
 
   #connectingRoomIds = new Set();
   #roleChangeInProgress = new Set();
@@ -162,6 +182,15 @@ export default class ResenhaWebrtcService extends Service {
       clearSignalQueue: (roomId, uid) =>
         this.#signaling.clearForPeer(roomId, uid),
       onPeerDestroyed: (roomId, uid) => this.#removeRemoteStream(roomId, uid),
+      onPeerConnected: (roomId, uid, pc) => {
+        const tier = this.effectiveVoiceQuality(roomId);
+        if (tier !== QUALITY_STANDARD) {
+          const sender = this.#micSenderFor(pc);
+          if (sender?.track) {
+            applyVoiceQuality([sender], tier);
+          }
+        }
+      },
       shouldRestartPeer: (roomId, uid) =>
         this.#shouldMaintainPeerConnection(roomId, uid),
     });
@@ -420,6 +449,11 @@ export default class ResenhaWebrtcService extends Service {
       onConnectionChange: () => this.#bumpConnectionRevision(),
       mintToken: () =>
         ajax(`/resenha/rooms/${roomId}/livekit_token`, { type: "POST" }),
+      getQualityTiers: () => ({
+        voice: this.effectiveVoiceQuality(roomId),
+        camera: this.effectiveCameraQuality(roomId),
+        screen: this.effectiveScreenQuality(roomId),
+      }),
     });
   }
 
@@ -905,6 +939,164 @@ export default class ResenhaWebrtcService extends Service {
     });
   }
 
+  // --- Quality tiers ---
+
+  // Effective tier: the user's stored preference clamped by the room's
+  // optional cap and the site setting cap. Passing no roomId (settings modal
+  // opened outside a call) clamps against the site cap only.
+  effectiveVoiceQuality(roomId = this.activeRoomId) {
+    return clampQuality(
+      this.voiceQuality,
+      this.#roomQualityCap(roomId),
+      this.siteSettings.resenha_max_voice_quality
+    );
+  }
+
+  effectiveCameraQuality(roomId = this.activeRoomId) {
+    return clampQuality(
+      this.cameraQuality,
+      this.#roomQualityCap(roomId),
+      this.siteSettings.resenha_max_camera_quality
+    );
+  }
+
+  effectiveScreenQuality(roomId = this.activeRoomId) {
+    return clampQuality(
+      this.screenQuality,
+      this.#roomQualityCap(roomId),
+      this.siteSettings.resenha_max_screen_share_quality
+    );
+  }
+
+  #roomQualityCap(roomId) {
+    return this.resenhaRooms?.roomById(roomId)?.max_quality_profile;
+  }
+
+  allowedVoiceQualityTiers(roomId = this.activeRoomId) {
+    return allowedQualityTiers(
+      this.#roomQualityCap(roomId),
+      this.siteSettings.resenha_max_voice_quality
+    );
+  }
+
+  allowedCameraQualityTiers(roomId = this.activeRoomId) {
+    return allowedQualityTiers(
+      this.#roomQualityCap(roomId),
+      this.siteSettings.resenha_max_camera_quality
+    );
+  }
+
+  allowedScreenQualityTiers(roomId = this.activeRoomId) {
+    return allowedQualityTiers(
+      this.#roomQualityCap(roomId),
+      this.siteSettings.resenha_max_screen_share_quality
+    );
+  }
+
+  @action
+  setVoiceQuality(tier) {
+    this.voiceQuality = tier;
+    setPreferredVoiceQuality(tier);
+    this.#applyVoiceQualityToPeers();
+  }
+
+  @action
+  setCameraQuality(tier) {
+    this.cameraQuality = tier;
+    setPreferredCameraQuality(tier);
+    this.#refreshLocalVideoQuality();
+  }
+
+  @action
+  setScreenQuality(tier) {
+    this.screenQuality = tier;
+    setPreferredScreenQuality(tier);
+    this.#refreshLocalVideoQuality();
+  }
+
+  @action
+  setScreenContent(content) {
+    this.screenContent = content;
+    setPreferredScreenContent(content);
+    this.#applyLocalContentHint();
+    this.#refreshLocalVideoQuality();
+  }
+
+  // The screen-share audio sender also carries kind "audio"; voice quality
+  // must only touch the mic sender.
+  #micSenderFor(pc) {
+    const screenAudioSender = PeerManager.screenAudioTransceiverFor(pc)?.sender;
+    return (
+      pc
+        .getSenders()
+        .find(
+          (sender) =>
+            sender.track?.kind === "audio" && sender !== screenAudioSender
+        ) ?? null
+    );
+  }
+
+  async #applyVoiceQualityToPeers() {
+    for (const [roomId, peers] of this.#peerManager.allPeerConnections()) {
+      const tier = this.effectiveVoiceQuality(roomId);
+      const senders = [];
+      for (const [, pc] of peers) {
+        const sender = this.#micSenderFor(pc);
+        if (sender?.track) {
+          senders.push(sender);
+        }
+      }
+      await applyVoiceQuality(senders, tier);
+    }
+  }
+
+  #applyLocalContentHint() {
+    if (this.localVideoKind !== "screen") {
+      return;
+    }
+    const track = this.localVideoStream?.getVideoTracks?.()?.[0];
+    if (track && "contentHint" in track) {
+      track.contentHint =
+        this.screenContent === SCREEN_CONTENT_MOTION ? "motion" : "detail";
+    }
+  }
+
+  // Live re-apply after a preference change: encoder ceilings are cheap
+  // (setParameters, no renegotiation) and camera capture follows via
+  // applyConstraints. Screen capture framerate and LiveKit publish options
+  // are fixed at capture/publish time and pick up the change on the next
+  // share or join.
+  async #refreshLocalVideoQuality() {
+    const roomId = this.activeRoomId;
+    if (!roomId || !this.localVideoKind) {
+      return;
+    }
+
+    if (this.localVideoKind === "camera") {
+      const track =
+        this.#rawLocalVideoStream?.getVideoTracks?.()?.[0] ??
+        this.localVideoStream?.getVideoTracks?.()?.[0];
+      if (track) {
+        try {
+          await track.applyConstraints(
+            cameraConstraints(
+              this.videoInputDeviceId,
+              this.effectiveCameraQuality(roomId)
+            )
+          );
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[resenha] failed to re-apply camera constraints",
+            error
+          );
+        }
+      }
+    }
+
+    await this.#applyVideoQuality(roomId);
+  }
+
   // --- Device selection & input sensitivity ---
 
   async setInputDevice(deviceId) {
@@ -1153,7 +1345,7 @@ export default class ResenhaWebrtcService extends Service {
     let newStream;
     try {
       newStream = await navigator.mediaDevices.getUserMedia({
-        video: cameraConstraints(deviceId),
+        video: cameraConstraints(deviceId, this.effectiveCameraQuality()),
       });
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -1364,7 +1556,11 @@ export default class ResenhaWebrtcService extends Service {
         // audio; browsers without display-audio support just return no audio
         // track. The user can still untick audio in the picker.
         stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: { max: 15 } },
+          video: {
+            frameRate: {
+              max: screenCaptureFramerate(this.effectiveScreenQuality(roomId)),
+            },
+          },
           audio: {
             echoCancellation: false,
             noiseSuppression: false,
@@ -1374,7 +1570,10 @@ export default class ResenhaWebrtcService extends Service {
         });
       } else {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: cameraConstraints(this.videoInputDeviceId),
+          video: cameraConstraints(
+            this.videoInputDeviceId,
+            this.effectiveCameraQuality(roomId)
+          ),
         });
       }
     } catch (error) {
@@ -1403,6 +1602,13 @@ export default class ResenhaWebrtcService extends Service {
     if (!track) {
       stream.getTracks().forEach((streamTrack) => streamTrack.stop());
       return;
+    }
+
+    // Steers the encoder's sharpness/smoothness trade-off; the matching
+    // degradationPreference is applied per-sender in applyVideoQuality.
+    if (kind === "screen" && "contentHint" in track) {
+      track.contentHint =
+        this.screenContent === SCREEN_CONTENT_MOTION ? "motion" : "detail";
     }
 
     const epoch = ++this.#videoEpoch;
@@ -1615,7 +1821,13 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    await applyVideoQuality(sendingSenders, this.localVideoKind);
+    await applyVideoQuality(sendingSenders, this.localVideoKind, {
+      tier:
+        this.localVideoKind === "screen"
+          ? this.effectiveScreenQuality(roomId)
+          : this.effectiveCameraQuality(roomId),
+      screenContent: this.screenContent,
+    });
   }
 
   #broadcastVideoState(roomId) {

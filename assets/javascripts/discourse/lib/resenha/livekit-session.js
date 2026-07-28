@@ -8,6 +8,11 @@
 // (or the module-level test override), which is what makes it unit-testable.
 
 import getURL from "discourse/lib/get-url";
+import {
+  cameraEncodingFor,
+  screenEncodingFor,
+  voiceBitrateFor,
+} from "./video-quality";
 
 // The SDK bundle sits in the plugin's public dir, which static asset CDNs
 // never receive. Anchor to the page URL because this compiled chunk may
@@ -54,12 +59,11 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Publish ceilings mirror the mesh sender ladder's top rungs and the
-// capture-time caps (cameras at 24 fps, screens at 15 fps); simulcast gives
-// the SFU lower layers to hand to constrained subscribers instead of the
-// mesh's per-watcher encoder ladder.
-const CAMERA_ENCODING = { maxBitrate: 1_200_000, maxFramerate: 24 };
-const SCREEN_ENCODING = { maxBitrate: 2_500_000, maxFramerate: 15 };
+// Publish ceilings mirror the mesh sender ladder's top rungs for the active
+// quality tier and the capture-time caps; simulcast gives the SFU lower
+// layers to hand to constrained subscribers instead of the mesh's
+// per-watcher encoder ladder. Unlike the mesh, higher tiers here cost the
+// publisher a single encode regardless of viewer count.
 // Content audio: higher Opus ceiling than the speech default so screen audio
 // doesn't sound underwater.
 const SCREEN_AUDIO_BITRATE = 128_000;
@@ -91,6 +95,7 @@ export default class LivekitRoomSession {
   #onDisconnected;
   #onConnectionChange;
   #mintToken;
+  #getQualityTiers;
 
   #sdk = null;
   #room = null;
@@ -116,6 +121,7 @@ export default class LivekitRoomSession {
     onDisconnected,
     onConnectionChange,
     mintToken,
+    getQualityTiers,
   }) {
     this.#roomId = roomId;
     this.#currentUserId = currentUserId;
@@ -130,6 +136,14 @@ export default class LivekitRoomSession {
     this.#onDisconnected = onDisconnected;
     this.#onConnectionChange = onConnectionChange;
     this.#mintToken = mintToken;
+    this.#getQualityTiers = getQualityTiers;
+  }
+
+  // Effective tiers already clamped by the service (user choice vs room and
+  // site caps). Read at publish time, so a changed preference applies on the
+  // next publish without renegotiating current ones.
+  #qualityTiers() {
+    return this.#getQualityTiers?.() ?? {};
   }
 
   async connect(wsUrl, token) {
@@ -375,17 +389,26 @@ export default class LivekitRoomSession {
     }
 
     const { Track } = this.#sdk;
+    const tiers = this.#qualityTiers();
+    const encoding =
+      kind === "screen"
+        ? screenEncodingFor(tiers.screen)
+        : cameraEncodingFor(tiers.camera);
+    const livekitEncoding = {
+      maxBitrate: encoding.maxBitrate,
+      maxFramerate: encoding.maxFramerate,
+    };
     const options =
       kind === "screen"
         ? {
             source: Track.Source.ScreenShare,
             simulcast: true,
-            screenShareEncoding: SCREEN_ENCODING,
+            screenShareEncoding: livekitEncoding,
           }
         : {
             source: Track.Source.Camera,
             simulcast: true,
-            videoEncoding: CAMERA_ENCODING,
+            videoEncoding: livekitEncoding,
           };
 
     try {
@@ -641,13 +664,18 @@ export default class LivekitRoomSession {
       // The pipeline's processed tracks publish as-is; mute/PTT keep
       // flipping track.enabled, so the SFU carries DTX-suppressed silence
       // instead of a mute/unmute renegotiation.
+      const micOptions = {
+        source: this.#sdk.Track.Source.Microphone,
+        dtx: true,
+        red: true,
+      };
+      const voiceBitrate = voiceBitrateFor(this.#qualityTiers().voice);
+      if (voiceBitrate) {
+        micOptions.audioBitrate = voiceBitrate;
+      }
       this.#micPublication = await this.#room.localParticipant.publishTrack(
         track,
-        {
-          source: this.#sdk.Track.Source.Microphone,
-          dtx: true,
-          red: true,
-        }
+        micOptions
       );
     } catch (error) {
       // A rejected publish (e.g. a stale token after a role change) must

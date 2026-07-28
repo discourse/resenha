@@ -68,6 +68,30 @@ plugins:
   resenha_video_background_blur_enabled:
     default: true
     client: true
+  resenha_max_voice_quality:
+    default: "maximum"
+    type: enum
+    client: true
+    choices:
+      - standard
+      - high
+      - maximum
+  resenha_max_camera_quality:
+    default: "maximum"
+    type: enum
+    client: true
+    choices:
+      - standard
+      - high
+      - maximum
+  resenha_max_screen_share_quality:
+    default: "maximum"
+    type: enum
+    client: true
+    choices:
+      - standard
+      - high
+      - maximum
   resenha_idle_threshold_minutes:
     default: 5
     min: 0

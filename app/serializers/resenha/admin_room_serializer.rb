@@ -13,12 +13,17 @@ module Resenha
                :chat_channel_id,
                :chat_idle_minutes,
                :chat_thread_title_template,
+               :max_quality_profile,
                :member_count,
                :live_participant_count,
                :created_at,
                :updated_at
 
     has_one :creator, serializer: BasicUserSerializer, embed: :objects
+
+    def max_quality_profile
+      object.max_quality_profile_name
+    end
 
     def member_count
       object.room_memberships.size

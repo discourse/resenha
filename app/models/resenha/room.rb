@@ -8,6 +8,9 @@ module Resenha
     ROOM_TYPE_STAGE = 1
     ROOM_TYPES = { "open" => ROOM_TYPE_OPEN, "stage" => ROOM_TYPE_STAGE }.freeze
 
+    # nil means "no room-level cap" — the site-setting caps still apply.
+    QUALITY_PROFILES = { "standard" => 0, "high" => 1, "maximum" => 2 }.freeze
+
     belongs_to :creator, class_name: "User"
     has_many :room_memberships, class_name: "Resenha::RoomMembership", dependent: :destroy
     has_many :members, through: :room_memberships, source: :user
@@ -23,6 +26,7 @@ module Resenha
                 greater_than_or_equal_to: 2,
                 less_than_or_equal_to: ->(r) { r.stage? ? 200 : 50 },
               }
+    validates :max_quality_profile, inclusion: { in: QUALITY_PROFILES.values }, allow_nil: true
     validates :chat_idle_minutes,
               numericality: {
                 only_integer: true,
@@ -47,6 +51,10 @@ module Resenha
 
     def room_type_name
       ROOM_TYPES.key(room_type) || "open"
+    end
+
+    def max_quality_profile_name
+      QUALITY_PROFILES.key(max_quality_profile)
     end
 
     # Room-level capability only; per-user publish rights are guardian-driven
