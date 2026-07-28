@@ -26,6 +26,7 @@ module Resenha
                :chat_thread_title_template,
                :chat_available,
                :livekit_enabled,
+               :max_quality_profile,
                :recording
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
@@ -56,6 +57,10 @@ module Resenha
 
     def room_type
       object.room_type_name
+    end
+
+    def max_quality_profile
+      object.max_quality_profile_name
     end
 
     def can_manage

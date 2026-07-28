@@ -154,6 +154,7 @@ export default class PeerManager {
   #onTrack;
   #clearSignalQueue;
   #onPeerDestroyed;
+  #onPeerConnected;
   #shouldRestartPeer;
 
   constructor({
@@ -167,6 +168,7 @@ export default class PeerManager {
     onTrack,
     clearSignalQueue,
     onPeerDestroyed,
+    onPeerConnected = () => {},
     shouldRestartPeer = () => true,
   }) {
     this.#getIceServers = getIceServers;
@@ -179,6 +181,7 @@ export default class PeerManager {
     this.#onTrack = onTrack;
     this.#clearSignalQueue = clearSignalQueue;
     this.#onPeerDestroyed = onPeerDestroyed;
+    this.#onPeerConnected = onPeerConnected;
     this.#shouldRestartPeer = shouldRestartPeer;
   }
 
@@ -329,6 +332,7 @@ export default class PeerManager {
         this.#clearOfferRetry(roomId, remoteUserId);
         this.#clearPeerRestart(roomId, remoteUserId);
         this.#clearConnectionTimeout(roomId, remoteUserId);
+        this.#onPeerConnected(roomId, remoteUserId, pc);
         return;
       }
 

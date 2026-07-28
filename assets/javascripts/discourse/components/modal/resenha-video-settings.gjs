@@ -77,6 +77,35 @@ export default class ResenhaVideoSettingsModal extends Component {
     return this.resenhaWebrtc.localVideoKind === "camera";
   }
 
+  get cameraQualityOptions() {
+    return this.resenhaWebrtc.allowedCameraQualityTiers().map((tier) => ({
+      id: tier,
+      name: i18n(`resenha.quality.${tier}`),
+    }));
+  }
+
+  get screenQualityOptions() {
+    return this.resenhaWebrtc.allowedScreenQualityTiers().map((tier) => ({
+      id: tier,
+      name: i18n(`resenha.quality.${tier}`),
+    }));
+  }
+
+  get screenContentOptions() {
+    return ["text", "motion"].map((content) => ({
+      id: content,
+      name: i18n(`resenha.video_settings.screen_content_${content}`),
+    }));
+  }
+
+  get showCameraQuality() {
+    return this.cameraQualityOptions.length > 1;
+  }
+
+  get showScreenQuality() {
+    return this.screenQualityOptions.length > 1;
+  }
+
   get stream() {
     return this.usingLiveStream
       ? this.resenhaWebrtc.localVideoStream
@@ -91,7 +120,10 @@ export default class ResenhaVideoSettingsModal extends Component {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: cameraConstraints(this.resenhaWebrtc.videoInputDeviceId),
+        video: cameraConstraints(
+          this.resenhaWebrtc.videoInputDeviceId,
+          this.resenhaWebrtc.effectiveCameraQuality()
+        ),
       });
     } catch {
       if (!this.isDestroying && !this.isDestroyed) {
@@ -183,6 +215,14 @@ export default class ResenhaVideoSettingsModal extends Component {
   }
 
   @action
+  async onCameraQualityChange(tier) {
+    this.resenhaWebrtc.setCameraQuality(tier);
+    if (!this.usingLiveStream) {
+      await this.startPreview();
+    }
+  }
+
+  @action
   async toggleBlur() {
     if (this.busy || !this.blurUsable) {
       return;
@@ -248,6 +288,58 @@ export default class ResenhaVideoSettingsModal extends Component {
               @options={{hash none=false}}
               class="resenha-video-settings__camera-select"
             />
+          </div>
+
+          {{#if this.showCameraQuality}}
+            <div class="resenha-video-settings__field">
+              <label class="resenha-video-settings__label">
+                {{i18n "resenha.video_settings.camera_quality"}}
+              </label>
+              <ComboBox
+                @content={{this.cameraQualityOptions}}
+                @value={{this.resenhaWebrtc.cameraQuality}}
+                @onChange={{this.onCameraQualityChange}}
+                @options={{hash none=false}}
+                class="resenha-video-settings__camera-quality-select"
+              />
+              <p class="resenha-video-settings__hint">
+                {{i18n "resenha.video_settings.camera_quality_hint"}}
+              </p>
+            </div>
+          {{/if}}
+
+          {{#if this.showScreenQuality}}
+            <div class="resenha-video-settings__field">
+              <label class="resenha-video-settings__label">
+                {{i18n "resenha.video_settings.screen_quality"}}
+              </label>
+              <ComboBox
+                @content={{this.screenQualityOptions}}
+                @value={{this.resenhaWebrtc.screenQuality}}
+                @onChange={{this.resenhaWebrtc.setScreenQuality}}
+                @options={{hash none=false}}
+                class="resenha-video-settings__screen-quality-select"
+              />
+              <p class="resenha-video-settings__hint">
+                {{i18n "resenha.video_settings.screen_quality_hint"}}
+              </p>
+            </div>
+          {{/if}}
+
+          <div class="resenha-video-settings__field">
+            <label class="resenha-video-settings__label">
+              {{i18n "resenha.video_settings.screen_content"}}
+            </label>
+            <ComboBox
+              @content={{this.screenContentOptions}}
+              @value={{this.resenhaWebrtc.screenContent}}
+              @onChange={{this.resenhaWebrtc.setScreenContent}}
+              @options={{hash none=false}}
+              class="resenha-video-settings__screen-content-select"
+            />
+            <p class="resenha-video-settings__hint">
+              {{i18n "resenha.video_settings.screen_content_hint"}}
+            </p>
           </div>
 
           {{#if this.blurAvailable}}

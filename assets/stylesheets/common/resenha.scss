@@ -311,6 +311,20 @@
     gap: 1.5em;
     align-items: flex-start;
   }
+
+  .resenha-room-form__quality {
+    align-self: stretch;
+
+    summary {
+      cursor: pointer;
+      font-weight: bold;
+      color: var(--primary-high);
+    }
+
+    .form-kit__field {
+      margin-top: 1em;
+    }
+  }
 }
 
 .resenha-create-room-modal {

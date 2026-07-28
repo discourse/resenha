@@ -63,17 +63,25 @@ module Resenha
     private
 
     def room_params
-      params.require(:room).permit(
-        :name,
-        :description,
-        :public,
-        :max_participants,
-        :video_enabled,
-        :livekit_enabled,
-        :chat_channel_id,
-        :chat_idle_minutes,
-        :chat_thread_title_template,
-      )
+      permitted =
+        params.require(:room).permit(
+          :name,
+          :description,
+          :public,
+          :max_participants,
+          :video_enabled,
+          :livekit_enabled,
+          :chat_channel_id,
+          :chat_idle_minutes,
+          :chat_thread_title_template,
+          :max_quality_profile,
+        )
+      if permitted.key?(:max_quality_profile)
+        permitted[:max_quality_profile] = Resenha::Room::QUALITY_PROFILES[
+          permitted[:max_quality_profile].to_s
+        ]
+      end
+      permitted
     end
   end
 end

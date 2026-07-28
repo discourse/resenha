@@ -5,6 +5,7 @@ require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 require_relative "../../../db/migrate/20260305162426_add_room_type_to_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
+require_relative "../../../db/migrate/20260728201053_add_max_quality_profile_to_resenha_rooms"
 
 RSpec.describe Resenha::Room do
   before do
@@ -20,6 +21,9 @@ RSpec.describe Resenha::Room do
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :chat_channel_id)
         AddChatSettingsToResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :max_quality_profile)
+        AddMaxQualityProfileToResenhaRooms.new.change
       end
     end
     Resenha::Room.reset_column_information
@@ -75,6 +79,33 @@ RSpec.describe Resenha::Room do
 
     it "defaults to 15 minutes" do
       expect(described_class.new.chat_idle_minutes).to eq(15)
+    end
+  end
+
+  describe "max_quality_profile validation" do
+    it "accepts nil, meaning no room-level cap" do
+      room.max_quality_profile = nil
+      expect(room).to be_valid
+    end
+
+    it "accepts every known profile" do
+      Resenha::Room::QUALITY_PROFILES.each_value do |profile|
+        room.max_quality_profile = profile
+        expect(room).to be_valid
+      end
+    end
+
+    it "rejects unknown values" do
+      room.max_quality_profile = 42
+      expect(room).not_to be_valid
+      expect(room.errors[:max_quality_profile]).to be_present
+    end
+  end
+
+  describe "#max_quality_profile_name" do
+    it "maps the stored integer back to its name and nil to nil" do
+      expect(described_class.new(max_quality_profile: 1).max_quality_profile_name).to eq("high")
+      expect(described_class.new.max_quality_profile_name).to be_nil
     end
   end
 

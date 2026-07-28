@@ -74,6 +74,17 @@ export default class ResenhaVoiceSettingsModal extends Component {
     return this.resenhaWebrtc.noiseSuppressionEnabled;
   }
 
+  get qualityOptions() {
+    return this.resenhaWebrtc.allowedVoiceQualityTiers().map((tier) => ({
+      id: tier,
+      name: i18n(`resenha.quality.${tier}`),
+    }));
+  }
+
+  get showQuality() {
+    return this.qualityOptions.length > 1;
+  }
+
   get gateOpen() {
     return this.gateThreshold === 0 || this.level >= this.gateThreshold;
   }
@@ -366,6 +377,24 @@ export default class ResenhaVoiceSettingsModal extends Component {
               {{i18n "resenha.voice_settings.noise_suppression_hint"}}
             </p>
           </div>
+
+          {{#if this.showQuality}}
+            <div class="resenha-voice-settings__field">
+              <label class="resenha-voice-settings__label">
+                {{i18n "resenha.voice_settings.quality"}}
+              </label>
+              <ComboBox
+                @content={{this.qualityOptions}}
+                @value={{this.resenhaWebrtc.voiceQuality}}
+                @onChange={{this.resenhaWebrtc.setVoiceQuality}}
+                @options={{hash none=false}}
+                class="resenha-voice-settings__quality-select"
+              />
+              <p class="resenha-voice-settings__hint">
+                {{i18n "resenha.voice_settings.quality_hint"}}
+              </p>
+            </div>
+          {{/if}}
         </div>
       </:body>
     </DModal>

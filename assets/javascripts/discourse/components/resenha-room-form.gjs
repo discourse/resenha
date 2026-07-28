@@ -33,6 +33,8 @@ export default class ResenhaRoomForm extends Component {
       chat_idle_minutes: this.args.room?.chat_idle_minutes ?? 15,
       chat_thread_title_template:
         this.args.room?.chat_thread_title_template || "",
+      max_quality_profile:
+        this.args.room?.max_quality_profile || "site_default",
     };
   }
 
@@ -97,6 +99,16 @@ export default class ResenhaRoomForm extends Component {
         description: i18n("resenha.room.type_stage_description"),
       },
     ];
+  }
+
+  get qualityProfileOptions() {
+    return ["site_default", "standard", "high", "maximum"].map((profile) => ({
+      id: profile,
+      name:
+        profile === "site_default"
+          ? i18n("resenha.admin.room.quality_site_default")
+          : i18n(`resenha.quality.${profile}`),
+    }));
   }
 
   get submitLabel() {
@@ -238,6 +250,27 @@ export default class ResenhaRoomForm extends Component {
         >
           <field.Control />
         </form.Field>
+
+        <details class="resenha-room-form__quality">
+          <summary>{{i18n "resenha.admin.room.quality_section"}}</summary>
+
+          <form.Field
+            @type="select"
+            @name="max_quality_profile"
+            @title={{i18n "resenha.admin.room.max_quality_profile"}}
+            @description={{i18n "resenha.admin.room.max_quality_profile_help"}}
+            @format="full"
+            as |field|
+          >
+            <field.Control @includeNone={{false}} as |select|>
+              {{#each this.qualityProfileOptions as |option|}}
+                <select.Option @value={{option.id}}>
+                  {{option.name}}
+                </select.Option>
+              {{/each}}
+            </field.Control>
+          </form.Field>
+        </details>
 
         {{#if this.showChatSettings}}
           <div

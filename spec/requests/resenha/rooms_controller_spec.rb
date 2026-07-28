@@ -700,6 +700,36 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(200)
       expect(private_room.reload.name).to eq("New name")
     end
+
+    it "stores max_quality_profile by name and serializes it back" do
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{private_room.id}.json",
+          params: {
+            room: {
+              max_quality_profile: "high",
+            },
+          }
+
+      expect(response.status).to eq(200)
+      expect(private_room.reload.max_quality_profile).to eq(Resenha::Room::QUALITY_PROFILES["high"])
+      expect(response.parsed_body["room"]["max_quality_profile"]).to eq("high")
+    end
+
+    it "clears the room-level quality cap when set to site_default" do
+      private_room.update!(max_quality_profile: Resenha::Room::QUALITY_PROFILES["standard"])
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{private_room.id}.json",
+          params: {
+            room: {
+              max_quality_profile: "site_default",
+            },
+          }
+
+      expect(response.status).to eq(200)
+      expect(private_room.reload.max_quality_profile).to be_nil
+    end
   end
 
   describe "#destroy" do
