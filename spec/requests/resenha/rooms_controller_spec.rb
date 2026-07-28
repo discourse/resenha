@@ -712,9 +712,7 @@ RSpec.describe Resenha::RoomsController do
           }
 
       expect(response.status).to eq(200)
-      expect(private_room.reload.max_quality_profile).to eq(
-        Resenha::Room::QUALITY_PROFILES["high"],
-      )
+      expect(private_room.reload.max_quality_profile).to eq(Resenha::Room::QUALITY_PROFILES["high"])
       expect(response.parsed_body["room"]["max_quality_profile"]).to eq("high")
     end
 

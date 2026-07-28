@@ -148,6 +148,7 @@ end
 #  description                :text
 #  livekit_enabled            :boolean          default(FALSE), not null
 #  max_participants           :integer
+#  max_quality_profile        :integer
 #  name                       :string           not null
 #  public                     :boolean          default(FALSE), not null
 #  room_type                  :integer          default(0), not null
