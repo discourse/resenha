@@ -8,6 +8,7 @@ module Resenha
                :description,
                :public,
                :max_participants,
+               :room_type,
                :video_enabled,
                :livekit_enabled,
                :chat_channel_id,
@@ -20,6 +21,10 @@ module Resenha
                :updated_at
 
     has_one :creator, serializer: BasicUserSerializer, embed: :objects
+
+    def room_type
+      object.room_type_name
+    end
 
     def max_quality_profile
       object.max_quality_profile_name

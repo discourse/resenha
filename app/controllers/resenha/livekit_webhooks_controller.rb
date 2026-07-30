@@ -34,6 +34,8 @@ module Resenha
       return head :bad_request if event.nil?
 
       case event["event"]
+      when "participant_joined"
+        record_participant_sid(event)
       when "participant_left", "participant_connection_aborted"
         expire_participant(event)
       when "room_finished"
@@ -54,12 +56,33 @@ module Resenha
       nil
     end
 
+    # Not presence — only which media session (SID) is the user's current one,
+    # so a superseded session's late departure can be told apart from the live
+    # session's.
+    def record_participant_sid(event)
+      room = event_room(event)
+      return if room.nil?
+
+      user_id = event.dig("participant", "identity").to_i
+      return if user_id <= 0
+
+      Resenha::ParticipantTracker.set_livekit_sid(room.id, user_id, event.dig("participant", "sid"))
+    end
+
     def expire_participant(event)
       room = event_room(event)
       return if room.nil?
 
       user_id = event.dig("participant", "identity").to_i
       return if user_id <= 0
+
+      # A quick disconnect/rejoin can deliver the old session's departure
+      # after the new session is up; `gone_at` can't distinguish them (the
+      # rejoin predates the disconnect), but the SID can. Departures without
+      # SID context on either side keep expiring — reconcile-only backstop.
+      sid = event.dig("participant", "sid")
+      known_sid = Resenha::ParticipantTracker.livekit_sid(room.id, user_id)
+      return if sid.present? && known_sid.present? && sid != known_sid
 
       expired =
         Resenha::ParticipantTracker.expire_presence(
@@ -75,6 +98,7 @@ module Resenha
       return if room.nil?
 
       Resenha::ParticipantTracker.clear_transport_pin(room.id)
+      Resenha::ParticipantTracker.clear_livekit_sids(room.id)
     end
 
     # Egress events name the room inside egressInfo, not in a room object,

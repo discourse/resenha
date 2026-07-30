@@ -80,6 +80,14 @@ module Resenha
 
           if response.status == 200
             true
+          elsif method == "DeleteRoom" && response.status == 404
+            # The SFU tears an emptied room down on its own, so the last
+            # leave's DeleteRoom routinely races it — already-gone is the
+            # desired end state, not a fault worth a Logster entry.
+            Rails.logger.debug(
+              "[resenha-livekit] DeleteRoom no-op for room #{room.id}: already gone",
+            )
+            true
           else
             Rails.logger.warn(
               "[resenha-livekit] #{method} failed for room #{room.id}: " \

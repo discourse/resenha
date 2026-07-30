@@ -69,6 +69,7 @@ module Resenha
           :description,
           :public,
           :max_participants,
+          :room_type,
           :video_enabled,
           :livekit_enabled,
           :chat_channel_id,
@@ -76,6 +77,9 @@ module Resenha
           :chat_thread_title_template,
           :max_quality_profile,
         )
+      if permitted.key?(:room_type)
+        permitted[:room_type] = Resenha::Room.room_type_from_name!(permitted[:room_type])
+      end
       if permitted.key?(:max_quality_profile)
         permitted[:max_quality_profile] = Resenha::Room::QUALITY_PROFILES[
           permitted[:max_quality_profile].to_s

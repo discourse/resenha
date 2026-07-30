@@ -189,6 +189,18 @@ RSpec.describe Resenha::RoomsController do
       expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
     end
 
+    it "re-establishes presence even for a user who recently left" do
+      sign_in(user)
+      Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+      Resenha::ParticipantTracker.mark_left(room.id, user.id)
+
+      post "/resenha/rooms/#{room.id}/livekit_token.json"
+
+      expect(response.status).to eq(200)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+      expect(Resenha::ParticipantTracker.recently_left?(room.id, user.id)).to eq(false)
+    end
+
     it "returns 410 when the room instance ended or runs on mesh" do
       sign_in(user)
 

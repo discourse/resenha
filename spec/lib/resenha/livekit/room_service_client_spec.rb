@@ -175,6 +175,13 @@ RSpec.describe Resenha::Livekit::RoomServiceClient do
         end,
       ).to have_been_made.once
     end
+
+    it "treats an already-deleted room as success without a warning" do
+      twirp_stub("DeleteRoom").to_return(status: 404, body: "requested room does not exist")
+      Rails.logger.expects(:warn).never
+
+      expect(described_class.delete_room(room)).to eq(true)
+    end
   end
 
   context "when the room is not pinned to livekit" do
@@ -220,6 +227,16 @@ RSpec.describe Resenha::Livekit::RoomServiceClient do
       twirp_stub("DeleteRoom").to_raise(Errno::ECONNREFUSED)
 
       expect { described_class.delete_room(room) }.not_to raise_error
+    end
+
+    it "still warns when a call other than DeleteRoom gets a 404" do
+      twirp_stub("RemoveParticipant").to_return(status: 404, body: "participant does not exist")
+      Rails
+        .logger
+        .expects(:warn)
+        .with(regexp_matches(/\[resenha-livekit\] RemoveParticipant failed.*HTTP 404/))
+
+      expect(described_class.remove_participant(room, user.id)).to eq(false)
     end
 
     it "never raises on an error response and logs the failure" do

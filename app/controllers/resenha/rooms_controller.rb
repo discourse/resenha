@@ -139,6 +139,7 @@ module Resenha
       end
       livekit = nil if transport == "mesh"
 
+      Resenha::ParticipantTracker.clear_left(@room.id, current_user.id)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
 
       membership = @room.room_memberships.find_by(user_id: current_user.id)
@@ -189,6 +190,9 @@ module Resenha
         return render_json_error(I18n.t("resenha.errors.livekit_room_instance_ended"), status: 410)
       end
 
+      # The reconnect ladder only runs while the client considers itself in the
+      # call, so an explicit token request voids any leave/kick tombstone.
+      Resenha::ParticipantTracker.clear_left(@room.id, current_user.id)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
       metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
       metadata[:last_heartbeat_at] = Time.now.to_f
@@ -222,6 +226,7 @@ module Resenha
     def leave
       guardian.ensure_can_join_resenha_room!(@room)
       session = close_session_for(@room.id, current_user.id)
+      Resenha::ParticipantTracker.mark_left(@room.id, current_user.id)
       Resenha::ParticipantTracker.remove(@room.id, current_user.id)
       if Resenha::ParticipantTracker.user_ids(@room.id).empty?
         Resenha::Livekit::RoomServiceClient.delete_room(@room)
@@ -235,6 +240,13 @@ module Resenha
 
     def heartbeat
       guardian.ensure_can_join_resenha_room!(@room)
+
+      # A beat already in flight when the user left (or was kicked) must not
+      # resurrect their presence; only join/livekit_token re-establish it.
+      if Resenha::ParticipantTracker.recently_left?(@room.id, current_user.id)
+        return head :no_content
+      end
+
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
 
       metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
@@ -336,6 +348,7 @@ module Resenha
       end
 
       session = close_session_for(@room.id, user_id)
+      Resenha::ParticipantTracker.mark_left(@room.id, user_id)
       Resenha::ParticipantTracker.remove(@room.id, user_id)
 
       kicked_user = User.find_by(id: user_id)
@@ -607,8 +620,7 @@ module Resenha
           :max_quality_profile,
         )
       if permitted.key?(:room_type)
-        permitted[:room_type] = Resenha::Room::ROOM_TYPES[permitted[:room_type].to_s] ||
-          Resenha::Room::ROOM_TYPE_OPEN
+        permitted[:room_type] = Resenha::Room.room_type_from_name!(permitted[:room_type])
       end
       if permitted.key?(:max_quality_profile)
         permitted[:max_quality_profile] = Resenha::Room::QUALITY_PROFILES[

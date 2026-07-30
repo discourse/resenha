@@ -34,6 +34,19 @@ RSpec.describe Resenha::ParticipantTracker do
     end
   end
 
+  describe ".mark_left" do
+    it "reports a recent departure until cleared" do
+      described_class.mark_left(room.id, user1.id)
+
+      expect(described_class.recently_left?(room.id, user1.id)).to eq(true)
+      expect(described_class.recently_left?(room.id, user2.id)).to eq(false)
+
+      described_class.clear_left(room.id, user1.id)
+
+      expect(described_class.recently_left?(room.id, user1.id)).to eq(false)
+    end
+  end
+
   describe ".raise_hand" do
     it "sets the raise timestamp and returns true on the first raise" do
       freeze_time do

@@ -117,6 +117,38 @@ RSpec.describe Resenha::AdminRoomsController do
       expect(response.parsed_body["room"]["max_participants"]).to eq(10)
     end
 
+    it "creates a stage room when room_type is stage" do
+      sign_in(admin)
+
+      post "/admin/plugins/resenha/rooms.json",
+           params: {
+             room: {
+               name: "Town Hall",
+               room_type: "stage",
+             },
+           }
+
+      expect(response.status).to eq(201)
+      expect(response.parsed_body["room"]["room_type"]).to eq("stage")
+      expect(Resenha::Room.find_by(name: "Town Hall").stage?).to eq(true)
+    end
+
+    it "rejects an unknown room_type" do
+      sign_in(admin)
+
+      expect {
+        post "/admin/plugins/resenha/rooms.json",
+             params: {
+               room: {
+                 name: "Town Hall",
+                 room_type: "arena",
+               },
+             }
+      }.not_to change { Resenha::Room.count }
+
+      expect(response.status).to eq(400)
+    end
+
     it "returns errors for invalid data" do
       sign_in(admin)
 
@@ -165,6 +197,30 @@ RSpec.describe Resenha::AdminRoomsController do
 
       room.reload
       expect(room.name).to eq("Updated Room")
+    end
+
+    it "persists and serializes room_type so the edit form can prefill it" do
+      sign_in(admin)
+
+      put "/admin/plugins/resenha/rooms/#{room.id}.json", params: { room: { room_type: "stage" } }
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["room"]["room_type"]).to eq("stage")
+      expect(room.reload.stage?).to eq(true)
+
+      get "/admin/plugins/resenha/rooms/#{room.id}.json"
+
+      expect(response.parsed_body["room"]["room_type"]).to eq("stage")
+    end
+
+    it "keeps a stage room's type when an update rejects an unknown room_type" do
+      sign_in(admin)
+      room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+
+      put "/admin/plugins/resenha/rooms/#{room.id}.json", params: { room: { room_type: "arena" } }
+
+      expect(response.status).to eq(400)
+      expect(room.reload.stage?).to eq(true)
     end
 
     it "persists and serializes livekit_enabled" do
