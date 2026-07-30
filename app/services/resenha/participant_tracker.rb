@@ -5,6 +5,9 @@ module Resenha
     KEY_NAMESPACE = "resenha:room".freeze
     RECENTLY_ACTIVE_ROOMS_KEY = "resenha:recently_active_rooms".freeze
     SAFETY_TTL = 30.minutes.to_i
+    # Must outlive one client heartbeat interval (10s) plus request latency,
+    # so a beat already in flight when the user leaves can't resurrect them.
+    LEFT_TOMBSTONE_TTL = 15
 
     class << self
       def add(room_id, user_id, migrated: false)
@@ -24,6 +27,23 @@ module Resenha
         redis.zrem(key(room_id), user_id)
         redis.hdel(metadata_key(room_id), user_id)
         touch_recently_active(room_id)
+      end
+
+      # Short-lived tombstone for a deliberate departure (leave/kick), letting
+      # presence-refreshing endpoints distinguish a racing in-flight heartbeat
+      # (dropped) from an intentional return (join clears it). Purely
+      # time-bounded — an expired tombstone costs nothing but exposure to the
+      # race it exists to close.
+      def mark_left(room_id, user_id)
+        redis.setex(left_key(room_id, user_id), LEFT_TOMBSTONE_TTL, "1")
+      end
+
+      def clear_left(room_id, user_id)
+        redis.del(left_key(room_id, user_id))
+      end
+
+      def recently_left?(room_id, user_id)
+        redis.exists?(left_key(room_id, user_id))
       end
 
       # Reconcile-only early expiry (LiveKit webhooks): backdates the member's
@@ -223,6 +243,10 @@ module Resenha
 
       def recording_key(room_id)
         "#{KEY_NAMESPACE}:#{room_id}:recording"
+      end
+
+      def left_key(room_id, user_id)
+        "#{KEY_NAMESPACE}:#{room_id}:left:#{user_id}"
       end
     end
   end

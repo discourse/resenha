@@ -310,6 +310,28 @@ RSpec.describe Resenha::RoomsController do
       user.reload
       expect(user.user_status.emoji).to eq("palm_tree")
     end
+
+    it "keeps the user out when a racing heartbeat lands after the leave" do
+      sign_in(user)
+      Resenha::ParticipantTracker.add(room.id, user.id)
+
+      delete "/resenha/rooms/#{room.id}/leave.json"
+      post "/resenha/rooms/#{room.id}/heartbeat.json"
+
+      expect(response.status).to eq(204)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).not_to include(user.id)
+    end
+
+    it "lets the user rejoin immediately after leaving" do
+      sign_in(user)
+      Resenha::ParticipantTracker.add(room.id, user.id)
+
+      delete "/resenha/rooms/#{room.id}/leave.json"
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(200)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+    end
   end
 
   describe "#heartbeat" do
@@ -460,6 +482,17 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(204)
       other_participant.reload
       expect(other_participant.user_status).to be_nil
+    end
+
+    it "keeps the kicked user out when their racing heartbeat lands after the kick" do
+      sign_in(staff)
+      delete "/resenha/rooms/#{room.id}/kick.json", params: { user_id: other_participant.id }
+
+      sign_in(other_participant)
+      post "/resenha/rooms/#{room.id}/heartbeat.json"
+
+      expect(response.status).to eq(204)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).not_to include(other_participant.id)
     end
 
     it "prevents kicking the room creator" do
