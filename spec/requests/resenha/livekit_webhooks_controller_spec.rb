@@ -71,6 +71,7 @@ RSpec.describe Resenha::LivekitWebhooksController do
     event: "participant_left",
     room_name: Resenha::Livekit.room_name(room),
     identity: user.id.to_s,
+    sid: "PA_test",
     created_at: 1.minute.from_now
   )
     {
@@ -82,7 +83,7 @@ RSpec.describe Resenha::LivekitWebhooksController do
         "name" => room_name,
       },
       "participant" => {
-        "sid" => "PA_test",
+        "sid" => sid,
         "identity" => identity,
       },
     }
@@ -260,6 +261,36 @@ RSpec.describe Resenha::LivekitWebhooksController do
         Jobs::Resenha::CloseOrphanedSessions.new.execute({})
 
         expect(session.reload.left_at).to be_present
+      end
+    end
+
+    context "with a rejoined participant" do
+      before do
+        Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
+        Resenha::ParticipantTracker.add(room.id, user.id)
+      end
+
+      it "ignores the superseded session's late departure" do
+        post_webhook(event_for(event: "participant_joined", sid: "PA_new"))
+        post_webhook(event_for(sid: "PA_old"))
+
+        expect(response.status).to eq(200)
+        expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+      end
+
+      it "expires presence when the departing session is the recorded one" do
+        post_webhook(event_for(event: "participant_joined", sid: "PA_new"))
+        post_webhook(event_for(sid: "PA_new"))
+
+        expect(response.status).to eq(200)
+        expect(Resenha::ParticipantTracker.user_ids(room.id)).not_to include(user.id)
+      end
+
+      it "expires presence when no session was recorded for the user" do
+        post_webhook(event_for(sid: "PA_old"))
+
+        expect(response.status).to eq(200)
+        expect(Resenha::ParticipantTracker.user_ids(room.id)).not_to include(user.id)
       end
     end
 
