@@ -734,6 +734,16 @@ RSpec.describe Resenha::RoomsController do
       expect(private_room.reload.name).to eq("New name")
     end
 
+    it "keeps a stage room's type when an update sends an unknown room_type" do
+      private_room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{private_room.id}.json", params: { room: { room_type: "arena" } }
+
+      expect(response.status).to eq(400)
+      expect(private_room.reload.stage?).to eq(true)
+    end
+
     it "stores max_quality_profile by name and serializes it back" do
       sign_in(room_owner)
 

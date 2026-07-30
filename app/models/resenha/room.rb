@@ -41,6 +41,12 @@ module Resenha
 
     scope :public_rooms, -> { where(public: true) }
 
+    # Strict by design: the column is an integer, so letting an unknown name
+    # through means AR casts it with to_i and silently produces an open room.
+    def self.room_type_from_name!(name)
+      ROOM_TYPES.fetch(name.to_s) { raise Discourse::InvalidParameters.new(:room_type) }
+    end
+
     def open?
       room_type == ROOM_TYPE_OPEN
     end

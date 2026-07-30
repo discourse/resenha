@@ -620,8 +620,7 @@ module Resenha
           :max_quality_profile,
         )
       if permitted.key?(:room_type)
-        permitted[:room_type] = Resenha::Room::ROOM_TYPES[permitted[:room_type].to_s] ||
-          Resenha::Room::ROOM_TYPE_OPEN
+        permitted[:room_type] = Resenha::Room.room_type_from_name!(permitted[:room_type])
       end
       if permitted.key?(:max_quality_profile)
         permitted[:max_quality_profile] = Resenha::Room::QUALITY_PROFILES[
