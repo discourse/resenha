@@ -9,7 +9,7 @@ import ResenhaParticipantSidebarContextMenu from "discourse/plugins/resenha/disc
 import ResenhaParticipantSidebarSuffix from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-suffix";
 import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-room-sidebar-context-menu";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
-import roomIcon from "../lib/resenha/room-icon";
+import roomIcon, { roomBadge } from "../lib/resenha/room-icon";
 import virtualElementFromEvent from "../lib/resenha/virtual-element-from-event";
 
 const LINK_NAME_PREFIX = "resenha-room-";
@@ -174,6 +174,10 @@ export default {
 
             get prefixValue() {
               return roomIcon(this.room);
+            }
+
+            get prefixBadge() {
+              return roomBadge(this.room);
             }
 
             get #hasActiveVideo() {

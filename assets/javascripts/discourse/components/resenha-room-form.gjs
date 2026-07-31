@@ -4,6 +4,7 @@ import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { service } from "@ember/service";
 import BackButton from "discourse/components/back-button";
+import DButton from "discourse/components/d-button";
 import Form from "discourse/components/form";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
@@ -206,10 +207,20 @@ export default class ResenhaRoomForm extends Component {
           @type="toggle"
           @name="public"
           @title={{i18n "resenha.admin.room.public"}}
-          @helpText={{i18n "resenha.admin.room.public_help"}}
+          @description={{i18n "resenha.admin.room.public_help"}}
+          @format="full"
           as |field|
         >
           <field.Control />
+          {{#if @onManageMembers}}
+            <DButton
+              @action={{@onManageMembers}}
+              @icon="users"
+              @label="resenha.admin.room.manage_members"
+              class="btn-link resenha-room-form__manage-members
+                {{if data.public '--hidden'}}"
+            />
+          {{/if}}
         </form.Field>
 
         {{#if this.showVideoToggle}}
@@ -217,11 +228,12 @@ export default class ResenhaRoomForm extends Component {
             @type="toggle"
             @name="video_enabled"
             @title={{i18n "resenha.admin.room.video_enabled"}}
-            @helpText={{if
+            @description={{if
               (this.isStageType data.room_type)
               (i18n "resenha.admin.room.video_enabled_stage_help")
               (i18n "resenha.admin.room.video_enabled_help")
             }}
+            @format="full"
             as |field|
           >
             <field.Control />
@@ -233,7 +245,8 @@ export default class ResenhaRoomForm extends Component {
             @type="toggle"
             @name="livekit_enabled"
             @title={{i18n "resenha.admin.room.livekit_enabled"}}
-            @helpText={{i18n "resenha.admin.room.livekit_enabled_help"}}
+            @description={{i18n "resenha.admin.room.livekit_enabled_help"}}
+            @format="full"
             as |field|
           >
             <field.Control />

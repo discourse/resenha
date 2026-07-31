@@ -19,10 +19,7 @@ module Resenha
         item.text = room.name
         item.description = room.description
         item.slug = room.slug
-        # Icon names are kept in sync with svg-icons/resenha-icons.svg and
-        # assets/javascripts/discourse/lib/resenha/room-icon.js
-        base_icon = room.stage? ? "podcast" : icon
-        item.icon = room.public? ? base_icon : "resenha-#{base_icon}-lock"
+        item.icon = room.stage? ? "podcast" : icon
         item.style_type = "icon"
         item.relative_url = "#{Discourse.base_path}/resenha/r/#{room.slug}"
         item.type = type

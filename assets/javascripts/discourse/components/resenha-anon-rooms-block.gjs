@@ -6,7 +6,9 @@ import SidebarSectionLink from "discourse/components/sidebar/section-link";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { prioritizeNameInUx } from "discourse/lib/settings";
 import { i18n } from "discourse-i18n";
-import roomIcon from "discourse/plugins/resenha/discourse/lib/resenha/room-icon";
+import roomIcon, {
+  roomBadge,
+} from "discourse/plugins/resenha/discourse/lib/resenha/room-icon";
 
 @block("resenha:rooms", {
   allowedOutlets: ["sidebar-blocks"],
@@ -90,6 +92,7 @@ export default class ResenhaAnonRoomsBlock extends Component {
             @content={{link.content}}
             @prefixType={{link.prefixType}}
             @prefixValue={{link.prefixValue}}
+            @prefixBadge={{link.prefixBadge}}
           />
         {{/each}}
       </SidebarSection>
@@ -128,6 +131,10 @@ class RoomLink {
 
   get prefixValue() {
     return roomIcon(this.room);
+  }
+
+  get prefixBadge() {
+    return roomBadge(this.room);
   }
 }
 
