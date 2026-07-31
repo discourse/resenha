@@ -293,6 +293,44 @@
   }
 }
 
+// Core lays the toggle field out as a single flex row, which crams the
+// description beside the control once the field goes full width. Regroup it:
+// title and description stacked on the left, control centered on the right.
+.resenha-room-form__form {
+  .form-kit__field-toggle {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 1rem;
+    align-items: center;
+
+    .form-kit__container-title,
+    .form-kit__container-description {
+      grid-column: 1;
+      width: auto;
+      min-width: 0;
+    }
+
+    .form-kit__container-content {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+      width: auto;
+      min-width: 0;
+    }
+  }
+
+  .resenha-room-form__manage-members {
+    padding: 0;
+    font-size: var(--font-down-1);
+
+    // Keep the card height stable so toggling doesn't shift the control
+    // under the pointer mid-click.
+    &.--hidden {
+      visibility: hidden;
+    }
+  }
+}
+
 .resenha-room-form {
   .resenha-admin-back {
     margin-bottom: 1em;
@@ -505,6 +543,7 @@
   }
 
   &__icon {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -518,6 +557,16 @@
       color: var(--secondary);
       font-size: 1.5rem;
     }
+  }
+
+  &__icon-badge.d-icon {
+    position: absolute;
+    top: -0.4rem;
+    right: -0.4rem;
+    font-size: var(--font-down-2);
+    padding: 0.2rem;
+    background: var(--tertiary);
+    border-radius: var(--token-radius-full);
   }
 
   &__header-content {

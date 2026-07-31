@@ -9,6 +9,7 @@
 enabled_site_setting :resenha_enabled
 
 register_svg_icon "microphone-lines"
+register_svg_icon "lock"
 register_svg_icon "phone"
 register_svg_icon "waveform"
 register_svg_icon "ear-listen"

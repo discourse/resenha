@@ -88,6 +88,14 @@ export default class ResenhaRoomInfoModal extends Component {
   }
 
   @action
+  stopEditing() {
+    this.isEditing = false;
+    if (this.showMembershipManagement) {
+      this.loadMemberships();
+    }
+  }
+
+  @action
   async handleEdit(data) {
     try {
       const result = await ajax(`/resenha/rooms/${this.room.id}`, {
@@ -182,12 +190,16 @@ export default class ResenhaRoomInfoModal extends Component {
             <ResenhaRoomForm
               @room={{this.room}}
               @onSubmit={{this.handleEdit}}
+              @onManageMembers={{this.stopEditing}}
             />
           </div>
         {{else}}
           <div class="resenha-room-info-modal__header">
             <div class="resenha-room-info-modal__icon">
               {{icon (roomIcon this.room)}}
+              {{#unless this.room.public}}
+                {{icon "lock" class="resenha-room-info-modal__icon-badge"}}
+              {{/unless}}
             </div>
             <div class="resenha-room-info-modal__header-content">
               <h2

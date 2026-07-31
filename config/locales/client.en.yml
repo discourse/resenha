@@ -294,6 +294,7 @@ en:
           description: "Description"
           public: "Public"
           public_help: "Public rooms are visible to all users."
+          manage_members: "Manage members"
           room_type: "Room type"
           max_participants: "Max participants"
           max_participants_help: "Maximum participants allowed (2-50, or 2-200 for Stage rooms)."
