@@ -35,6 +35,7 @@ module Resenha
 
       rooms =
         Resenha::Room
+          .persistent
           .includes(:room_memberships)
           .order(:created_at)
           .select { |room| guardian.can_see_resenha_room?(room) }
@@ -58,7 +59,9 @@ module Resenha
     def create
       guardian.ensure_can_create_resenha_room!
 
-      if current_user.resenha_rooms.count >= SiteSetting.resenha_max_rooms_per_user
+      # Ephemeral rooms are created by features on the user's behalf (with
+      # their own TTL-based cap), not by the user — they don't count here.
+      if current_user.resenha_rooms.persistent.count >= SiteSetting.resenha_max_rooms_per_user
         raise Discourse::InvalidParameters.new(I18n.t("resenha.errors.room_limit"))
       end
 

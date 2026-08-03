@@ -1,0 +1,126 @@
+# frozen_string_literal: true
+
+RSpec.describe Resenha::EphemeralRoomManager do
+  fab!(:creator) { Fabricate(:user) }
+  fab!(:member) { Fabricate(:user) }
+
+  before { SiteSetting.resenha_enabled = true }
+
+  describe ".create!" do
+    it "creates an ephemeral room with the creator as moderator and members as participants" do
+      room = described_class.create!(creator: creator, name: "Call", members: [member, creator])
+
+      expect(room.ephemeral).to eq(true)
+      expect(room.public).to eq(false)
+      expect(room.last_occupied_at).to be_present
+      expect(room.room_memberships.moderator.pluck(:user_id)).to contain_exactly(creator.id)
+      expect(room.member_ids).to contain_exactly(creator.id, member.id)
+    end
+
+    it "generates slugs that never collide with existing rooms of the same name" do
+      persistent = Fabricate(:resenha_room, name: "Call")
+      first = described_class.create!(creator: creator, name: "Call")
+      second = described_class.create!(creator: creator, name: "Call")
+
+      expect([persistent.slug, first.slug, second.slug].uniq.size).to eq(3)
+      expect(first.slug).to start_with("call-")
+    end
+
+    it "makes all parties moderators when passed as such, so any of them can invite" do
+      room = described_class.create!(creator: creator, name: "Call", moderators: [member, creator])
+
+      expect(room.moderator_ids).to contain_exactly(creator.id, member.id)
+      expect(member.guardian.can_manage_resenha_room?(room)).to eq(true)
+    end
+
+    it "keeps the moderator role for a user listed as both moderator and member" do
+      room =
+        described_class.create!(
+          creator: creator,
+          name: "Call",
+          members: [member],
+          moderators: [member],
+        )
+
+      expect(room.moderator_ids).to contain_exactly(creator.id, member.id)
+    end
+
+    it "passes room attributes through" do
+      room =
+        described_class.create!(
+          creator: creator,
+          name: "Event stage",
+          public: true,
+          room_type: Resenha::Room::ROOM_TYPE_STAGE,
+        )
+
+      expect(room.public).to eq(true)
+      expect(room.stage?).to eq(true)
+    end
+
+    it "does not broadcast a directory event" do
+      messages =
+        MessageBus.track_publish(Resenha.room_index_channel) do
+          described_class.create!(creator: creator, name: "Call", members: [member])
+        end
+
+      expect(messages).to be_empty
+    end
+  end
+
+  describe ".cleanup!" do
+    fab!(:persistent_room) { Fabricate(:resenha_room) }
+
+    before { SiteSetting.resenha_ephemeral_room_ttl_minutes = 30 }
+
+    it "destroys an ephemeral room empty past the TTL and clears its live state" do
+      room = Fabricate(:resenha_ephemeral_room, last_occupied_at: 31.minutes.ago)
+      Resenha::ParticipantTracker.pin_transport!(room.id, "mesh")
+
+      described_class.cleanup!
+
+      expect(Resenha::Room.exists?(room.id)).to eq(false)
+      expect(Resenha::ParticipantTracker.pinned_transport(room.id)).to be_nil
+    end
+
+    it "uses created_at when the room was never occupied" do
+      room = Fabricate(:resenha_ephemeral_room, last_occupied_at: nil, created_at: 31.minutes.ago)
+
+      described_class.cleanup!
+
+      expect(Resenha::Room.exists?(room.id)).to eq(false)
+    end
+
+    it "keeps an ephemeral room emptied more recently than the TTL" do
+      room = Fabricate(:resenha_ephemeral_room, last_occupied_at: 5.minutes.ago)
+
+      described_class.cleanup!
+
+      expect(Resenha::Room.exists?(room.id)).to eq(true)
+    end
+
+    it "resets the clock on an occupied ephemeral room instead of destroying it" do
+      room = Fabricate(:resenha_ephemeral_room, last_occupied_at: 31.minutes.ago)
+      Resenha::ParticipantTracker.add(room.id, Fabricate(:user).id)
+
+      described_class.cleanup!
+
+      expect(room.reload.last_occupied_at).to be_within(1.minute).of(Time.current)
+    end
+
+    it "never touches persistent rooms" do
+      persistent_room.update_column(:last_occupied_at, 2.days.ago)
+
+      expect { described_class.cleanup! }.not_to change { Resenha::Room.persistent.count }
+    end
+  end
+
+  describe ".destroy!" do
+    it "refuses to tear down a persistent room" do
+      room = Fabricate(:resenha_room)
+
+      expect { described_class.destroy!(room) }.to raise_error(Discourse::InvalidParameters)
+      expect(Resenha::Room.exists?(room.id)).to eq(true)
+    end
+  end
+end

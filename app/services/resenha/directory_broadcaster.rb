@@ -21,6 +21,10 @@ module Resenha
     end
 
     def broadcast
+      # Ephemeral rooms never appear in the directory, so clients must not
+      # receive index events that would splice them into it.
+      return if room.ephemeral?
+
       # MessageBus rejects an empty user_ids target, and there is nobody to
       # notify anyway.
       return if targets[:user_ids] == []

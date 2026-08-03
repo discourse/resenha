@@ -30,6 +30,14 @@ RSpec.describe Resenha::DefaultRoomSeeder do
     expect { described_class.ensure! }.not_to change { Resenha::Room.count }
   end
 
+  it "still seeds when only ephemeral rooms exist" do
+    SiteSetting.resenha_enabled = true
+    wipe_rooms!
+    Fabricate(:resenha_ephemeral_room, creator: Fabricate(:admin))
+
+    expect { described_class.ensure! }.to change { Resenha::Room.persistent.count }.by(1)
+  end
+
   it "does nothing if rooms already exist" do
     SiteSetting.resenha_enabled = true
     wipe_rooms!

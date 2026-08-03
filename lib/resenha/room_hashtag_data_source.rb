@@ -79,6 +79,7 @@ module Resenha
       return [] unless guardian.can_access_resenha? || guardian.resenha_public_access?
 
       scope
+        .persistent
         .includes(:room_memberships)
         .order(:name)
         .select { |room| guardian.can_see_resenha_room?(room) }

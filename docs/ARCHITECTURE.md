@@ -5,12 +5,13 @@ Resenha adds lightweight WebRTC voice rooms to Discourse without proxying audio/
 ## Backend
 
 - **Models**
-  - `Resenha::Room`: describes each voice space and keeps ownership, slug, visibility, and capacity metadata. Creator is automatically promoted to room moderator.
+  - `Resenha::Room`: describes each voice space and keeps ownership, slug, visibility, and capacity metadata. Creator is automatically promoted to room moderator. Rooms flagged `ephemeral` are short-lived rooms created programmatically by other features and are excluded from every discovery surface (see [ephemeral-rooms.md](./ephemeral-rooms.md)).
   - `Resenha::RoomMembership`: links users to rooms while storing participant/moderator roles.
 - **Services**
   - `Resenha::ParticipantTracker`: stores the list of actively connected users per room in Redis with a short TTL. Join/leave actions refresh MessageBus subscribers. Also pins each live call's transport (`mesh` or `livekit`) so every participant of a call is on the same one; the pin clears when the room empties.
   - `Resenha::RoomBroadcaster`: emits participant snapshots to `/resenha/rooms/:id` MessageBus channels so Ember clients can update sidebars in real time.
-  - `Resenha::DirectoryBroadcaster`: keeps the sidebar list in sync across clients by broadcasting CRUD events to `/resenha/rooms/index`.
+  - `Resenha::DirectoryBroadcaster`: keeps the sidebar list in sync across clients by broadcasting CRUD events to `/resenha/rooms/index`. Skips ephemeral rooms, which never appear in the directory.
+  - `Resenha::EphemeralRoomManager`: the only entry point for creating ephemeral rooms, plus their TTL-based reaping (driven by a scheduled job). Contract in [ephemeral-rooms.md](./ephemeral-rooms.md).
   - `Resenha::SignalRelay`: relays raw WebRTC SDP/ICE payloads between peers via MessageBus without touching media data (mesh rooms only).
   - `Resenha::Livekit`: mints short-lived, least-privilege LiveKit access tokens (HS256 JWT) and resolves whether a room is eligible for the SFU per `resenha_livekit_room_policy`. `Resenha::Livekit::RoomServiceClient` mirrors kicks, role changes, and room deletion to the LiveKit server best-effort via Twirp-JSON.
 - **Controllers**

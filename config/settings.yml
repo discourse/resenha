@@ -16,6 +16,10 @@ plugins:
     refresh: true
   resenha_max_rooms_per_user:
     default: 5
+  resenha_ephemeral_room_ttl_minutes:
+    default: 30
+    min: 5
+    max: 10080
   resenha_participant_ttl_seconds:
     default: 30
   resenha_stun_servers:
