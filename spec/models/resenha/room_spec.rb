@@ -31,6 +31,16 @@ RSpec.describe Resenha::Room do
 
   fab!(:room) { Fabricate(:resenha_room) }
 
+  describe "slug generation" do
+    it "appends a random suffix for ephemeral rooms so generic names never collide" do
+      persistent = Fabricate(:resenha_room, name: "Call")
+      ephemeral = Fabricate(:resenha_ephemeral_room, name: "Call")
+
+      expect(persistent.slug).to eq("call")
+      expect(ephemeral.slug).to match(/\Acall-\h{8}\z/)
+    end
+  end
+
   describe "#video_allowed?" do
     before { SiteSetting.resenha_video_enabled = true }
 

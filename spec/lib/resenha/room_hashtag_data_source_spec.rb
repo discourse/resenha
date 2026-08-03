@@ -128,6 +128,13 @@ RSpec.describe Resenha::RoomHashtagDataSource do
       )
     end
 
+    it "never returns ephemeral rooms" do
+      ephemeral = Fabricate(:resenha_ephemeral_room, name: "General Call", public: true, creator:)
+
+      expect(described_class.lookup(guardian, [ephemeral.slug])).to be_empty
+      expect(described_class.search(guardian, "general call", 5)).to be_empty
+    end
+
     it "returns nothing for users outside resenha_allowed_groups" do
       SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:staff].to_s
       expect(described_class.lookup(guardian, ["general"])).to be_empty

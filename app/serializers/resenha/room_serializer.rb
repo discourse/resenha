@@ -8,6 +8,7 @@ module Resenha
                :description,
                :cooked_description,
                :public,
+               :ephemeral,
                :room_type,
                :max_participants,
                :created_at,

@@ -40,6 +40,8 @@ module Resenha
     after_commit :ensure_creator_membership, on: :create
 
     scope :public_rooms, -> { where(public: true) }
+    scope :persistent, -> { where(ephemeral: false) }
+    scope :ephemeral, -> { where(ephemeral: true) }
 
     # Strict by design: the column is an integer, so letting an unknown name
     # through means AR casts it with to_i and silently produces an open room.
@@ -113,7 +115,12 @@ module Resenha
     private
 
     def ensure_slug
-      self.slug = Slug.for(name) if slug.blank? && name.present?
+      return if slug.present? || name.blank?
+
+      # Ephemeral rooms are created programmatically with generic names
+      # ("Call", an event title), so a bare Slug.for would collide with the
+      # persistent room that already owns that slug.
+      self.slug = ephemeral? ? "#{Slug.for(name)}-#{SecureRandom.hex(4)}" : Slug.for(name)
     end
 
     def cook_description
@@ -152,6 +159,8 @@ end
 #  chat_thread_title_template :string
 #  cooked_description         :text
 #  description                :text
+#  ephemeral                  :boolean          default(FALSE), not null
+#  last_occupied_at           :datetime
 #  livekit_enabled            :boolean          default(FALSE), not null
 #  max_participants           :integer
 #  max_quality_profile        :integer
@@ -169,6 +178,7 @@ end
 #
 #  index_resenha_rooms_on_chat_channel_id  (chat_channel_id)
 #  index_resenha_rooms_on_creator_id       (creator_id)
+#  index_resenha_rooms_on_ephemeral        (id) WHERE ephemeral
 #  index_resenha_rooms_on_slug             (slug) UNIQUE
 #
 # Foreign Keys

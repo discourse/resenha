@@ -89,6 +89,16 @@ RSpec.describe Resenha::RoomsController do
       expect(room_ids).to include(private_room.id)
     end
 
+    it "never lists ephemeral rooms, even to their members or staff" do
+      ephemeral = Fabricate(:resenha_ephemeral_room, creator: staff, public: true)
+      sign_in(staff)
+
+      get "/resenha/rooms.json"
+
+      room_ids = response.parsed_body["rooms"].map { |listed_room| listed_room["id"] }
+      expect(room_ids).not_to include(ephemeral.id)
+    end
+
     context "when anonymous" do
       it "returns only public rooms when access is open to everyone" do
         get "/resenha/rooms.json"
@@ -112,6 +122,16 @@ RSpec.describe Resenha::RoomsController do
   end
 
   describe "#show" do
+    it "serves an ephemeral room directly, even though it is never listed" do
+      ephemeral = Fabricate(:resenha_ephemeral_room, creator: staff, public: true)
+      sign_in(user)
+
+      get "/resenha/rooms/#{ephemeral.id}.json"
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["room"]["ephemeral"]).to eq(true)
+    end
+
     it "returns 403 for a non-member who can create rooms" do
       sign_in(user)
 
@@ -152,6 +172,16 @@ RSpec.describe Resenha::RoomsController do
 
       expect(response.status).to eq(200)
       expect(response.parsed_body["room"]["name"]).to eq("Game Night")
+    end
+
+    it "does not count ephemeral rooms against the per-user room limit" do
+      SiteSetting.resenha_max_rooms_per_user = 1
+      Fabricate(:resenha_ephemeral_room, creator: user)
+      sign_in(user)
+
+      post "/resenha/rooms.json", params: { room: { name: "Game Night", public: true } }
+
+      expect(response.status).to eq(200)
     end
 
     it "denies room creation to users outside the create-room groups" do

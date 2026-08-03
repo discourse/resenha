@@ -27,4 +27,16 @@ RSpec.describe Resenha::DirectoryBroadcaster do
 
     expect(messages.first.user_ids).to contain_exactly(room.creator_id)
   end
+
+  it "never publishes events for ephemeral rooms" do
+    room = Fabricate(:resenha_ephemeral_room, public: true)
+    SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone].to_s
+
+    messages =
+      MessageBus.track_publish(Resenha.room_index_channel) do
+        described_class.broadcast(action: :created, room: room)
+      end
+
+    expect(messages).to be_empty
+  end
 end

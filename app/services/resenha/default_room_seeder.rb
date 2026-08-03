@@ -10,7 +10,7 @@ module Resenha
       return unless ActiveRecord::Base.connection.table_exists?(:resenha_rooms)
 
       DistributedMutex.synchronize(MUTEX) do
-        next if Resenha::Room.exists?
+        next if Resenha::Room.persistent.exists?
 
         room =
           Resenha::Room.create!(

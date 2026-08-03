@@ -4,3 +4,8 @@ Fabricator(:resenha_room, class_name: "Resenha::Room") do
   public { false }
   creator { Fabricate(:user) }
 end
+
+Fabricator(:resenha_ephemeral_room, from: :resenha_room) do
+  ephemeral true
+  last_occupied_at { Time.current }
+end
