@@ -84,6 +84,25 @@ RSpec.describe Jobs::Resenha::CloseOrphanedSessions do
     expect(active_session.reload.left_at).to be_nil
   end
 
+  it "closes sessions whose room has been deleted" do
+    deleted_room = Fabricate(:resenha_room)
+    session =
+      Fabricate(
+        :resenha_session,
+        user: user1,
+        room: deleted_room,
+        joined_at: 50.minutes.ago,
+        left_at: nil,
+      )
+    deleted_room.destroy!
+
+    freeze_time do
+      subject.execute({})
+
+      expect(session.reload.left_at).to be_within(1.second).of(Time.current)
+    end
+  end
+
   it "does nothing when plugin is disabled" do
     SiteSetting.resenha_enabled = false
     session =

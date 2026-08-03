@@ -241,6 +241,8 @@ en:
           avg_duration: "Avg. session duration"
           top_rooms: "Top rooms"
           room_name: "Room"
+          deleted_room: "(deleted room)"
+          deleted_user: "(deleted user)"
           top_users: "Top users"
           user: "User"
           sessions: "Sessions"

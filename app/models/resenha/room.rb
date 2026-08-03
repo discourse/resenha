@@ -181,7 +181,3 @@ end
 #  index_resenha_rooms_on_ephemeral        (id) WHERE ephemeral
 #  index_resenha_rooms_on_slug             (slug) UNIQUE
 #
-# Foreign Keys
-#
-#  fk_rails_...  (creator_id => users.id)
-#

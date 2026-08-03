@@ -127,6 +127,16 @@ after_initialize do
     refresh_chat_hashtag_configurations
   end
 
+  on(:user_destroyed) do |user|
+    # Sessions are analytics history and survive user deletion (the stats
+    # endpoints tolerate the dangling user_id). Rooms must stay owned, so
+    # they move to the system user; the roster and per-pair contact rows are
+    # meaningless without the user.
+    Resenha::Room.where(creator_id: user.id).update_all(creator_id: Discourse.system_user.id)
+    Resenha::RoomMembership.where(user_id: user.id).delete_all
+    Resenha::CoPresence.where("user_id_1 = :id OR user_id_2 = :id", id: user.id).delete_all
+  end
+
   on(:site_setting_changed) do |name, _old_value, new_value|
     if name.to_sym == :resenha_badges_enabled
       if new_value
