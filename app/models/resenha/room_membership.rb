@@ -70,5 +70,4 @@ end
 # Foreign Keys
 #
 #  fk_rails_...  (room_id => resenha_rooms.id)
-#  fk_rails_...  (user_id => users.id)
 #

@@ -89,7 +89,13 @@ export default class ResenhaDashboard extends Component {
             <tbody>
               {{#each this.rooms as |room|}}
                 <tr class="d-admin-row__content">
-                  <td class="d-admin-row__overview">{{room.room_name}}</td>
+                  <td class="d-admin-row__overview">
+                    {{#if room.room_name}}
+                      {{room.room_name}}
+                    {{else}}
+                      {{i18n "resenha.admin.dashboard.deleted_room"}}
+                    {{/if}}
+                  </td>
                   <td class="d-admin-row__detail">{{room.unique_users}}</td>
                   <td class="d-admin-row__detail">{{formatDuration
                       room.total_seconds
@@ -114,14 +120,18 @@ export default class ResenhaDashboard extends Component {
               {{#each this.users as |u|}}
                 <tr class="d-admin-row__content">
                   <td class="d-admin-row__overview">
-                    <a
-                      href="/admin/users/{{u.user_id}}/{{u.username}}"
-                      data-user-card={{u.username}}
-                      class="resenha-dashboard__user-cell"
-                    >
-                      {{avatar u imageSize="small"}}
-                      <span>{{u.username}}</span>
-                    </a>
+                    {{#if u.username}}
+                      <a
+                        href="/admin/users/{{u.user_id}}/{{u.username}}"
+                        data-user-card={{u.username}}
+                        class="resenha-dashboard__user-cell"
+                      >
+                        {{avatar u imageSize="small"}}
+                        <span>{{u.username}}</span>
+                      </a>
+                    {{else}}
+                      {{i18n "resenha.admin.dashboard.deleted_user"}}
+                    {{/if}}
                   </td>
                   <td class="d-admin-row__detail">{{u.session_count}}</td>
                   <td class="d-admin-row__detail">{{formatDuration

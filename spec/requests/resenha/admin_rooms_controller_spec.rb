@@ -295,6 +295,18 @@ RSpec.describe Resenha::AdminRoomsController do
       expect(response.status).to eq(204)
     end
 
+    it "deletes a room that has session history and keeps the sessions" do
+      session = Fabricate(:resenha_session, user: user, room: room)
+      sign_in(admin)
+
+      expect { delete "/admin/plugins/resenha/rooms/#{room.id}.json" }.to change {
+        Resenha::Room.count
+      }.by(-1)
+
+      expect(response.status).to eq(204)
+      expect(session.reload.room_id).to eq(room.id)
+    end
+
     it "returns 404 for non-existent room" do
       sign_in(admin)
       delete "/admin/plugins/resenha/rooms/99999.json"

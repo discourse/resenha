@@ -44,8 +44,3 @@ end
 #  index_resenha_co_presences_on_user_id_1_and_date  (user_id_1,date)
 #  index_resenha_co_presences_on_user_id_2_and_date  (user_id_2,date)
 #
-# Foreign Keys
-#
-#  fk_rails_...  (user_id_1 => users.id)
-#  fk_rails_...  (user_id_2 => users.id)
-#

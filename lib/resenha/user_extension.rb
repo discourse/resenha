@@ -5,10 +5,9 @@ module Resenha
     extend ActiveSupport::Concern
 
     included do
-      has_many :resenha_rooms,
-               class_name: "Resenha::Room",
-               foreign_key: :creator_id,
-               dependent: :destroy
+      # No dependent option: a deleted creator's rooms are reassigned to the
+      # system user by the plugin's user_destroyed handler, not destroyed.
+      has_many :resenha_rooms, class_name: "Resenha::Room", foreign_key: :creator_id
     end
   end
 end

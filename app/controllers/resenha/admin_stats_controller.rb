@@ -20,10 +20,11 @@ module Resenha
     def rooms
       rows =
         sessions_in_period
-          .joins("INNER JOIN resenha_rooms ON resenha_rooms.id = resenha_sessions.room_id")
+          .joins("LEFT JOIN resenha_rooms ON resenha_rooms.id = resenha_sessions.room_id")
           .group(:room_id, "resenha_rooms.name")
           .select(
             "resenha_sessions.room_id",
+            # NULL when the room was deleted; the dashboard renders a fallback.
             "resenha_rooms.name AS room_name",
             "COUNT(DISTINCT resenha_sessions.user_id) AS unique_users",
             "ROUND(SUM(#{DURATION_SQL})) AS total_seconds",

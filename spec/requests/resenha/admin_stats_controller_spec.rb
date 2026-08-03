@@ -146,6 +146,27 @@ RSpec.describe Resenha::AdminStatsController do
       expect(rooms.first["unique_users"]).to eq(1)
       expect(rooms.first["total_seconds"]).to be > 0
     end
+
+    it "keeps sessions of deleted rooms in the ranking with a null name" do
+      doomed_room = Fabricate(:resenha_room, creator: admin, name: "Doomed")
+      Fabricate(
+        :resenha_session,
+        user: user,
+        room: doomed_room,
+        joined_at: 2.hours.ago,
+        left_at: 1.hour.ago,
+      )
+      doomed_room.destroy!
+
+      sign_in(admin)
+      get "/admin/plugins/resenha/stats/rooms.json", params: { period: "weekly" }
+
+      expect(response.status).to eq(200)
+      deleted_row = response.parsed_body["rooms"].find { |r| r["room_id"] == doomed_room.id }
+      expect(deleted_row).to be_present
+      expect(deleted_row["room_name"]).to be_nil
+      expect(deleted_row["unique_users"]).to eq(1)
+    end
   end
 
   describe "#users" do
@@ -181,6 +202,27 @@ RSpec.describe Resenha::AdminStatsController do
       expect(users.first["session_count"]).to eq(1)
       expect(users.first["total_seconds"]).to be > 0
       expect(users.first["avatar_template"]).to be_present
+    end
+
+    it "keeps sessions of deleted users in the ranking with a null username" do
+      doomed_user = Fabricate(:user)
+      Fabricate(
+        :resenha_session,
+        user: doomed_user,
+        room: room,
+        joined_at: 2.hours.ago,
+        left_at: 1.hour.ago,
+      )
+      UserDestroyer.new(admin).destroy(doomed_user)
+
+      sign_in(admin)
+      get "/admin/plugins/resenha/stats/users.json", params: { period: "weekly" }
+
+      expect(response.status).to eq(200)
+      deleted_row = response.parsed_body["users"].find { |u| u["user_id"] == doomed_user.id }
+      expect(deleted_row).to be_present
+      expect(deleted_row["username"]).to be_nil
+      expect(deleted_row["session_count"]).to eq(1)
     end
   end
 end
