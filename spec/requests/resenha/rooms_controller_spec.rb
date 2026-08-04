@@ -174,6 +174,25 @@ RSpec.describe Resenha::RoomsController do
       expect(response.parsed_body["room"]["name"]).to eq("Game Night")
     end
 
+    it "accepts an optional slug and generates one when it is blank" do
+      sign_in(user)
+
+      post "/resenha/rooms.json",
+           params: {
+             room: {
+               name: "Game Night",
+               slug: "Friday Hangout",
+               public: true,
+             },
+           }
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["room"]["slug"]).to eq("friday-hangout")
+
+      post "/resenha/rooms.json", params: { room: { name: "Movie Night", slug: "", public: true } }
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["room"]["slug"]).to eq("movie-night")
+    end
+
     it "does not count ephemeral rooms against the per-user room limit" do
       SiteSetting.resenha_max_rooms_per_user = 1
       Fabricate(:resenha_ephemeral_room, creator: user)
@@ -762,6 +781,15 @@ RSpec.describe Resenha::RoomsController do
 
       expect(response.status).to eq(200)
       expect(private_room.reload.name).to eq("New name")
+    end
+
+    it "lets a room manager change the slug" do
+      sign_in(room_owner)
+
+      put "/resenha/rooms/#{private_room.id}.json", params: { room: { slug: "New Hangout" } }
+
+      expect(response.status).to eq(200)
+      expect(private_room.reload.slug).to eq("new-hangout")
     end
 
     it "keeps a stage room's type when an update sends an unknown room_type" do

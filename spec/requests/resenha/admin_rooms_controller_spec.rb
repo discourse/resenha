@@ -199,6 +199,15 @@ RSpec.describe Resenha::AdminRoomsController do
       expect(room.name).to eq("Updated Room")
     end
 
+    it "accepts a slug change" do
+      sign_in(admin)
+
+      put "/admin/plugins/resenha/rooms/#{room.id}.json", params: { room: { slug: "New Hangout" } }
+
+      expect(response.status).to eq(200)
+      expect(room.reload.slug).to eq("new-hangout")
+    end
+
     it "persists and serializes room_type so the edit form can prefill it" do
       sign_in(admin)
 
