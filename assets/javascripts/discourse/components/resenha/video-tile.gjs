@@ -6,7 +6,7 @@ import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
+import { trustHTML } from "@ember/template";
 import { avatarUrl } from "discourse/lib/avatar-utils";
 import { prioritizeNameInUx } from "discourse/lib/settings";
 import { eq } from "discourse/truth-helpers";
@@ -39,7 +39,7 @@ export default class ResenhaVideoTile extends Component {
   }
 
   get tileStyle() {
-    return htmlSafe(`aspect-ratio: ${this.aspect ?? DEFAULT_TILE_ASPECT};`);
+    return trustHTML(`aspect-ratio: ${this.aspect ?? DEFAULT_TILE_ASPECT};`);
   }
 
   @action

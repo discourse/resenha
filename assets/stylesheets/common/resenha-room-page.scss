@@ -491,7 +491,7 @@ html.discourse-touch .resenha-call-widget {
 // so instead of sitting beside it the panel becomes a full-height drawer over
 // the page (above the docked call widget). Keep in sync with the close-button
 // breakpoint in resenha-chat.scss.
-@media (max-width: 1000px) {
+@media (width <= 1000px) {
   .resenha-room-page__presentation {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) auto;

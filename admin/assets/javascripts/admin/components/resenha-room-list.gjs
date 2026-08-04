@@ -5,13 +5,13 @@ import { action } from "@ember/object";
 import { LinkTo } from "@ember/routing";
 import { service } from "@ember/service";
 import AdminConfigAreaEmptyList from "discourse/admin/components/admin-config-area-empty-list";
-import DButton from "discourse/components/d-button";
-import DPageSubheader from "discourse/components/d-page-subheader";
-import avatar from "discourse/helpers/avatar";
-import formatDate from "discourse/helpers/format-date";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { escapeExpression } from "discourse/lib/utilities";
+import DButton from "discourse/ui-kit/d-button";
+import DPageSubheader from "discourse/ui-kit/d-page-subheader";
+import dAvatar from "discourse/ui-kit/helpers/d-avatar";
+import dFormatDate from "discourse/ui-kit/helpers/d-format-date";
 import { i18n } from "discourse-i18n";
 
 export default class ResenhaRoomList extends Component {
@@ -125,7 +125,7 @@ export default class ResenhaRoomList extends Component {
                       href={{room.creator.userPath}}
                       data-user-card={{room.creator.username}}
                     >
-                      {{avatar room.creator imageSize="small"}}
+                      {{dAvatar room.creator imageSize="small"}}
                     </a>
                   {{/if}}
                 </td>
@@ -133,7 +133,7 @@ export default class ResenhaRoomList extends Component {
                   <div class="d-admin-row__mobile-label">
                     {{i18n "resenha.admin.room.created_at"}}
                   </div>
-                  {{formatDate room.created_at leaveAgo="true"}}
+                  {{dFormatDate room.created_at leaveAgo="true"}}
                 </td>
                 <td class="d-admin-row__controls resenha-rooms__controls">
                   {{#if room.live_participant_count}}

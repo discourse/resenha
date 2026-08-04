@@ -1,4 +1,5 @@
 node_modules
+.eslintcache
 /gems
 /auto_generated
 .env

@@ -6,10 +6,10 @@ import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { service } from "@ember/service";
-import DModal from "discourse/components/d-modal";
-import DToggleSwitch from "discourse/components/d-toggle-switch";
 import ComboBox from "discourse/select-kit/components/combo-box";
 import { and, not, or } from "discourse/truth-helpers";
+import DModal from "discourse/ui-kit/d-modal";
+import DToggleSwitch from "discourse/ui-kit/d-toggle-switch";
 import { i18n } from "discourse-i18n";
 import BackgroundBlurManager from "../../lib/resenha/background-blur";
 import {

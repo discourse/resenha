@@ -1851,8 +1851,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       await this.subject.join(this.room);
       await wait(50);
 
-      assert.notOk(
+      assert.strictEqual(
         this.subject.remoteStreamFor(1, 2),
+        undefined,
         "starts without a stored remote media stream when no track event has fired"
       );
 

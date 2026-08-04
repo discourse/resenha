@@ -7,10 +7,10 @@ import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { cancel, next } from "@ember/runloop";
 import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
-import DButton from "discourse/components/d-button";
+import { trustHTML } from "@ember/template";
 import DMenu from "discourse/float-kit/components/d-menu";
 import discourseLater from "discourse/lib/later";
+import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
@@ -48,7 +48,6 @@ export default class ResenhaRoomPage extends Component {
   @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
-  @service siteSettings;
 
   @tracked gridWidth = 0;
   @tracked gridHeight = 0;
@@ -261,7 +260,7 @@ export default class ResenhaRoomPage extends Component {
       return null;
     }
 
-    return htmlSafe(`--resenha-tile-height: ${rowHeight}px;`);
+    return trustHTML(`--resenha-tile-height: ${rowHeight}px;`);
   }
 
   @action

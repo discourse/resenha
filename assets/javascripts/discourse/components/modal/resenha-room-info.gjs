@@ -3,16 +3,16 @@ import { tracked } from "@glimmer/tracking";
 import { fn, hash } from "@ember/helper";
 import { action } from "@ember/object";
 import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
-import DButton from "discourse/components/d-button";
-import DModal from "discourse/components/d-modal";
-import avatar from "discourse/helpers/avatar";
-import icon from "discourse/helpers/d-icon";
+import { trustHTML } from "@ember/template";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import ComboBox from "discourse/select-kit/components/combo-box";
 import UserChooser from "discourse/select-kit/components/user-chooser";
 import { eq, notEq } from "discourse/truth-helpers";
+import DButton from "discourse/ui-kit/d-button";
+import DModal from "discourse/ui-kit/d-modal";
+import dAvatar from "discourse/ui-kit/helpers/d-avatar";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 import ResenhaRoomForm from "discourse/plugins/resenha/discourse/components/resenha-room-form";
 import roomIcon from "discourse/plugins/resenha/discourse/lib/resenha/room-icon";
@@ -196,9 +196,9 @@ export default class ResenhaRoomInfoModal extends Component {
         {{else}}
           <div class="resenha-room-info-modal__header">
             <div class="resenha-room-info-modal__icon">
-              {{icon (roomIcon this.room)}}
+              {{dIcon (roomIcon this.room)}}
               {{#unless this.room.public}}
-                {{icon "lock" class="resenha-room-info-modal__icon-badge"}}
+                {{dIcon "lock" class="resenha-room-info-modal__icon-badge"}}
               {{/unless}}
             </div>
             <div class="resenha-room-info-modal__header-content">
@@ -208,7 +208,7 @@ export default class ResenhaRoomInfoModal extends Component {
               {{#if this.room.cooked_description}}
                 <div
                   class="resenha-room-info-modal__description cooked"
-                >{{htmlSafe this.room.cooked_description}}</div>
+                >{{trustHTML this.room.cooked_description}}</div>
               {{/if}}
             </div>
             {{#if this.room.can_manage}}
@@ -225,9 +225,9 @@ export default class ResenhaRoomInfoModal extends Component {
             <div class="resenha-room-info-modal__stat">
               <span class="resenha-room-info-modal__stat-value">
                 {{#if this.room.public}}
-                  {{icon "globe"}}
+                  {{dIcon "globe"}}
                 {{else}}
-                  {{icon "lock"}}
+                  {{dIcon "lock"}}
                 {{/if}}
               </span>
               <span class="resenha-room-info-modal__stat-label">
@@ -263,7 +263,7 @@ export default class ResenhaRoomInfoModal extends Component {
           {{#if this.showMembershipManagement}}
             <div class="resenha-room-info-modal__members">
               <div class="resenha-room-info-modal__section-header">
-                {{icon "users"}}
+                {{dIcon "users"}}
                 <h3>{{i18n "resenha.room_info.members.title"}}</h3>
               </div>
 
@@ -283,7 +283,7 @@ export default class ResenhaRoomInfoModal extends Component {
                         }}"
                     >
                       <div class="resenha-room-info-modal__member-avatar">
-                        {{avatar membership.user imageSize="medium"}}
+                        {{dAvatar membership.user imageSize="medium"}}
                       </div>
                       <div class="resenha-room-info-modal__member-details">
                         <span
@@ -293,7 +293,7 @@ export default class ResenhaRoomInfoModal extends Component {
                           <span
                             class="resenha-room-info-modal__member-role --creator"
                           >
-                            {{icon "crown"}}
+                            {{dIcon "crown"}}
                             {{i18n "resenha.room_info.members.creator"}}
                           </span>
                         {{else}}

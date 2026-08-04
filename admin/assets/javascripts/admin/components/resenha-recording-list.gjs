@@ -1,13 +1,13 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
-import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
-import DButton from "discourse/components/d-button";
-import DPageSubheader from "discourse/components/d-page-subheader";
-import avatar from "discourse/helpers/avatar";
-import formatDate from "discourse/helpers/format-date";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import DButton from "discourse/ui-kit/d-button";
+import DConditionalLoadingSpinner from "discourse/ui-kit/d-conditional-loading-spinner";
+import DPageSubheader from "discourse/ui-kit/d-page-subheader";
+import dAvatar from "discourse/ui-kit/helpers/d-avatar";
+import dFormatDate from "discourse/ui-kit/helpers/d-format-date";
 import { i18n } from "discourse-i18n";
 
 const PREFIX = "resenha.admin.recordings";
@@ -29,15 +29,26 @@ function formatDuration(durationMs) {
 }
 
 export default class ResenhaRecordingList extends Component {
-  @tracked recordings = this.args.model.recordings;
-  @tracked hasMore = this.args.model.has_more;
+  @tracked extraRecordings = [];
+  @tracked hasMoreOverride = null;
   @tracked loadingMore = false;
 
   statusLabel = (status) => i18n(`${PREFIX}.status_${status}`);
+
   formatDuration = (durationMs) => formatDuration(durationMs);
+
   isDownloadUrl = (location) => /^https?:\/\//.test(location);
+
   filePath = (recording) =>
     recording.location || recording.filename || recording.filepath;
+
+  get recordings() {
+    return [...this.args.model.recordings, ...this.extraRecordings];
+  }
+
+  get hasMore() {
+    return this.hasMoreOverride ?? this.args.model.has_more;
+  }
 
   @action
   async loadMore() {
@@ -46,8 +57,8 @@ export default class ResenhaRecordingList extends Component {
       const payload = await ajax(
         `/admin/plugins/resenha/recordings.json?offset=${this.recordings.length}`
       );
-      this.recordings = [...this.recordings, ...payload.recordings];
-      this.hasMore = payload.has_more;
+      this.extraRecordings = [...this.extraRecordings, ...payload.recordings];
+      this.hasMoreOverride = payload.has_more;
     } catch (error) {
       popupAjaxError(error);
     } finally {
@@ -85,7 +96,7 @@ export default class ResenhaRecordingList extends Component {
                     {{i18n "resenha.admin.recordings.requested_by"}}
                   </div>
                   {{#if recording.started_by}}
-                    {{avatar recording.started_by imageSize="tiny"}}
+                    {{dAvatar recording.started_by imageSize="tiny"}}
                     {{recording.started_by.username}}
                   {{else}}
                     -
@@ -105,7 +116,7 @@ export default class ResenhaRecordingList extends Component {
                   <div class="d-admin-row__mobile-label">
                     {{i18n "resenha.admin.recordings.started_at"}}
                   </div>
-                  {{formatDate recording.started_at leaveAgo="true"}}
+                  {{dFormatDate recording.started_at leaveAgo="true"}}
                 </td>
                 <td class="d-admin-row__detail resenha-recordings__duration">
                   <div class="d-admin-row__mobile-label">
@@ -134,7 +145,7 @@ export default class ResenhaRecordingList extends Component {
           </tbody>
         </table>
 
-        <ConditionalLoadingSpinner @condition={{this.loadingMore}}>
+        <DConditionalLoadingSpinner @condition={{this.loadingMore}}>
           {{#if this.hasMore}}
             <DButton
               @action={{this.loadMore}}
@@ -142,7 +153,7 @@ export default class ResenhaRecordingList extends Component {
               class="btn-default resenha-recordings__load-more"
             />
           {{/if}}
-        </ConditionalLoadingSpinner>
+        </DConditionalLoadingSpinner>
       {{else}}
         <p class="resenha-recordings__empty">
           {{i18n "resenha.admin.recordings.empty"}}
