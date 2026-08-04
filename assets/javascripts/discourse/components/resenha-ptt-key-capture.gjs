@@ -3,7 +3,7 @@ import { tracked } from "@glimmer/tracking";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { modifier as modifierFn } from "ember-modifier";
-import DButton from "discourse/components/d-button";
+import DButton from "discourse/ui-kit/d-button";
 import { i18n } from "discourse-i18n";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
 
@@ -55,7 +55,6 @@ export default class ResenhaPttKeyCapture extends Component {
   }
 
   <template>
-    {{! template-lint-disable no-pointer-down-event-binding }}
     <div
       class="resenha-ptt-key-capture"
       {{on "keydown" this.onKeyDown}}

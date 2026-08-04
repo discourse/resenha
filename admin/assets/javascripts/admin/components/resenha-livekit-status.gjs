@@ -1,11 +1,11 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
-import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
-import DButton from "discourse/components/d-button";
-import icon from "discourse/helpers/d-icon";
-import formatDate from "discourse/helpers/format-date";
 import { ajax } from "discourse/lib/ajax";
+import DButton from "discourse/ui-kit/d-button";
+import DConditionalLoadingSpinner from "discourse/ui-kit/d-conditional-loading-spinner";
+import dFormatDate from "discourse/ui-kit/helpers/d-format-date";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 
 const STATE_ICONS = {
@@ -221,7 +221,7 @@ export default class ResenhaLivekitStatus extends Component {
           />
         </div>
 
-        <ConditionalLoadingSpinner @condition={{this.loading}}>
+        <DConditionalLoadingSpinner @condition={{this.loading}}>
           {{#if this.loadFailed}}
             <p class="resenha-livekit-status__load-failed">{{i18n
                 "resenha.admin.dashboard.livekit.load_failed"
@@ -230,10 +230,10 @@ export default class ResenhaLivekitStatus extends Component {
             <ul class="resenha-livekit-status__checks">
               {{#each this.checks as |check|}}
                 <li class="resenha-livekit-status__check --{{check.state}}">
-                  {{icon check.icon}}
+                  {{dIcon check.icon}}
                   <span>
                     {{check.label}}
-                    {{#if check.at}}{{formatDate
+                    {{#if check.at}}{{dFormatDate
                         check.at
                         leaveAgo="true"
                       }}{{/if}}
@@ -284,7 +284,7 @@ export default class ResenhaLivekitStatus extends Component {
                         >
                           {{#if row.error}}
                             <span class="--error">
-                              {{icon "circle-xmark"}}
+                              {{dIcon "circle-xmark"}}
                               {{i18n
                                 "resenha.admin.dashboard.livekit.room_error"
                                 error=row.error
@@ -292,13 +292,13 @@ export default class ResenhaLivekitStatus extends Component {
                             </span>
                           {{else if row.inSync}}
                             <span class="--ok">
-                              {{icon "circle-check"}}
+                              {{dIcon "circle-check"}}
                               {{i18n "resenha.admin.dashboard.livekit.in_sync"}}
                             </span>
                           {{else if row.probed}}
                             {{#if row.missingOnLivekit}}
                               <div class="--warning">
-                                {{icon "triangle-exclamation"}}
+                                {{dIcon "triangle-exclamation"}}
                                 {{i18n
                                   "resenha.admin.dashboard.livekit.missing_on_livekit"
                                   users=row.missingOnLivekit
@@ -307,7 +307,7 @@ export default class ResenhaLivekitStatus extends Component {
                             {{/if}}
                             {{#if row.missingInPresence}}
                               <div class="--warning">
-                                {{icon "triangle-exclamation"}}
+                                {{dIcon "triangle-exclamation"}}
                                 {{i18n
                                   "resenha.admin.dashboard.livekit.missing_in_presence"
                                   users=row.missingInPresence
@@ -329,7 +329,7 @@ export default class ResenhaLivekitStatus extends Component {
               {{/if}}
             {{/if}}
           {{/if}}
-        </ConditionalLoadingSpinner>
+        </DConditionalLoadingSpinner>
       </div>
     {{/if}}
   </template>

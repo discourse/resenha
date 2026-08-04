@@ -1,8 +1,8 @@
 import Component from "@glimmer/component";
 import { action } from "@ember/object";
 import { service } from "@ember/service";
-import DButton from "discourse/components/d-button";
-import DropdownMenu from "discourse/components/dropdown-menu";
+import DButton from "discourse/ui-kit/d-button";
+import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 
 export default class ResenhaRoomSidebarContextMenu extends Component {
@@ -51,7 +51,7 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
   }
 
   <template>
-    <DropdownMenu class="resenha-room-sidebar-context-menu" as |dropdown|>
+    <DDropdownMenu class="resenha-room-sidebar-context-menu" as |dropdown|>
       <dropdown.item>
         <DButton
           @action={{this.openRoomPage}}
@@ -109,6 +109,6 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
           />
         </dropdown.item>
       {{/if}}
-    </DropdownMenu>
+    </DDropdownMenu>
   </template>
 }

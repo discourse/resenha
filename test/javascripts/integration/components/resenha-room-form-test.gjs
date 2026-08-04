@@ -1,5 +1,5 @@
 import Service from "@ember/service";
-import { find, render } from "@ember/test-helpers";
+import { render } from "@ember/test-helpers";
 import { module, test } from "qunit";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
 import formKit from "discourse/tests/helpers/form-kit-helper";
@@ -72,14 +72,12 @@ module("Integration | Component | resenha-room-form", function (hooks) {
     await formKit().field("chat_channel_id").select("__NONE__");
 
     assert.dom('select[name="chat_channel_id"]').hasValue("__NONE__");
-    assert.notOk(
-      find('input[name="chat_idle_minutes"]'),
-      "idle-minutes field hides once the channel is cleared"
-    );
-    assert.notOk(
-      find('input[name="chat_thread_title_template"]'),
-      "thread-starter field hides once the channel is cleared"
-    );
+    assert
+      .dom('input[name="chat_idle_minutes"]')
+      .doesNotExist("idle-minutes field hides once the channel is cleared");
+    assert
+      .dom('input[name="chat_thread_title_template"]')
+      .doesNotExist("thread-starter field hides once the channel is cleared");
   });
 
   test("shows the media server toggle only when per-room LiveKit is available", async function (assert) {
@@ -124,7 +122,7 @@ module("Integration | Component | resenha-room-form", function (hooks) {
 
     await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
 
-    assert.notOk(find('input[name="chat_idle_minutes"]'));
-    assert.notOk(find('input[name="chat_thread_title_template"]'));
+    assert.dom('input[name="chat_idle_minutes"]').doesNotExist();
+    assert.dom('input[name="chat_thread_title_template"]').doesNotExist();
   });
 });

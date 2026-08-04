@@ -6,9 +6,9 @@ import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { next } from "@ember/runloop";
 import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
-import DButton from "discourse/components/d-button";
+import { trustHTML } from "@ember/template";
 import DMenu from "discourse/float-kit/components/d-menu";
+import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import { i18n } from "discourse-i18n";
@@ -216,7 +216,7 @@ export default class ResenhaCallWidget extends Component {
         );
         parts.push(`inset-block-start: ${top}px;`, "inset-block-end: auto;");
       }
-      return parts.length ? htmlSafe(parts.join(" ")) : null;
+      return parts.length ? trustHTML(parts.join(" ")) : null;
     }
 
     const width = this.extraMinimized
@@ -260,7 +260,7 @@ export default class ResenhaCallWidget extends Component {
       );
     }
 
-    return parts.length ? htmlSafe(parts.join(" ")) : null;
+    return parts.length ? trustHTML(parts.join(" ")) : null;
   }
 
   @action
@@ -544,7 +544,7 @@ export default class ResenhaCallWidget extends Component {
   }
 
   <template>
-    {{! template-lint-disable no-pointer-down-event-binding no-invalid-interactive }}
+    {{! eslint-disable ember/template-no-pointer-down-event-binding, ember/template-no-invalid-interactive }}
     {{#if this.shouldRender}}
       <section
         class={{dConcatClass

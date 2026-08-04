@@ -247,7 +247,7 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
     assert
       .dom(".resenha-call-widget__controls button")
       .exists({ count: 2 }, "only renders expand and leave controls");
-    assert.notOk(
+    assert.false(
       /inset-inline-start|inset-block-start/.test(
         document.querySelector(".resenha-call-widget").getAttribute("style") ??
           ""
@@ -266,7 +266,7 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
     assert
       .dom(".resenha-call-widget__tiles")
       .exists("restores the default widget content");
-    assert.notOk(
+    assert.false(
       /inset-inline-start|inset-block-start/.test(
         document.querySelector(".resenha-call-widget").getAttribute("style") ??
           ""

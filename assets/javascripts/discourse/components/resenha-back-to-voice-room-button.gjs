@@ -2,9 +2,9 @@ import Component from "@glimmer/component";
 import { fn } from "@ember/helper";
 import { action } from "@ember/object";
 import { service } from "@ember/service";
-import AsyncContent from "discourse/components/async-content";
 import { ajax } from "discourse/lib/ajax";
 import { bind } from "discourse/lib/decorators";
+import DAsyncContent from "discourse/ui-kit/d-async-content";
 import DButton from "discourse/ui-kit/d-button";
 import { i18n } from "discourse-i18n";
 
@@ -68,7 +68,7 @@ export default class ResenhaBackToVoiceRoomButton extends Component {
 
   <template>
     {{#if this.shouldLookup}}
-      <AsyncContent @asyncData={{this.loadRoom}} @context={{this.thread.id}}>
+      <DAsyncContent @asyncData={{this.loadRoom}} @context={{this.thread.id}}>
         <:loading></:loading>
         <:content as |room|>
           {{#if room}}
@@ -80,7 +80,7 @@ export default class ResenhaBackToVoiceRoomButton extends Component {
             />
           {{/if}}
         </:content>
-      </AsyncContent>
+      </DAsyncContent>
     {{/if}}
   </template>
 }

@@ -1,6 +1,6 @@
 import Component from "@glimmer/component";
 import DashboardPeriodSelector from "discourse/admin/components/dashboard-period-selector";
-import avatar from "discourse/helpers/avatar";
+import dAvatar from "discourse/ui-kit/helpers/d-avatar";
 import { i18n } from "discourse-i18n";
 import ResenhaLivekitStatus from "discourse/plugins/resenha/admin/components/resenha-livekit-status";
 
@@ -126,7 +126,7 @@ export default class ResenhaDashboard extends Component {
                         data-user-card={{u.username}}
                         class="resenha-dashboard__user-cell"
                       >
-                        {{avatar u imageSize="small"}}
+                        {{dAvatar u imageSize="small"}}
                         <span>{{u.username}}</span>
                       </a>
                     {{else}}
