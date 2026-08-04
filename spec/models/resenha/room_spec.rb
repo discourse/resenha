@@ -39,6 +39,31 @@ RSpec.describe Resenha::Room do
       expect(persistent.slug).to eq("call")
       expect(ephemeral.slug).to match(/\Acall-\h{8}\z/)
     end
+
+    it "normalizes and keeps a user-provided slug" do
+      custom = Fabricate(:resenha_room, name: "Game Night", slug: "Friday Hangout")
+
+      expect(custom.slug).to eq("friday-hangout")
+    end
+
+    it "rejects a provided slug that normalizes to nothing" do
+      custom = Fabricate.build(:resenha_room, name: "Game Night", slug: "!!!")
+
+      expect(custom).not_to be_valid
+      expect(custom.errors[:slug]).to be_present
+    end
+
+    it "keeps the existing slug when the room is renamed" do
+      room.update!(name: "Renamed room")
+
+      expect(room.reload.slug).not_to eq("renamed-room")
+    end
+
+    it "regenerates the slug from the name when it is cleared" do
+      room.update!(name: "Fresh name", slug: "")
+
+      expect(room.reload.slug).to eq("fresh-name")
+    end
   end
 
   describe "#video_allowed?" do

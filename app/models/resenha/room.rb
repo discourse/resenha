@@ -115,7 +115,16 @@ module Resenha
     private
 
     def ensure_slug
-      return if slug.present? || name.blank?
+      if slug.present?
+        # A user-provided slug is normalized rather than trusted verbatim;
+        # rejected here (instead of silently regenerating from the name) so
+        # the author learns their input was unusable.
+        self.slug = Slug.for(slug, "")
+        errors.add(:slug, :invalid) if slug.blank?
+        return
+      end
+
+      return if name.blank?
 
       # Ephemeral rooms are created programmatically with generic names
       # ("Call", an event title), so a bare Slug.for would collide with the

@@ -24,6 +24,7 @@ export default class ResenhaRoomForm extends Component {
   get formData() {
     return {
       name: this.args.room?.name || "",
+      slug: this.args.room?.slug || "",
       description: this.args.room?.description || "",
       public: this.args.room?.public ?? false,
       room_type: this.args.room?.room_type || "open",
@@ -164,6 +165,18 @@ export default class ResenhaRoomForm extends Component {
           @format="full"
           @validation="required|length:1,80"
           @placeholder={{i18n "resenha.admin.room.name_placeholder"}}
+          as |field|
+        >
+          <field.Control />
+        </form.Field>
+
+        <form.Field
+          @type="input"
+          @name="slug"
+          @title={{i18n "resenha.admin.room.slug"}}
+          @description={{i18n "resenha.admin.room.slug_help"}}
+          @format="full"
+          @placeholder={{i18n "resenha.admin.room.slug_placeholder"}}
           as |field|
         >
           <field.Control />

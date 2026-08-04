@@ -66,6 +66,7 @@ module Resenha
       permitted =
         params.require(:room).permit(
           :name,
+          :slug,
           :description,
           :public,
           :max_participants,

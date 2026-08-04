@@ -293,6 +293,9 @@ en:
         room:
           name: "Name"
           name_placeholder: "Room name"
+          slug: "Slug"
+          slug_placeholder: "room-slug"
+          slug_help: "Used in the room's URL. Leave empty to generate one from the name."
           description: "Description"
           public: "Public"
           public_help: "Public rooms are visible to all users."
