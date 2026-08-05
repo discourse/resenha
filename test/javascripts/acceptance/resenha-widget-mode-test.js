@@ -65,6 +65,28 @@ acceptance("Resenha room widget mode", function (needs) {
     assert.deepEqual(joined, [ROOM.slug], "joins the room in the background");
   });
 
+  test("accepts a valueless param", async function (assert) {
+    const { joined } = stubJoin(this);
+
+    await visit(`/resenha/r/${ROOM.slug}?widget`);
+
+    assert.strictEqual(currentURL(), "/latest", "does not open the room page");
+    assert.deepEqual(joined, [ROOM.slug], "joins the room in the background");
+  });
+
+  test("ignores an explicitly falsy param", async function (assert) {
+    const { joined } = stubJoin(this);
+
+    await visit(`/resenha/r/${ROOM.slug}?widget=false`);
+
+    assert.strictEqual(
+      currentURL(),
+      `/resenha/r/${ROOM.slug}?widget=false`,
+      "opens the room page"
+    );
+    assert.deepEqual(joined, [], "does not join");
+  });
+
   test("shows a widget the user had dismissed", async function (assert) {
     const { resenhaWebrtc } = stubJoin(this);
     resenhaWebrtc.setCallWidgetHidden(true);

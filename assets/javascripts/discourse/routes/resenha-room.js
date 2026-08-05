@@ -52,6 +52,11 @@ export default class ResenhaRoomRoute extends DiscourseRoute {
     }
 
     const { widget } = transition.to?.queryParams ?? {};
-    return widget === true || widget === "true" || widget === "1";
+
+    // A valueless `?widget` arrives as an empty string, and is the spelling a
+    // hand-written link is most likely to use.
+    return (
+      widget === "" || widget === true || widget === "true" || widget === "1"
+    );
   }
 }
