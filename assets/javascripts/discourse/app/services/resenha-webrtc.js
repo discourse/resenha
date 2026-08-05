@@ -1944,11 +1944,15 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   toggleCallWidgetHidden() {
-    this.callWidgetHidden = !this.callWidgetHidden;
+    this.setCallWidgetHidden(!this.callWidgetHidden);
+  }
+
+  setCallWidgetHidden(hidden) {
+    this.callWidgetHidden = hidden;
     try {
       localStorage.setItem(
         "resenha_call_widget_hidden",
-        this.callWidgetHidden ? "true" : "false"
+        hidden ? "true" : "false"
       );
     } catch {
       // ignore storage errors

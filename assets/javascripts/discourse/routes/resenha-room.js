@@ -1,9 +1,13 @@
 import { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
+import { defaultHomepage } from "discourse/lib/utilities";
 import DiscourseRoute from "discourse/routes/discourse";
 
 export default class ResenhaRoomRoute extends DiscourseRoute {
+  @service currentUser;
   @service resenhaRooms;
+  @service resenhaWebrtc;
+  @service router;
 
   async model(params) {
     await this.resenhaRooms.ready;
@@ -17,7 +21,37 @@ export default class ResenhaRoomRoute extends DiscourseRoute {
     return response.room;
   }
 
+  afterModel(room, transition) {
+    if (!this.#widgetRequested(transition)) {
+      return;
+    }
+
+    this.resenhaWebrtc.setCallWidgetHidden(false);
+    this.resenhaWebrtc.join(room);
+
+    // The widget only renders off the room page, so the room page is never
+    // entered: navigating within the app stays put, and a full page load lands
+    // on the homepage with the call already floating.
+    if (transition.from) {
+      transition.abort();
+      return;
+    }
+
+    this.router.replaceWith(`discovery.${defaultHomepage()}`);
+  }
+
   titleToken() {
     return this.currentModel?.name;
+  }
+
+  #widgetRequested(transition) {
+    // Anonymous visitors cannot join a call, so they get the room page and its
+    // login prompt instead.
+    if (!this.currentUser) {
+      return false;
+    }
+
+    const { widget } = transition.to?.queryParams ?? {};
+    return widget === true || widget === "true" || widget === "1";
   }
 }
