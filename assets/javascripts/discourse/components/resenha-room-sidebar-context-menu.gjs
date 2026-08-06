@@ -1,14 +1,17 @@
 import Component from "@glimmer/component";
 import { action } from "@ember/object";
 import { service } from "@ember/service";
+import { clipboardCopy } from "discourse/lib/utilities";
 import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
+import { i18n } from "discourse-i18n";
 import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 
 export default class ResenhaRoomSidebarContextMenu extends Component {
   @service modal;
   @service resenhaWebrtc;
   @service router;
+  @service toasts;
 
   get room() {
     return this.args.data.room;
@@ -27,6 +30,17 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
   @action
   openRoomInfo() {
     this.modal.show(ResenhaRoomInfoModal, { model: { room: this.room } });
+    this.args.close();
+  }
+
+  @action
+  copyRoomLink() {
+    const url = this.router.urlFor("resenha-room", this.room.slug);
+    clipboardCopy(new URL(url, window.location.origin).href);
+    this.toasts.success({
+      duration: "short",
+      data: { message: i18n("resenha.room.link_copied") },
+    });
     this.args.close();
   }
 
@@ -68,6 +82,15 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
           @label="resenha.room.info"
           @title="resenha.room.info"
           class="resenha-room-sidebar-context-menu__room-info"
+        />
+      </dropdown.item>
+      <dropdown.item>
+        <DButton
+          @action={{this.copyRoomLink}}
+          @icon="link"
+          @label="resenha.room.copy_link"
+          @title="resenha.room.copy_link"
+          class="resenha-room-sidebar-context-menu__copy-link"
         />
       </dropdown.item>
       {{#if this.room.can_manage}}

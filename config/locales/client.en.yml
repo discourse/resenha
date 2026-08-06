@@ -10,6 +10,8 @@ en:
         leave: "Leave room"
         info: "Room info"
         edit: "Edit room"
+        copy_link: "Copy link"
+        link_copied: "Link copied to clipboard"
         menu_title: "Room options"
         created: "Room created successfully."
         updated: "Room updated successfully."
