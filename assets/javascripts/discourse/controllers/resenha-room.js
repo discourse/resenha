@@ -1,4 +1,5 @@
 import Controller from "@ember/controller";
+import urlFlagSet from "discourse/plugins/resenha/discourse/lib/resenha/url-flag";
 
 export default class ResenhaRoomController extends Controller {
   queryParams = ["chat", "join", "widget"];
@@ -7,4 +8,8 @@ export default class ResenhaRoomController extends Controller {
   // Typed as a string rather than a boolean so that a valueless `?widget`
   // survives deserialization as "" instead of being coerced to false.
   widget = null;
+
+  get dockOnJoin() {
+    return urlFlagSet(this.widget);
+  }
 }

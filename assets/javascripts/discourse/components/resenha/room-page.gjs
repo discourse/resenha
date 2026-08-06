@@ -10,6 +10,7 @@ import { service } from "@ember/service";
 import { trustHTML } from "@ember/template";
 import DMenu from "discourse/float-kit/components/d-menu";
 import discourseLater from "discourse/lib/later";
+import { defaultHomepage } from "discourse/lib/utilities";
 import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
@@ -35,6 +36,8 @@ import ResenhaVideoTile from "./video-tile";
 
 const ROOM_MENU = "resenha-room-menu";
 const SUBMENU = "resenha-call-submenu";
+// Keep in sync with the `resenha-room` path in resenha-route-map.js
+const ROOM_PATH_PREFIX = "/resenha/r/";
 
 const MOBILE_VIDEO_TILE_BUDGET = 4;
 const LAYOUT_PRESENTATION = "presentation";
@@ -45,6 +48,7 @@ export default class ResenhaRoomPage extends Component {
   @service currentUser;
   @service menu;
   @service modal;
+  @service routeHistory;
   @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
@@ -270,6 +274,13 @@ export default class ResenhaRoomPage extends Component {
       return;
     }
     this.resenhaWebrtc.join(this.room);
+
+    // `?widget` asks for the call to live in the floating widget, which is a
+    // preference the join consumes, the same way `?chat` opens the chat panel.
+    if (this.args.dockOnJoin) {
+      this.resenhaWebrtc.setCallWidgetHidden(false);
+      this.dockRoom();
+    }
   }
 
   @action
@@ -279,7 +290,24 @@ export default class ResenhaRoomPage extends Component {
 
   @action
   dockRoom() {
-    this.router.transitionTo("discovery.latest");
+    // Docking keeps the call and drops the page, so the user should get their
+    // place back rather than a reset: return to where they came from, replacing
+    // the room page so going back does not land on it again.
+    //
+    // Every room page is skipped, not just the current URL: consuming `?join`
+    // leaves this room in the history under a different spelling, and returning
+    // to it would look like docking did nothing.
+    const previousURL = this.routeHistory.history.find(
+      (url) => !url.startsWith(ROOM_PATH_PREFIX)
+    );
+
+    if (previousURL) {
+      this.router.replaceWith(previousURL);
+      return;
+    }
+
+    // Nothing to return to, e.g. the room page was opened directly.
+    this.router.replaceWith(`discovery.${defaultHomepage()}`);
   }
 
   get chatAvailable() {

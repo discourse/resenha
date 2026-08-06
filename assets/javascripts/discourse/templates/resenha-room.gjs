@@ -5,5 +5,6 @@ import ResenhaRoomPage from "discourse/plugins/resenha/discourse/components/rese
     @room={{@model}}
     @openChat={{@controller.chat}}
     @autoJoin={{@controller.join}}
+    @dockOnJoin={{@controller.dockOnJoin}}
   />
 </template>
