@@ -10,6 +10,7 @@ import { service } from "@ember/service";
 import { trustHTML } from "@ember/template";
 import DMenu from "discourse/float-kit/components/d-menu";
 import discourseLater from "discourse/lib/later";
+import { defaultHomepage } from "discourse/lib/utilities";
 import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
@@ -45,6 +46,7 @@ export default class ResenhaRoomPage extends Component {
   @service currentUser;
   @service menu;
   @service modal;
+  @service routeHistory;
   @service router;
   @service resenhaRooms;
   @service resenhaWebrtc;
@@ -270,6 +272,13 @@ export default class ResenhaRoomPage extends Component {
       return;
     }
     this.resenhaWebrtc.join(this.room);
+
+    // `?widget` asks for the call to live in the floating widget, which is a
+    // preference the join consumes, the same way `?chat` opens the chat panel.
+    if (this.args.dockOnJoin) {
+      this.resenhaWebrtc.setCallWidgetHidden(false);
+      this.dockRoom();
+    }
   }
 
   @action
@@ -279,7 +288,20 @@ export default class ResenhaRoomPage extends Component {
 
   @action
   dockRoom() {
-    this.router.transitionTo("discovery.latest");
+    // Docking keeps the call and drops the page, so the user should get their
+    // place back rather than a reset: return to where they came from, replacing
+    // the room page so going back does not land on it again.
+    const previousURL = this.routeHistory.history.find(
+      (url) => url !== this.router.currentURL
+    );
+
+    if (previousURL) {
+      this.router.replaceWith(previousURL);
+      return;
+    }
+
+    // Nothing to return to, e.g. the room page was opened directly.
+    this.router.replaceWith(`discovery.${defaultHomepage()}`);
   }
 
   get chatAvailable() {
