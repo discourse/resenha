@@ -2,6 +2,7 @@ import { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
 import { defaultHomepage } from "discourse/lib/utilities";
 import DiscourseRoute from "discourse/routes/discourse";
+import urlFlagSet from "discourse/plugins/resenha/discourse/lib/resenha/url-flag";
 
 export default class ResenhaRoomRoute extends DiscourseRoute {
   @service currentUser;
@@ -22,7 +23,7 @@ export default class ResenhaRoomRoute extends DiscourseRoute {
   }
 
   afterModel(room, transition) {
-    if (!this.#widgetRequested(transition)) {
+    if (!this.#widgetJoinRequested(transition)) {
       return;
     }
 
@@ -44,19 +45,19 @@ export default class ResenhaRoomRoute extends DiscourseRoute {
     return this.currentModel?.name;
   }
 
-  #widgetRequested(transition) {
+  // `widget` says where a call should live, not that there should be one, so it
+  // composes with `join` instead of implying it. Skipping the room page is only
+  // right when both are asked for: `?widget` on its own opens the room page,
+  // which then docks whatever the user joins from there.
+  #widgetJoinRequested(transition) {
     // Anonymous visitors cannot join a call, so they get the room page and its
     // login prompt instead.
     if (!this.currentUser) {
       return false;
     }
 
-    const { widget } = transition.to?.queryParams ?? {};
+    const { join, widget } = transition.to?.queryParams ?? {};
 
-    // A valueless `?widget` arrives as an empty string, and is the spelling a
-    // hand-written link is most likely to use.
-    return (
-      widget === "" || widget === true || widget === "true" || widget === "1"
-    );
+    return urlFlagSet(widget) && urlFlagSet(join);
   }
 }
