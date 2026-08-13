@@ -24,6 +24,13 @@ module Resenha
       grant("Host", user)
     end
 
+    def self.on_invite_redeemed(invite)
+      return unless badges_enabled?
+
+      inviter = invite.invited_by
+      grant("Plus One", inviter) if inviter
+    end
+
     BADGE_GROUP_NAME = "Resenha"
 
     def self.enable_all!

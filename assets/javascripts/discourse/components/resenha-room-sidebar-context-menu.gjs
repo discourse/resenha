@@ -5,6 +5,7 @@ import { clipboardCopy } from "discourse/lib/utilities";
 import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import { i18n } from "discourse-i18n";
+import ResenhaInviteUsersModal from "./modal/resenha-invite-users";
 import ResenhaRoomInfoModal from "./modal/resenha-room-info";
 
 export default class ResenhaRoomSidebarContextMenu extends Component {
@@ -30,6 +31,12 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
   @action
   openRoomInfo() {
     this.modal.show(ResenhaRoomInfoModal, { model: { room: this.room } });
+    this.args.close();
+  }
+
+  @action
+  openInviteModal() {
+    this.modal.show(ResenhaInviteUsersModal, { model: { room: this.room } });
     this.args.close();
   }
 
@@ -84,6 +91,17 @@ export default class ResenhaRoomSidebarContextMenu extends Component {
           class="resenha-room-sidebar-context-menu__room-info"
         />
       </dropdown.item>
+      {{#if this.room.can_invite}}
+        <dropdown.item>
+          <DButton
+            @action={{this.openInviteModal}}
+            @icon="user-plus"
+            @label="resenha.invite.menu"
+            @title="resenha.invite.menu"
+            class="resenha-room-sidebar-context-menu__invite"
+          />
+        </dropdown.item>
+      {{/if}}
       <dropdown.item>
         <DButton
           @action={{this.copyRoomLink}}

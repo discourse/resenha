@@ -9,6 +9,7 @@ import BackgroundBlurManager from "../../lib/resenha/background-blur";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
 import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
 import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
+import { consumePendingInviteRef } from "../../lib/resenha/invite-ref";
 import LivekitRoomSession from "../../lib/resenha/livekit-session";
 import {
   applyOutputDevice,
@@ -555,6 +556,10 @@ export default class ResenhaWebrtcService extends Service {
         !this.siteSettings.resenha_auto_status_enabled
       ) {
         joinData.skip_status = true;
+      }
+      const invitedBy = consumePendingInviteRef(room);
+      if (invitedBy) {
+        joinData.invited_by = invitedBy;
       }
       response = await ajax(`/resenha/rooms/${room.id}/join`, {
         type: "POST",

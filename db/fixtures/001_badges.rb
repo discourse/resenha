@@ -246,6 +246,48 @@ end
   end
 end
 
+# -- Inviting (instant: Plus One, scheduled: Connector, People Magnet) --
+
+Badge.seed(:name) do |b|
+  b.name = "Plus One"
+  b.default_icon = "user-plus"
+  b.badge_type_id = BadgeType::Bronze
+  b.multiple_grant = false
+  b.target_posts = false
+  b.show_posts = false
+  b.query = nil
+  b.default_badge_grouping_id = resenha_grouping.id
+  b.trigger = Badge::Trigger::None
+  b.default_enabled = false
+  b.system = true
+end
+
+{
+  "Connector" => [BadgeType::Silver, 10, "circle-nodes"],
+  "People Magnet" => [BadgeType::Gold, 50, "magnet"],
+}.each do |name, (type, count, icon)|
+  Badge.seed(:name) do |b|
+    b.name = name
+    b.default_icon = icon
+    b.badge_type_id = type
+    b.multiple_grant = false
+    b.target_posts = false
+    b.show_posts = false
+    b.query = <<~SQL
+      SELECT invited_by_id user_id, current_timestamp granted_at
+      FROM resenha_invites
+      WHERE redeemed_at IS NOT NULL
+      GROUP BY invited_by_id
+      HAVING COUNT(DISTINCT user_id) >= #{count}
+    SQL
+    b.default_badge_grouping_id = resenha_grouping.id
+    b.trigger = Badge::Trigger::None
+    b.default_enabled = false
+    b.default_allow_title = type == BadgeType::Gold
+    b.system = true
+  end
+end
+
 # -- Standalone --
 
 Badge.seed(:name) do |b|

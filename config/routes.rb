@@ -23,6 +23,10 @@ Resenha::Engine.routes.draw do
     end
 
     resources :memberships, controller: "room_memberships", only: %i[index create update destroy]
+
+    resources :invites, only: %i[create] do
+      collection { get :suggestions }
+    end
   end
 
   # LiveKit server webhooks — machine-to-machine, authenticated by the
@@ -32,6 +36,7 @@ Resenha::Engine.routes.draw do
   get "contacts" => "contacts#index"
   get "chat_threads/:id" => "chat_threads#show", :constraints => { id: /\d+/ }
   get "r/:slug" => "page#show", :format => false
+  get "r/:slug/invited-by/:username" => "page#show", :format => false
 end
 
 Discourse::Application.routes.draw do

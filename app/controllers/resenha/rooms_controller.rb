@@ -161,6 +161,16 @@ module Resenha
       participants = Resenha::ParticipantTracker.list(@room.id)
       Resenha::BadgeGranterHooks.on_join(current_user, @room, participants)
 
+      if params[:invited_by].present?
+        invite =
+          Resenha::Invite.redeem!(
+            room: @room,
+            user: current_user,
+            inviter_username: params[:invited_by],
+          )
+        Resenha::BadgeGranterHooks.on_invite_redeemed(invite) if invite
+      end
+
       if params[:skip_status].blank?
         Resenha::UserStatusManager.set_voice_status(current_user, @room)
       end

@@ -3,6 +3,7 @@ require "rails_helper"
 require_relative "../../../db/migrate/20241107000000_create_resenha_rooms"
 require_relative "../../../db/migrate/20260612135211_add_video_enabled_to_resenha_rooms"
 require_relative "../../../db/migrate/20260630183841_add_chat_settings_to_resenha_rooms"
+require_relative "../../../db/migrate/20260813160047_create_resenha_invites"
 
 RSpec.describe Resenha::RoomsController do
   before do
@@ -15,6 +16,9 @@ RSpec.describe Resenha::RoomsController do
       end
       unless ActiveRecord::Base.connection.column_exists?(:resenha_rooms, :chat_channel_id)
         AddChatSettingsToResenhaRooms.new.change
+      end
+      unless ActiveRecord::Base.connection.table_exists?(:resenha_invites)
+        CreateResenhaInvites.new.change
       end
     end
     Resenha::Room.reset_column_information
@@ -240,6 +244,49 @@ RSpec.describe Resenha::RoomsController do
       post "/resenha/rooms/#{private_room.id}/join.json"
 
       expect(response.status).to eq(200)
+    end
+
+    it "redeems a pending invite when joining with the inviter's username" do
+      invite =
+        Resenha::Invite.create!(
+          room_id: room.id,
+          user_id: user.id,
+          invited_by_id: other_participant.id,
+          source: Resenha::Invite::SOURCES[:notification],
+        )
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json", params: { invited_by: other_participant.username }
+
+      expect(response.status).to eq(200)
+      expect(invite.reload.redeemed_at).to be_present
+    end
+
+    it "records a link invite when joining through a shared invite URL, only once" do
+      sign_in(user)
+
+      2.times do
+        post "/resenha/rooms/#{room.id}/join.json",
+             params: {
+               invited_by: other_participant.username,
+             }
+        delete "/resenha/rooms/#{room.id}/leave.json"
+      end
+
+      invites = Resenha::Invite.where(room_id: room.id, user_id: user.id)
+      expect(invites.count).to eq(1)
+      expect(invites.first.source).to eq(Resenha::Invite::SOURCES[:link])
+      expect(invites.first.invited_by_id).to eq(other_participant.id)
+      expect(invites.first.redeemed_at).to be_present
+    end
+
+    it "does not let users credit themselves through their own invite link" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json", params: { invited_by: user.username }
+
+      expect(response.status).to eq(200)
+      expect(Resenha::Invite.count).to eq(0)
     end
 
     it "returns the ICE configuration with per-user TURN credentials" do
