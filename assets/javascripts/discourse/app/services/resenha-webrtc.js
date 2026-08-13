@@ -9,6 +9,7 @@ import BackgroundBlurManager from "../../lib/resenha/background-blur";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
 import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
 import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
+import { consumePendingInviteRef } from "../../lib/resenha/invite-ref";
 import LivekitRoomSession from "../../lib/resenha/livekit-session";
 import {
   applyOutputDevice,
@@ -100,11 +101,6 @@ export default class ResenhaWebrtcService extends Service {
   #roleChangeInProgress = new Set();
   #activeRoomIds = new Set();
   #joinRevision = 0;
-
-  // Inviter username carried by the invite URL the user arrived through
-  // (/resenha/r/:slug/invited-by/:username), held until they actually join
-  // that room so the server can credit the inviter.
-  #pendingInviteRef = null;
   #connectingParticipantSnapshots = new Map();
   #connectingSignalQueue = new Map();
   // Per-room transport tag ("mesh" | "livekit"), read from the join response.
@@ -509,19 +505,6 @@ export default class ResenhaWebrtcService extends Service {
     // "aborted": the session was torn down (leave, new join) mid-ladder.
   }
 
-  setPendingInviteRef(roomSlug, username) {
-    this.#pendingInviteRef = { roomSlug, username };
-  }
-
-  #consumePendingInviteRef(room) {
-    const ref = this.#pendingInviteRef;
-    if (!ref || ref.roomSlug !== room.slug) {
-      return null;
-    }
-    this.#pendingInviteRef = null;
-    return ref.username;
-  }
-
   async join(room) {
     if (!room?.id) {
       return;
@@ -574,7 +557,7 @@ export default class ResenhaWebrtcService extends Service {
       ) {
         joinData.skip_status = true;
       }
-      const invitedBy = this.#consumePendingInviteRef(room);
+      const invitedBy = consumePendingInviteRef(room);
       if (invitedBy) {
         joinData.invited_by = invitedBy;
       }
