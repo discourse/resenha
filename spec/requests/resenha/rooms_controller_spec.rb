@@ -309,6 +309,17 @@ RSpec.describe Resenha::RoomsController do
         expect(user.user_status.description).to eq("In #{room.name}")
       end
 
+      it "does not put a private room's name in the status" do
+        sign_in(private_room_member)
+
+        post "/resenha/rooms/#{private_room.id}/join.json"
+
+        private_room_member.reload
+        expect(private_room_member.user_status.emoji).to eq("studio_microphone")
+        expect(private_room_member.user_status.description).to eq("In a voice room")
+        expect(private_room_member.user_status.description).not_to include(private_room.name)
+      end
+
       it "skips status when user already has one" do
         sign_in(user)
         user.set_status!("Busy", "no_entry")

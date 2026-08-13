@@ -6,7 +6,7 @@ en:
     resenha_max_rooms_per_user: "Maximum number of voice rooms a single user can own. Temporary rooms created automatically by other features do not count."
     resenha_ephemeral_room_ttl_minutes: "Minutes a temporary room (created automatically by another feature, such as a direct call) can sit empty before it is deleted. Rooms with people in them are never deleted."
     resenha_participant_ttl_seconds: "Seconds to keep active speaker presence in Redis before automatic cleanup. Client heartbeat refreshes every 10 seconds."
-    resenha_auto_status_enabled: "Automatically set user status when they join a voice room (e.g. '🎙️ In Watercooler'). Requires the 'enable user status' site setting."
+    resenha_auto_status_enabled: "Automatically set user status when they join a voice room (e.g. '🎙️ In Watercooler'). Only public rooms are named: a status is visible to everyone, so private and temporary rooms show '🎙️ In a voice room' instead. Requires the 'enable user status' site setting."
     resenha_badges_enabled: "Enable voice chat badges. Grants badges for voice room milestones like time spent, rooms visited, and connections made."
     resenha_idle_threshold_minutes: "Minutes of inactivity before a voice room participant is marked as idle. Set to 0 to disable."
     resenha_afk_auto_mute_threshold_minutes: "Minutes of inactivity before a voice room participant is automatically muted. Set to 0 to disable."
@@ -42,6 +42,11 @@ en:
       watercooler_description: "Join for casual drop-in voice chats with other community members."
     chat:
       default_thread_title: "Voice chat at {time}"
+    user_status:
+      in_room: "In %{room}"
+      afk_in_room: "AFK in %{room}"
+      in_voice_room: "In a voice room"
+      afk_in_voice_room: "AFK in a voice room"
     errors:
       not_enabled: "Resenha voice rooms are disabled."
       not_authorized: "You are not allowed to perform that action for this room."

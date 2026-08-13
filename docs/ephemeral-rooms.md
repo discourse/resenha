@@ -25,6 +25,12 @@ An ephemeral room:
 - **Does not count** against `resenha_max_rooms_per_user` (rooms are created
   *for* users by features), and does not satisfy the default-room seeder's
   "a room already exists" check.
+- **Is never named in a user's status**: a user status is stored as one string
+  and rendered to everyone who can see that user, with no audience of its own,
+  so participants in an ephemeral room get a generic "In a voice room" instead
+  of the room's name. A consumer may therefore name its rooms after whatever
+  makes them recognizable to its own users — the other party in a call, an
+  event, a chat channel — without that name reaching the whole site.
 - **Is reaped automatically** once it sits empty past
   `resenha_ephemeral_room_ttl_minutes` (see Lifecycle below).
 
