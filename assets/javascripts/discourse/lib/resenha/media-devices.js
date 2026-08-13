@@ -52,13 +52,16 @@ export function setPreferredVideoInputDeviceId(deviceId) {
   storeDevice(VIDEO_INPUT_STORAGE_KEY, deviceId);
 }
 
-// `ideal` (not `exact`) so a remembered device that is unplugged falls back
-// to the system default instead of failing getUserMedia entirely.
-export function audioConstraints(deviceId = preferredInputDeviceId()) {
+// exact: a switch must land on the requested device or fail loudly; the
+// browser can satisfy a soft request from the already-open device.
+export function audioConstraints(
+  deviceId = preferredInputDeviceId(),
+  { exact = false } = {}
+) {
   if (!deviceId || deviceId === SYSTEM_DEFAULT_DEVICE_ID) {
     return true;
   }
-  return { deviceId: { ideal: deviceId } };
+  return { deviceId: exact ? { exact: deviceId } : { ideal: deviceId } };
 }
 
 // Capture dimensions per quality tier; the encoder ceilings in
@@ -71,11 +74,11 @@ const CAMERA_CAPTURE = {
 
 // Ideal dimensions match the device orientation so a phone held in portrait
 // sends an upright portrait frame; the grid lays out whatever aspect the
-// camera actually delivers. `ideal` deviceId (not `exact`) so a remembered
-// camera that is unplugged falls back to another one instead of failing.
+// camera actually delivers.
 export function cameraConstraints(
   deviceId = preferredVideoInputDeviceId(),
-  tier = "standard"
+  tier = "standard",
+  { exact = false } = {}
 ) {
   const capture = CAMERA_CAPTURE[tier] ?? CAMERA_CAPTURE.standard;
   const portrait =
@@ -91,7 +94,7 @@ export function cameraConstraints(
   };
 
   if (deviceId && deviceId !== SYSTEM_DEFAULT_DEVICE_ID) {
-    constraints.deviceId = { ideal: deviceId };
+    constraints.deviceId = exact ? { exact: deviceId } : { ideal: deviceId };
   }
 
   return constraints;

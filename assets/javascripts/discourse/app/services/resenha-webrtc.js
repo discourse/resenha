@@ -1100,6 +1100,7 @@ export default class ResenhaWebrtcService extends Service {
   // --- Device selection & input sensitivity ---
 
   async setInputDevice(deviceId) {
+    const previousDeviceId = this.inputDeviceId;
     this.inputDeviceId = deviceId;
     setPreferredInputDeviceId(deviceId);
 
@@ -1110,11 +1111,13 @@ export default class ResenhaWebrtcService extends Service {
     let newRawStream;
     try {
       newRawStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints(deviceId),
+        audio: audioConstraints(deviceId, { exact: true }),
       });
     } catch (error) {
       // eslint-disable-next-line no-console
       console.warn("[resenha] failed to switch input device", error);
+      this.inputDeviceId = previousDeviceId;
+      setPreferredInputDeviceId(previousDeviceId);
       return false;
     }
 
@@ -1345,7 +1348,9 @@ export default class ResenhaWebrtcService extends Service {
     let newStream;
     try {
       newStream = await navigator.mediaDevices.getUserMedia({
-        video: cameraConstraints(deviceId, this.effectiveCameraQuality()),
+        video: cameraConstraints(deviceId, this.effectiveCameraQuality(), {
+          exact: true,
+        }),
       });
     } catch (error) {
       // eslint-disable-next-line no-console
