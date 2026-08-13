@@ -1015,3 +1015,22 @@
     opacity: 0.35;
   }
 }
+
+.resenha-call-menu__device-row {
+  .d-button-label {
+    flex: 1 1 auto;
+    text-align: left;
+  }
+
+  .resenha-call-menu__current-device {
+    max-width: 11em;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--primary-medium);
+  }
+
+  .d-button__suffix-icon {
+    margin-left: 0;
+  }
+}

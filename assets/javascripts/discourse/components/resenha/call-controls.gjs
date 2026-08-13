@@ -233,6 +233,24 @@ export default class ResenhaCallControls extends Component {
     };
   }
 
+  get currentInputDeviceName() {
+    return this.audioInputDevices.find(
+      (device) => device.id === this.resenhaWebrtc.inputDeviceId
+    )?.name;
+  }
+
+  get currentOutputDeviceName() {
+    return this.audioOutputDevices.find(
+      (device) => device.id === this.resenhaWebrtc.outputDeviceId
+    )?.name;
+  }
+
+  get currentVideoDeviceName() {
+    return this.videoInputDevices.find(
+      (device) => device.id === this.resenhaWebrtc.videoInputDeviceId
+    )?.name;
+  }
+
   @action
   async loadAudioDevices() {
     const { inputs, outputs } = await enumerateAudioDevices();
@@ -357,8 +375,14 @@ export default class ResenhaCallControls extends Component {
                 @icon="microphone"
                 @label="resenha.voice_settings.input_audio"
                 @suffixIcon="angle-right"
-                class="btn-transparent"
-              />
+                class="btn-transparent resenha-call-menu__device-row"
+              >
+                {{#if this.currentInputDeviceName}}
+                  <span class="resenha-call-menu__current-device">
+                    {{this.currentInputDeviceName}}
+                  </span>
+                {{/if}}
+              </DButton>
             </dropdown.item>
             {{#if this.audioOutputSupported}}
               <dropdown.item>
@@ -368,8 +392,14 @@ export default class ResenhaCallControls extends Component {
                   @icon="volume-high"
                   @label="resenha.voice_settings.output_audio"
                   @suffixIcon="angle-right"
-                  class="btn-transparent"
-                />
+                  class="btn-transparent resenha-call-menu__device-row"
+                >
+                  {{#if this.currentOutputDeviceName}}
+                    <span class="resenha-call-menu__current-device">
+                      {{this.currentOutputDeviceName}}
+                    </span>
+                  {{/if}}
+                </DButton>
               </dropdown.item>
             {{/if}}
             <dropdown.divider />
@@ -436,8 +466,14 @@ export default class ResenhaCallControls extends Component {
                   @icon="video"
                   @label="resenha.video_settings.camera"
                   @suffixIcon="angle-right"
-                  class="btn-transparent"
-                />
+                  class="btn-transparent resenha-call-menu__device-row"
+                >
+                  {{#if this.currentVideoDeviceName}}
+                    <span class="resenha-call-menu__current-device">
+                      {{this.currentVideoDeviceName}}
+                    </span>
+                  {{/if}}
+                </DButton>
               </dropdown.item>
               <dropdown.divider />
               <dropdown.item>
