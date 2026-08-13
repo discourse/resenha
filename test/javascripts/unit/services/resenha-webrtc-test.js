@@ -1955,4 +1955,90 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       "open-room participants can publish video regardless of role"
     );
   });
+
+  function createDeviceTrack(id, deviceId) {
+    return {
+      id,
+      kind: "audio",
+      enabled: true,
+      stopped: false,
+      stop() {
+        this.stopped = true;
+      },
+      getSettings() {
+        return { deviceId };
+      },
+    };
+  }
+
+  async function joinWithMic(context, rawStream) {
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    context.room.room_type = "open";
+    context.room.membership.role_name = "participant";
+    context.room.active_participants = [
+      { id: context.currentUser.id, role: "participant" },
+    ];
+    await context.subject.join(context.room);
+    return audioEnvironment;
+  }
+
+  test("setInputDevice opens the picked device with an exact constraint and swaps streams", async function (assert) {
+    const oldTrack = createDeviceTrack("track-a", "mic-a");
+    const audioEnvironment = await joinWithMic(
+      this,
+      createFakeStream("stream-a", oldTrack)
+    );
+
+    const newTrack = createDeviceTrack("track-b", "mic-b");
+    const requests = [];
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      requests.push(constraints);
+      return createFakeStream("stream-b", newTrack);
+    };
+
+    try {
+      assert.true(await this.subject.setInputDevice("mic-b"));
+      assert.deepEqual(
+        requests[0].audio.deviceId,
+        { exact: "mic-b" },
+        "requires the picked device instead of treating it as a preference"
+      );
+      assert.true(oldTrack.stopped, "stops the replaced capture");
+      assert.false(newTrack.stopped, "keeps the new capture live");
+    } finally {
+      audioEnvironment.restore();
+      localStorage.removeItem("resenha_audio_input_device");
+    }
+  });
+
+  test("setInputDevice reverts and keeps the current capture when the device can't be opened", async function (assert) {
+    const oldTrack = createDeviceTrack("track-a", "mic-a");
+    const audioEnvironment = await joinWithMic(
+      this,
+      createFakeStream("stream-a", oldTrack)
+    );
+
+    navigator.mediaDevices.getUserMedia = async () => {
+      throw new DOMException("busy", "NotReadableError");
+    };
+
+    try {
+      assert.false(await this.subject.setInputDevice("mic-b"));
+      assert.strictEqual(
+        this.subject.inputDeviceId,
+        "system_default",
+        "keeps the selection on the device that is actually live"
+      );
+      assert.false(oldTrack.stopped, "the live capture is left untouched");
+    } finally {
+      audioEnvironment.restore();
+      localStorage.removeItem("resenha_audio_input_device");
+    }
+  });
 });
