@@ -4,7 +4,8 @@ require "rails_helper"
 
 RSpec.describe Resenha::UserStatusManager do
   fab!(:user)
-  fab!(:room, :resenha_room)
+  fab!(:room) { Fabricate(:resenha_room, public: true) }
+  fab!(:private_room) { Fabricate(:resenha_room, public: false) }
 
   before do
     SiteSetting.resenha_enabled = true
@@ -22,6 +23,14 @@ RSpec.describe Resenha::UserStatusManager do
         expect(user.user_status.emoji).to eq("studio_microphone")
         expect(user.user_status.ends_at).to be_within(1.second).of(2.minutes.from_now)
       end
+    end
+
+    it "does not leak the name of a private room" do
+      described_class.set_voice_status(user, private_room)
+
+      user.reload
+      expect(user.user_status.description).to eq("In a voice room")
+      expect(user.user_status.description).not_to include(private_room.name)
     end
 
     it "skips when user already has a non-Resenha status" do
@@ -70,6 +79,15 @@ RSpec.describe Resenha::UserStatusManager do
         expect(user.user_status.emoji).to eq("zzz")
         expect(user.user_status.ends_at).to be_within(1.second).of(2.minutes.from_now)
       end
+    end
+
+    it "does not leak the name of a private room" do
+      described_class.set_voice_status(user, private_room)
+      described_class.set_afk_status(user, private_room)
+
+      user.reload
+      expect(user.user_status.description).to eq("AFK in a voice room")
+      expect(user.user_status.description).not_to include(private_room.name)
     end
 
     it "skips when the user has a non-Resenha status" do
