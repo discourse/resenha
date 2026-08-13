@@ -1821,6 +1821,158 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     }
   });
 
+  function createFakeCameraTrack(id) {
+    return {
+      id,
+      kind: "video",
+      enabled: true,
+      contentHint: "",
+      stopped: false,
+      stop() {
+        this.stopped = true;
+      },
+      addEventListener() {},
+    };
+  }
+
+  function createFakeCameraStream(id, track) {
+    return {
+      id,
+      getTracks: () => [track],
+      getVideoTracks: () => [track],
+    };
+  }
+
+  function setupCameraRoom(context) {
+    context.siteSettings.resenha_video_enabled = true;
+    context.siteSettings.resenha_video_max_publishers = 8;
+
+    context.room.room_type = "open";
+    context.room.video_enabled = true;
+    context.room.membership = { role_name: "participant" };
+    context.room.active_participants = [
+      { id: context.currentUser.id, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/state", () => response({}));
+  }
+
+  test("setVideoInputDevice releases the live camera and retries when the hardware is busy", async function (assert) {
+    setupCameraRoom(this);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: rawStream,
+    });
+
+    const frontTrack = createFakeCameraTrack("front-track");
+    const frontStream = createFakeCameraStream("front-stream", frontTrack);
+    const rearTrack = createFakeCameraTrack("rear-track");
+    const rearStream = createFakeCameraStream("rear-stream", rearTrack);
+
+    // Mimics a phone: the rear camera can't open until the front capture is
+    // released.
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      if (!constraints?.video) {
+        return rawStream;
+      }
+      if (constraints.video.deviceId?.exact === "rear") {
+        if (!frontTrack.stopped) {
+          throw new DOMException("busy", "NotReadableError");
+        }
+        return rearStream;
+      }
+      return frontStream;
+    };
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+      this.subject.setWatching(1, true);
+      await this.subject.toggleCamera();
+
+      assert.true(await this.subject.setVideoInputDevice("rear"));
+      assert.strictEqual(
+        this.subject.videoInputDeviceId,
+        "rear",
+        "the selection lands on the requested camera"
+      );
+      assert.true(
+        frontTrack.stopped,
+        "releases the current capture so the new camera can open"
+      );
+      assert.false(rearTrack.stopped, "keeps the new capture live");
+      assert.strictEqual(
+        this.subject.localVideoTrack?.id,
+        "rear-track",
+        "publishes the new camera's track"
+      );
+    } finally {
+      audioEnvironment.restore();
+      localStorage.removeItem("resenha_video_input_device");
+    }
+  });
+
+  test("setVideoInputDevice reacquires the previous camera when the retry also fails", async function (assert) {
+    setupCameraRoom(this);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: rawStream,
+    });
+
+    const frontTrack = createFakeCameraTrack("front-track");
+    const frontStream = createFakeCameraStream("front-stream", frontTrack);
+    const recoveredTrack = createFakeCameraTrack("recovered-track");
+    const recoveredStream = createFakeCameraStream(
+      "recovered-stream",
+      recoveredTrack
+    );
+
+    let frontOpens = 0;
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      if (!constraints?.video) {
+        return rawStream;
+      }
+      if (constraints.video.deviceId?.exact === "rear") {
+        throw new DOMException("busy", "NotReadableError");
+      }
+      frontOpens += 1;
+      return frontOpens === 1 ? frontStream : recoveredStream;
+    };
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+      this.subject.setWatching(1, true);
+      await this.subject.toggleCamera();
+
+      assert.false(await this.subject.setVideoInputDevice("rear"));
+      assert.strictEqual(
+        this.subject.videoInputDeviceId,
+        "system_default",
+        "keeps the selection on the camera that is actually live"
+      );
+      assert.strictEqual(
+        this.subject.localVideoKind,
+        "camera",
+        "the camera stays published"
+      );
+      assert.strictEqual(
+        this.subject.localVideoTrack?.id,
+        "recovered-track",
+        "publishes a fresh capture of the previous camera, since the old one was released for the retry"
+      );
+    } finally {
+      audioEnvironment.restore();
+      localStorage.removeItem("resenha_video_input_device");
+    }
+  });
+
   test("remote camera start exposes the negotiated video track without a refresh", async function (assert) {
     assert.timeout(2000);
 

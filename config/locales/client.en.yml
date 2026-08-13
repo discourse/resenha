@@ -75,6 +75,8 @@ en:
         screen_share_stop: "Stop sharing your screen"
         publisher_limit: "The maximum number of simultaneous video streams has been reached."
         capture_failed: "We couldn't start your camera or screen share. Check your browser permissions."
+        camera_switch_denied: "We couldn't switch cameras. Check your browser's camera permissions."
+        camera_switch_failed: "We couldn't start that camera. It may be in use by another app or unavailable."
         room_disabled: "Video was turned off in this room."
         fullscreen: "Full screen"
         exit_fullscreen: "Exit full screen"
