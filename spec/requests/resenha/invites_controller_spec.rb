@@ -63,7 +63,7 @@ RSpec.describe Resenha::InvitesController do
       )
     end
 
-    it "does not duplicate the invite when the same user is invited again" do
+    it "does not duplicate the invite or re-notify when the same user is invited again" do
       sign_in(user)
 
       2.times do
@@ -71,6 +71,72 @@ RSpec.describe Resenha::InvitesController do
       end
 
       expect(Resenha::Invite.where(room_id: room.id, user_id: invitee.id).count).to eq(1)
+      expect(
+        invitee
+          .notifications
+          .where(notification_type: Notification.types[:resenha_invitation])
+          .count,
+      ).to eq(1)
+    end
+
+    it "notifies again once an unredeemed invite is more than a day old" do
+      invite =
+        Resenha::Invite.create!(room_id: room.id, user_id: invitee.id, invited_by_id: user.id)
+      invite.update_columns(updated_at: 2.days.ago)
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/invites.json", params: { usernames: [invitee.username] }
+
+      expect(
+        invitee
+          .notifications
+          .where(notification_type: Notification.types[:resenha_invitation])
+          .count,
+      ).to eq(1)
+      expect(invite.reload.updated_at).to be_within(1.minute).of(Time.current)
+    end
+
+    it "does not notify a redeemed invite again" do
+      Resenha::Invite.create!(
+        room_id: room.id,
+        user_id: invitee.id,
+        invited_by_id: user.id,
+        redeemed_at: 2.days.ago,
+        updated_at: 2.days.ago,
+      )
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/invites.json", params: { usernames: [invitee.username] }
+
+      expect(invitee.notifications.count).to eq(0)
+    end
+
+    it "silently drops the notification when the invitee has muted the inviter" do
+      MutedUser.create!(user_id: invitee.id, muted_user_id: user.id)
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/invites.json", params: { usernames: [invitee.username] }
+
+      # Reported as invited so mute status can't be probed.
+      expect(response.parsed_body["invited_usernames"]).to eq([invitee.username])
+      expect(invitee.notifications.count).to eq(0)
+    end
+
+    it "rate limits invite notifications per day" do
+      RateLimiter.enable
+      SiteSetting.resenha_max_invites_per_day = 1
+      other_invitee = Fabricate(:user, trust_level: TrustLevel[2])
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/invites.json",
+           params: {
+             usernames: [invitee.username, other_invitee.username],
+           }
+
+      expect(response.status).to eq(429)
+      expect(
+        Notification.where(notification_type: Notification.types[:resenha_invitation]).count,
+      ).to eq(1)
     end
 
     it "skips the inviter themselves and users outside the allowed groups" do

@@ -9,7 +9,7 @@ module Resenha
 
     def create
       guardian.ensure_can_invite_to_resenha_room!(@room)
-      RateLimiter.new(current_user, "resenha-invites", 30, 1.minute).performed!
+      RateLimiter.new(current_user, "resenha-invites", 10, 1.minute).performed!
 
       usernames = Array.wrap(params.require(:usernames)).map(&:to_s).uniq
       raise Discourse::InvalidParameters.new(:usernames) if usernames.blank?

@@ -16,6 +16,10 @@ plugins:
     refresh: true
   resenha_max_rooms_per_user:
     default: 5
+  resenha_max_invites_per_day:
+    default: 100
+    min: 1
+    max: 5000
   resenha_ephemeral_room_ttl_minutes:
     default: 30
     min: 5

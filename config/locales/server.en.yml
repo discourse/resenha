@@ -4,6 +4,7 @@ en:
     resenha_allowed_groups: "Groups that can access voice rooms."
     resenha_create_room_allowed_groups: "Groups that can create new voice rooms."
     resenha_max_rooms_per_user: "Maximum number of voice rooms a single user can own. Temporary rooms created automatically by other features do not count."
+    resenha_max_invites_per_day: "Maximum number of voice room invite notifications a single user can send per day. Repeated invites to the same person in the same room don't notify again (and don't count) until a day has passed."
     resenha_ephemeral_room_ttl_minutes: "Minutes a temporary room (created automatically by another feature, such as a direct call) can sit empty before it is deleted. Rooms with people in them are never deleted."
     resenha_participant_ttl_seconds: "Seconds to keep active speaker presence in Redis before automatic cleanup. Client heartbeat refreshes every 10 seconds."
     resenha_auto_status_enabled: "Automatically set user status when they join a voice room (e.g. '🎙️ In Watercooler'). Requires the 'enable user status' site setting."
