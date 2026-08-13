@@ -49,7 +49,7 @@ end
 #
 # Indexes
 #
-#  idx_resenha_invites_redeemed                                  (invited_by_id,user_id) WHERE (redeemed_at IS NOT NULL)
+#  idx_resenha_invites_redeemed                                    (invited_by_id,user_id) WHERE (redeemed_at IS NOT NULL)
 #  index_resenha_invites_on_room_id_and_user_id_and_invited_by_id  (room_id,user_id,invited_by_id) UNIQUE
-#  index_resenha_invites_on_user_id_and_room_id                  (user_id,room_id)
+#  index_resenha_invites_on_user_id_and_room_id                    (user_id,room_id)
 #
