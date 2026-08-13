@@ -26,6 +26,7 @@ import {
   DEFAULT_TILE_ASPECT,
   trackGridSize,
 } from "../../lib/resenha/video-grid-layout";
+import ResenhaInviteUsersModal from "../modal/resenha-invite-users";
 import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
 import ResenhaCallSubmenu from "./call-submenu";
@@ -374,6 +375,12 @@ export default class ResenhaRoomPage extends Component {
   }
 
   @action
+  openInviteModal(closeMenu) {
+    closeMenu?.();
+    this.modal.show(ResenhaInviteUsersModal, { model: { room: this.room } });
+  }
+
+  @action
   dockAndClose(closeMenu) {
     closeMenu?.();
     this.dockRoom();
@@ -592,6 +599,16 @@ export default class ResenhaRoomPage extends Component {
                           class="btn-transparent"
                         />
                       </dropdown.item>
+                      {{#if this.room.can_invite}}
+                        <dropdown.item>
+                          <DButton
+                            @action={{fn this.openInviteModal roomMenu.close}}
+                            @icon="user-plus"
+                            @label="resenha.invite.menu"
+                            class="btn-transparent"
+                          />
+                        </dropdown.item>
+                      {{/if}}
                       <dropdown.item>
                         <DButton
                           @action={{fn this.openRoomInfo roomMenu.close}}

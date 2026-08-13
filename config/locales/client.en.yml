@@ -215,6 +215,22 @@ en:
           participant: "Participant"
           remove: "Remove"
           creator: "Creator"
+      invite:
+        title: "Invite to %{room_name}"
+        menu: "Invite people"
+        search_label: "Invite by name"
+        search_placeholder: "Search users..."
+        send: "Send invite"
+        invite: "Invite"
+        invited: "Invited"
+        suggestions_title: "People you've shared this room with"
+        time_together: "%{duration} together recently"
+        link_label: "Or share an invite link"
+        copy: "Copy"
+        sent:
+          one: "Invite sent."
+          other: "%{count} invites sent."
+        skipped: "%{usernames} can't be invited because they don't have access to voice rooms."
       memberships:
         add_user: "Add participant"
         remove_user: "Remove participant"
@@ -327,6 +343,10 @@ en:
           member_count: "Members"
           creator: "Created by"
           created_at: "Created"
+    notifications:
+      resenha_invitation: "invited you to join %{room_name}"
+      titles:
+        resenha_invitation: "Voice room invite"
     review:
       types:
         reviewable_resenha_user:

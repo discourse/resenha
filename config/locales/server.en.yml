@@ -92,6 +92,9 @@ en:
         ignore:
           title: "Ignore flag"
           description: "Remove the flag from the queue without taking action."
+    invite_notification:
+      title: "%{username} invited you to %{room_name}"
+      excerpt: "Join the voice room %{room_name}"
     recording_ready_pm:
       title: "Your recording of %{room_name} is ready"
       body_with_link: |
@@ -186,6 +189,18 @@ en:
       name: "Master of Ceremonies"
       description: "A room you created reached 500 total joins."
       long_description: "Awarded when a voice room you created accumulates 500 or more total joins."
+    plus_one:
+      name: "Plus One"
+      description: "Someone joined a voice room through your invite."
+      long_description: "Awarded the first time a person you invited joins a voice room through your invite."
+    connector:
+      name: "Connector"
+      description: "10 people joined voice rooms through your invites."
+      long_description: "Awarded when 10 different people join voice rooms through your invites."
+    people_magnet:
+      name: "People Magnet"
+      description: "50 people joined voice rooms through your invites."
+      long_description: "Awarded when 50 different people join voice rooms through your invites."
     night_owl:
       name: "Night Owl"
       description: "Chatted between midnight and 5 AM."

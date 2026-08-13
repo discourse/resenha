@@ -12,6 +12,7 @@ import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import { i18n } from "discourse-i18n";
+import ResenhaInviteUsersModal from "../modal/resenha-invite-users";
 import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
 import ResenhaRecordingBadge from "./recording-badge";
@@ -512,6 +513,12 @@ export default class ResenhaCallWidget extends Component {
   }
 
   @action
+  openInviteModal(closeMenu) {
+    closeMenu?.();
+    this.modal.show(ResenhaInviteUsersModal, { model: { room: this.room } });
+  }
+
+  @action
   noopAspect() {}
 
   @action
@@ -625,6 +632,16 @@ export default class ResenhaCallWidget extends Component {
                         @action={{fn this.openChatFromMenu roomMenu.close}}
                         @icon="far-comment"
                         @translatedLabel={{this.chatTitle}}
+                        class="btn-transparent"
+                      />
+                    </dropdown.item>
+                  {{/if}}
+                  {{#if this.room.can_invite}}
+                    <dropdown.item>
+                      <DButton
+                        @action={{fn this.openInviteModal roomMenu.close}}
+                        @icon="user-plus"
+                        @label="resenha.invite.menu"
                         class="btn-transparent"
                       />
                     </dropdown.item>

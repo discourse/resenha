@@ -68,6 +68,21 @@ module Resenha
       end
     end
 
+    # Inviting is sharing access you already have: anyone who can join a
+    # public room may invite others to it, while a private room's roster is a
+    # management concern — inviting there grants a membership.
+    def can_invite_to_resenha_room?(room)
+      return false unless can_join_resenha_room?(room)
+
+      room.public? || can_manage_resenha_room?(room)
+    end
+
+    def ensure_can_invite_to_resenha_room!(room)
+      unless can_invite_to_resenha_room?(room)
+        raise Discourse::InvalidAccess.new(I18n.t("resenha.errors.not_authorized"))
+      end
+    end
+
     def can_see_resenha_room?(room)
       return false unless room
       return true if can_join_resenha_room?(room)

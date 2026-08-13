@@ -18,6 +18,7 @@ module Resenha
                :active_participants,
                :creator_id,
                :can_manage,
+               :can_invite,
                :description_excerpt,
                :visit_count,
                :video_enabled,
@@ -67,6 +68,10 @@ module Resenha
     def can_manage
       return @can_manage if defined?(@can_manage)
       @can_manage = scope.can_manage_resenha_room?(object)
+    end
+
+    def can_invite
+      scope.can_invite_to_resenha_room?(object)
     end
 
     def description_excerpt

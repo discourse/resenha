@@ -195,6 +195,34 @@ RSpec.describe Resenha::BadgeGranterHooks do
     end
   end
 
+  describe ".on_invite_redeemed" do
+    fab!(:invitee) { Fabricate(:user, trust_level: TrustLevel[2]) }
+
+    def redeemed_invite
+      Resenha::Invite.create!(
+        room_id: room.id,
+        user_id: invitee.id,
+        invited_by_id: user.id,
+        redeemed_at: Time.current,
+      )
+    end
+
+    it "grants Plus One to the inviter" do
+      described_class.on_invite_redeemed(redeemed_invite)
+
+      expect(user.badges.pluck(:name)).to include("Plus One")
+      expect(invitee.badges).to be_empty
+    end
+
+    it "does nothing when badges are disabled" do
+      SiteSetting.resenha_badges_enabled = false
+
+      described_class.on_invite_redeemed(redeemed_invite)
+
+      expect(user.badges).to be_empty
+    end
+  end
+
   describe "fixture seeding" do
     def resenha_badges
       Badge.joins(:badge_grouping).where(badge_groupings: { name: "Resenha" })
@@ -203,7 +231,7 @@ RSpec.describe Resenha::BadgeGranterHooks do
     it "creates all badges as disabled" do
       described_class.disable_all!
 
-      expect(resenha_badges.count).to eq(24)
+      expect(resenha_badges.count).to eq(27)
       expect(resenha_badges.where(enabled: true).count).to eq(0)
     end
 

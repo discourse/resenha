@@ -100,6 +100,11 @@ export default class ResenhaWebrtcService extends Service {
   #roleChangeInProgress = new Set();
   #activeRoomIds = new Set();
   #joinRevision = 0;
+
+  // Inviter username carried by the invite URL the user arrived through
+  // (/resenha/r/:slug/invited-by/:username), held until they actually join
+  // that room so the server can credit the inviter.
+  #pendingInviteRef = null;
   #connectingParticipantSnapshots = new Map();
   #connectingSignalQueue = new Map();
   // Per-room transport tag ("mesh" | "livekit"), read from the join response.
@@ -504,6 +509,19 @@ export default class ResenhaWebrtcService extends Service {
     // "aborted": the session was torn down (leave, new join) mid-ladder.
   }
 
+  setPendingInviteRef(roomSlug, username) {
+    this.#pendingInviteRef = { roomSlug, username };
+  }
+
+  #consumePendingInviteRef(room) {
+    const ref = this.#pendingInviteRef;
+    if (!ref || ref.roomSlug !== room.slug) {
+      return null;
+    }
+    this.#pendingInviteRef = null;
+    return ref.username;
+  }
+
   async join(room) {
     if (!room?.id) {
       return;
@@ -555,6 +573,10 @@ export default class ResenhaWebrtcService extends Service {
         !this.siteSettings.resenha_auto_status_enabled
       ) {
         joinData.skip_status = true;
+      }
+      const invitedBy = this.#consumePendingInviteRef(room);
+      if (invitedBy) {
+        joinData.invited_by = invitedBy;
       }
       response = await ajax(`/resenha/rooms/${room.id}/join`, {
         type: "POST",

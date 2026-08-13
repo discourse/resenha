@@ -36,6 +36,14 @@ RSpec.describe Resenha::PageController do
       expect(response.body).to include("discourse")
     end
 
+    it "renders the app shell for an invite link carrying the inviter's username" do
+      sign_in(user)
+
+      get "/resenha/r/#{room.slug}/invited-by/#{staff.username_lower}"
+
+      expect(response.status).to eq(200)
+    end
+
     it "returns 404 for an unknown slug" do
       sign_in(user)
 
