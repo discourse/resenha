@@ -394,7 +394,7 @@ html.discourse-touch .resenha-call-widget {
   .resenha-call-controls__combo-main {
     border-top-right-radius: 0;
     border-bottom-right-radius: 0;
-    border-inline-end: none;
+    border-inline-end: none !important; // ensure core hover/active/focus rules don't restore the border
   }
 
   .resenha-call-controls__combo-caret {
