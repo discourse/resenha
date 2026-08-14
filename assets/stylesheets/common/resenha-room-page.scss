@@ -624,9 +624,16 @@ html.discourse-touch .resenha-call-widget {
   overflow: hidden;
   background: var(--primary-very-low);
 
-  &.--speaking {
-    outline: 3px solid var(--success);
-    outline-offset: -3px;
+  // An overlay rather than an inset outline: the video fills the tile and
+  // paints over the tile's own outline, so the ring only ever showed on
+  // avatar tiles.
+  &.--speaking::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 3px solid var(--success);
+    border-radius: inherit;
+    pointer-events: none;
   }
 
   // When the tile itself is fullscreen it fills the screen at the screen's
