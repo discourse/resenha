@@ -187,7 +187,9 @@ $resenha-widget-z: z("header") + 1;
   }
 
   // Corner hit targets for resizing. Dragging a corner moves that corner while
-  // the diagonal corner stays anchored in place.
+  // the diagonal corner stays anchored in place. Corner-specific cursors, not
+  // the double-headed nwse/nesw pair: Firefox on macOS has no glyphs for those
+  // and falls back to the default arrow, hiding the resize affordance.
   &__resize {
     position: absolute;
     z-index: 2;
@@ -198,25 +200,25 @@ $resenha-widget-z: z("header") + 1;
     &.--nw {
       inset-block-start: -5px;
       inset-inline-start: -5px;
-      cursor: nwse-resize;
+      cursor: nw-resize;
     }
 
     &.--ne {
       inset-block-start: -5px;
       inset-inline-end: -5px;
-      cursor: nesw-resize;
+      cursor: ne-resize;
     }
 
     &.--sw {
       inset-block-end: -5px;
       inset-inline-start: -5px;
-      cursor: nesw-resize;
+      cursor: sw-resize;
     }
 
     &.--se {
       inset-block-end: -5px;
       inset-inline-end: -5px;
-      cursor: nwse-resize;
+      cursor: se-resize;
     }
   }
 }
