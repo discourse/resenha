@@ -513,4 +513,33 @@ RSpec.describe Resenha::RoomsController do
       end
     end
   end
+
+  describe "expected_transport in the serialized room" do
+    before { sign_in(user) }
+
+    it "predicts mesh when livekit is unconfigured" do
+      get "/resenha/rooms/#{room.id}.json"
+
+      expect(response.parsed_body["room"]["expected_transport"]).to eq("mesh")
+    end
+
+    it "predicts livekit when configured and allowed for the room" do
+      configure_livekit!
+
+      get "/resenha/rooms/#{room.id}.json"
+
+      expect(response.parsed_body["room"]["expected_transport"]).to eq("livekit")
+    end
+
+    it "reports the pinned transport of a live call over the current resolution" do
+      post "/resenha/rooms/#{room.id}/join.json"
+      expect(response.parsed_body["transport"]).to eq("mesh")
+
+      configure_livekit!
+
+      get "/resenha/rooms/#{room.id}.json"
+
+      expect(response.parsed_body["room"]["expected_transport"]).to eq("mesh")
+    end
+  end
 end

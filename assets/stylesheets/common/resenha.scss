@@ -1131,3 +1131,25 @@
     color: var(--primary-medium);
   }
 }
+
+.resenha-mesh-privacy-warning-modal {
+  .d-modal__container {
+    max-width: 32rem;
+  }
+
+  &__body {
+    margin: 0;
+  }
+
+  &__dont-show-again {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 1rem 0 0;
+    color: var(--primary-medium);
+
+    input[type="checkbox"] {
+      margin: 0;
+    }
+  }
+}

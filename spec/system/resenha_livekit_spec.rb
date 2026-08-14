@@ -37,6 +37,7 @@ describe "Resenha LiveKit rooms", type: :system, if: ENV["RESENHA_LIVEKIT_TEST_U
     Group.refresh_automatic_groups!
 
     SiteSetting.resenha_enabled = true
+    SiteSetting.resenha_mesh_privacy_warning_enabled = false
     SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone]
     SiteSetting.resenha_video_enabled = true
 

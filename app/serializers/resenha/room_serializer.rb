@@ -28,6 +28,7 @@ module Resenha
                :chat_thread_title_template,
                :chat_available,
                :livekit_enabled,
+               :expected_transport,
                :max_quality_profile,
                :recording
 
@@ -121,6 +122,16 @@ module Resenha
     # serialized — clients learn it at join.
     def include_livekit_enabled?
       can_manage
+    end
+
+    # Best-effort prediction of the transport a join would resolve to right
+    # now, mirroring the join endpoint's resolution (pin, then availability).
+    # The pin set at join remains authoritative; this exists so clients can
+    # warn about mesh's IP exposure before joining, and a race that flips
+    # mesh → livekit only makes the warning over-cautious.
+    def expected_transport
+      Resenha::ParticipantTracker.pinned_transport(object.id) ||
+        (Resenha::Livekit.available_for?(object) ? "livekit" : "mesh")
     end
 
     # Not gated per user: an active recording is something everyone who can

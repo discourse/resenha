@@ -102,6 +102,12 @@ en:
         reconnect_failed: "The connection to the voice server was lost, so you left the call. Rejoin to reconnect."
         room_ended: "The call ended while you were disconnected. Rejoin to start a new one."
         duplicate_tab: "This call continued in another tab or window, so this one was disconnected."
+      mesh_privacy_warning:
+        title: "Before you join this room"
+        body: "This room connects participants directly to each other, so while you are in the call other participants may be able to see your IP address. This is how peer-to-peer calls work and is usually harmless, but join only if you are comfortable with it."
+        join: "Join room"
+        cancel: "Cancel"
+        dont_show_again: "Don't show this again"
       status:
         auto_update_on: "Auto-update status"
         auto_update_off: "Auto-update status"
