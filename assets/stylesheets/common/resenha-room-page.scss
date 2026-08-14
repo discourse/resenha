@@ -18,7 +18,11 @@ $resenha-widget-z: z("header") + 1;
   flex-direction: column;
   gap: 0.65rem;
   width: min(24rem, calc(100vw - 2rem));
-  max-height: min(60vh, 32rem);
+
+  // Definite (not content-driven) height: the tile grid solves against the
+  // measured tile area, so the area must be settled before the tiles size —
+  // a content-driven box would chase its own layout.
+  height: min(21rem, 60vh);
   padding: var(--space-3);
   border: 1px solid var(--primary-low);
   border-radius: 0.75rem;
@@ -46,19 +50,87 @@ $resenha-widget-z: z("header") + 1;
     white-space: nowrap;
   }
 
+  // Tiles are uniform, sized by computeWidgetGrid from this box's measured
+  // size; flex wrapping breaks lines exactly at the solved column count and
+  // centers partial rows. `contain: size` keeps a transiently oversized tile
+  // from feeding back into the measurement (see video-grid-layout.js).
   &__tiles {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    flex: 1;
+    min-height: 0;
+    contain: size;
+    display: flex;
+    flex-wrap: wrap;
+    align-content: center;
+    align-items: center;
+    justify-content: center;
     gap: var(--space-2);
-    min-height: 5rem;
-    max-height: 18rem;
-    overflow: auto;
+    overflow: hidden;
   }
 
   .resenha-video-tile {
-    width: 100%;
-    height: auto;
-    min-height: 5rem;
+    flex: 0 0 auto;
+    width: var(--resenha-tile-width, 45%);
+    height: var(--resenha-tile-height, 5rem);
+    min-height: 0;
+    transition:
+      width 0.2s ease-out,
+      height 0.2s ease-out;
+
+    @media (prefers-reduced-motion: reduce) {
+      transition: none;
+    }
+  }
+
+  &__overflow-tile {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    width: var(--resenha-tile-width, 45%);
+    height: var(--resenha-tile-height, 5rem);
+    overflow: hidden;
+    padding: 0;
+    border: none;
+    border-radius: 0.5em;
+    background: var(--primary-very-low);
+    color: var(--primary-high);
+    cursor: pointer;
+    transition:
+      width 0.2s ease-out,
+      height 0.2s ease-out,
+      background 0.15s ease;
+
+    @media (prefers-reduced-motion: reduce) {
+      transition: none;
+    }
+
+    &:hover,
+    &:focus-visible {
+      background: var(--primary-low);
+      color: var(--primary);
+    }
+  }
+
+  &__overflow-avatars {
+    display: flex;
+
+    img {
+      width: 1.75rem;
+      height: 1.75rem;
+      border: 2px solid var(--secondary);
+      border-radius: 50%;
+
+      &:not(:first-child) {
+        margin-inline-start: -0.6rem;
+      }
+    }
+  }
+
+  &__overflow-count {
+    font-weight: 700;
+    font-size: var(--font-down-1);
   }
 
   .resenha-video-tile__fullscreen {
@@ -91,17 +163,6 @@ $resenha-widget-z: z("header") + 1;
     }
   }
 
-  // Once the user sets an explicit widget height, drop the default tile cap so
-  // the video tiles can use the resized vertical space.
-  &.--resized {
-    max-height: none;
-
-    .resenha-call-widget__tiles {
-      flex: 1;
-      max-height: none;
-    }
-  }
-
   &.--resizing {
     user-select: none;
   }
@@ -109,7 +170,7 @@ $resenha-widget-z: z("header") + 1;
   &.--extra-minimized {
     width: auto;
     min-width: 0;
-    max-height: none;
+    height: auto;
     padding: var(--space-2);
 
     .resenha-call-widget__controls {
@@ -166,7 +227,11 @@ $resenha-widget-z: z("header") + 1;
 html.discourse-touch .resenha-call-widget {
   inset-inline: 0.5rem;
   width: auto;
-  max-height: 45vh;
+  height: min(19rem, 45vh);
+
+  &.--extra-minimized {
+    height: auto;
+  }
 }
 
 .resenha-room-page {

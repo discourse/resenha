@@ -1,5 +1,5 @@
 import Component from "@glimmer/component";
-import { tracked } from "@glimmer/tracking";
+import { cached, tracked } from "@glimmer/tracking";
 import { concat, fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
@@ -8,10 +8,15 @@ import { next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { trustHTML } from "@ember/template";
 import DMenu from "discourse/float-kit/components/d-menu";
+import { avatarUrl } from "discourse/lib/avatar-utils";
 import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import { i18n } from "discourse-i18n";
+import {
+  computeWidgetGrid,
+  trackGridSize,
+} from "../../lib/resenha/video-grid-layout";
 import ResenhaInviteUsersModal from "../modal/resenha-invite-users";
 import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
@@ -53,6 +58,9 @@ export default class ResenhaCallWidget extends Component {
   @tracked dragging = false;
   @tracked resizing = false;
   @tracked extraMinimized = false;
+  @tracked tileAreaWidth = 0;
+  @tracked tileAreaHeight = 0;
+  @tracked tileAreaGap = 0;
 
   resizeCorners = RESIZE_CORNERS;
 
@@ -164,21 +172,110 @@ export default class ResenhaCallWidget extends Component {
     return this.room?.active_participants || [];
   }
 
-  get tiles() {
-    let videoCount = 0;
-
-    return this.participants.map((participant) => {
-      const isSelf = participant.id === this.currentUser?.id;
-      const publishing = isSelf
-        ? !!this.resenhaWebrtc.localVideoKind
-        : participant.is_video_on || participant.is_screen_sharing;
-      const showVideo = publishing && videoCount < WIDGET_VIDEO_TILE_BUDGET;
-      if (showVideo) {
-        videoCount++;
-      }
-
-      return { participant, isSelf, showVideo };
+  get grid() {
+    return computeWidgetGrid({
+      width: this.tileAreaWidth,
+      height: this.tileAreaHeight,
+      count: this.participants.length,
+      gap: this.tileAreaGap,
     });
+  }
+
+  // Screen shares beat cameras beat everything else for the scarce widget
+  // slots. Selection only — render order stays the roster's canonical order,
+  // so tiles don't reshuffle when someone toggles a camera; a promoted
+  // participant swaps in where the roster places them.
+  @cached
+  get visibleParticipants() {
+    const participants = this.participants;
+    const shown = this.grid?.shown ?? participants.length;
+    if (shown >= participants.length) {
+      return participants;
+    }
+
+    const prioritized = [...participants].sort(
+      (a, b) => this.#tileRank(a) - this.#tileRank(b)
+    );
+    const visibleIds = new Set(
+      prioritized.slice(0, shown).map((participant) => participant.id)
+    );
+    return participants.filter((participant) => visibleIds.has(participant.id));
+  }
+
+  get hiddenParticipants() {
+    const visibleIds = new Set(
+      this.visibleParticipants.map((participant) => participant.id)
+    );
+    return this.participants.filter(
+      (participant) => !visibleIds.has(participant.id)
+    );
+  }
+
+  #tileRank(participant) {
+    if (participant.id === this.currentUser?.id) {
+      const kind = this.resenhaWebrtc.localVideoKind;
+      return kind === "screen" ? 0 : kind ? 1 : 2;
+    }
+    if (participant.is_screen_sharing) {
+      return 0;
+    }
+    return participant.is_video_on ? 1 : 2;
+  }
+
+  #isPublishing(participant) {
+    if (participant.id === this.currentUser?.id) {
+      return !!this.resenhaWebrtc.localVideoKind;
+    }
+    return participant.is_video_on || participant.is_screen_sharing;
+  }
+
+  get tiles() {
+    const visible = this.visibleParticipants;
+
+    // The live-video budget follows the same priority as slot selection, so a
+    // screen share is never demoted to an avatar by roster-earlier cameras.
+    const budgeted = new Set(
+      [...visible]
+        .sort((a, b) => this.#tileRank(a) - this.#tileRank(b))
+        .filter((participant) => this.#isPublishing(participant))
+        .slice(0, WIDGET_VIDEO_TILE_BUDGET)
+        .map((participant) => participant.id)
+    );
+
+    return visible.map((participant) => ({
+      participant,
+      isSelf: participant.id === this.currentUser?.id,
+      showVideo: budgeted.has(participant.id),
+    }));
+  }
+
+  get overflowCount() {
+    return this.hiddenParticipants.length;
+  }
+
+  get overflowAvatars() {
+    return this.hiddenParticipants.slice(0, 3).map((participant) => ({
+      id: participant.id,
+      src: avatarUrl(participant.avatar_template, "small"),
+    }));
+  }
+
+  get overflowTitle() {
+    return i18n("resenha.widget.overflow_tile", { count: this.overflowCount });
+  }
+
+  get overflowLabel() {
+    return i18n("resenha.widget.overflow_count", { count: this.overflowCount });
+  }
+
+  get tilesStyle() {
+    const grid = this.grid;
+    if (!grid) {
+      return null;
+    }
+    return trustHTML(
+      `--resenha-tile-width: ${grid.tileWidth}px; --resenha-tile-height: ${grid.tileHeight}px;`
+    );
   }
 
   get openRoomTitle() {
@@ -195,10 +292,6 @@ export default class ResenhaCallWidget extends Component {
 
   get expandWidgetTitle() {
     return i18n("resenha.widget.expand");
-  }
-
-  get resized() {
-    return !!(this.widgetWidth && this.widgetHeight);
   }
 
   get widgetStyle() {
@@ -522,6 +615,13 @@ export default class ResenhaCallWidget extends Component {
   noopAspect() {}
 
   @action
+  updateTileAreaSize(width, height, gap) {
+    this.tileAreaWidth = width;
+    this.tileAreaHeight = height;
+    this.tileAreaGap = gap;
+  }
+
+  @action
   registerWidget(element) {
     this.widgetElement = element;
     this.watchWidgetRoom();
@@ -558,7 +658,6 @@ export default class ResenhaCallWidget extends Component {
           "resenha-call-widget"
           (if this.resizing "--resizing")
           (if this.dragging "--dragging")
-          (if this.resized "--resized")
           (if this.extraMinimized "--extra-minimized")
         }}
         style={{this.widgetStyle}}
@@ -586,7 +685,11 @@ export default class ResenhaCallWidget extends Component {
             </div>
           </header>
 
-          <div class="resenha-call-widget__tiles">
+          <div
+            class="resenha-call-widget__tiles"
+            style={{this.tilesStyle}}
+            {{trackGridSize this.updateTileAreaSize}}
+          >
             {{#each this.tiles key="participant.id" as |tile|}}
               <ResenhaVideoTile
                 @room={{this.room}}
@@ -596,6 +699,29 @@ export default class ResenhaCallWidget extends Component {
                 @onAspect={{this.noopAspect}}
               />
             {{/each}}
+
+            {{#if this.overflowCount}}
+              <button
+                type="button"
+                class="resenha-call-widget__overflow-tile"
+                title={{this.overflowTitle}}
+                aria-label={{this.overflowTitle}}
+                {{on "click" this.openRoom}}
+              >
+                <span
+                  class="resenha-call-widget__overflow-avatars"
+                  aria-hidden="true"
+                >
+                  {{#each this.overflowAvatars key="id" as |avatar|}}
+                    <img src={{avatar.src}} alt="" />
+                  {{/each}}
+                </span>
+                <span
+                  class="resenha-call-widget__overflow-count"
+                  aria-hidden="true"
+                >{{this.overflowLabel}}</span>
+              </button>
+            {{/if}}
           </div>
         {{/unless}}
 

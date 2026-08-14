@@ -71,6 +71,115 @@ export function bestRowHeight(containerWidth, containerHeight, aspects, gap) {
   return fits(rowHeight + 1) ? rowHeight + 1 : rowHeight;
 }
 
+// The widget grid trades the room page's per-tile aspect fidelity for uniform
+// tiles that pack a small box predictably; cover-cropping absorbs the
+// difference between a feed's real aspect and the cell's.
+const WIDGET_TILE_MIN_ASPECT = 4 / 3;
+
+// Smallest tile that still reads at a glance: avatar, name, status icons.
+const WIDGET_TILE_MIN_WIDTH = 88;
+const WIDGET_TILE_MIN_HEIGHT = 66;
+
+// Visual ceiling for the widget. Past this a floating mini-view stops being
+// glanceable no matter how much space it has; the room page is the place for
+// big grids.
+const WIDGET_MAX_SLOTS = 12;
+
+// Largest uniform tile for `slots` tiles in a width×height box: try every
+// column count, size the cell, clamp the tile's aspect to the allowed band,
+// keep the arrangement with the biggest tile. Ties prefer more columns — when
+// tiles are height-constrained a wider grid uses the slack width, and it
+// makes an unfloored tile width that fits `cols + 1` per line impossible
+// (that arrangement would have scored at least as high and won the tie).
+function bestGridForSlots(slots, width, height, gap) {
+  let best = null;
+
+  for (let cols = 1; cols <= slots; cols++) {
+    const rows = Math.ceil(slots / cols);
+    const cellWidth = (width - (cols - 1) * gap) / cols;
+    const cellHeight = (height - (rows - 1) * gap) / rows;
+    if (cellWidth <= 0 || cellHeight <= 0) {
+      continue;
+    }
+
+    const aspect = Math.min(
+      Math.max(cellWidth / cellHeight, WIDGET_TILE_MIN_ASPECT),
+      DEFAULT_TILE_ASPECT
+    );
+    const tileWidth = Math.min(cellWidth, cellHeight * aspect);
+    const tileHeight = tileWidth / aspect;
+    const area = tileWidth * tileHeight;
+
+    if (!best || area >= best.area) {
+      best = { cols, rows, tileWidth, tileHeight, area };
+    }
+  }
+
+  return best;
+}
+
+// Uniform grid for the floating call widget: show as many participants as fit
+// above the legibility floor, and collapse the rest into one overflow slot
+// (rendered as a "+N" tile). The search walks candidate slot counts downward —
+// fewer slots mean bigger tiles — and returns the first arrangement whose
+// tiles clear the floor, so the tile size adapts to the box and the crowd
+// instead of a fixed column template. When the box is too small for even two
+// legible slots, the floor yields rather than the tiles vanishing. Overflow is
+// never exactly one: a "+1" tile would spend the slot the hidden person could
+// have used, so the smallest overflow absorbs two.
+export function computeWidgetGrid({ width, height, count, gap }) {
+  if (!count || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const minSlots = Math.min(count, 2);
+  let fallback = null;
+
+  for (
+    let slots = Math.min(count, WIDGET_MAX_SLOTS);
+    slots >= minSlots;
+    slots--
+  ) {
+    const grid = bestGridForSlots(slots, width, height, gap);
+    if (!grid) {
+      continue;
+    }
+
+    const shown = slots === count ? count : slots - 1;
+
+    // Flooring to whole pixels can shed just enough width that cols + 1 tiles
+    // squeeze onto one flex line, breaking the solved grid. The unfloored
+    // width never fits an extra tile (see bestGridForSlots), so when the
+    // floored one does, nudge it back above that threshold — fractional, and
+    // still below the width that was proven to fit.
+    let tileWidth = Math.floor(grid.tileWidth);
+    const extraTileLimit = (width - grid.cols * gap) / (grid.cols + 1);
+    if (tileWidth <= extraTileLimit) {
+      tileWidth = (extraTileLimit + grid.tileWidth) / 2;
+    }
+
+    const layout = {
+      shown,
+      overflow: count - shown,
+      cols: grid.cols,
+      rows: grid.rows,
+      tileWidth,
+      tileHeight: Math.floor(grid.tileHeight),
+    };
+
+    if (
+      grid.tileWidth >= WIDGET_TILE_MIN_WIDTH &&
+      grid.tileHeight >= WIDGET_TILE_MIN_HEIGHT
+    ) {
+      return layout;
+    }
+
+    fallback = layout;
+  }
+
+  return fallback;
+}
+
 // Reports the grid's content box (and resolved gap) to `onResize` whenever it
 // changes, so the layout can be recomputed for the available space.
 export const trackGridSize = modifier((element, [onResize]) => {
