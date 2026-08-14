@@ -29,6 +29,8 @@ Resenha adds lightweight WebRTC voice rooms to Discourse without proxying audio/
   - `resenha-sidebar` initializer registers a sidebar section with custom links for each room. Each link swaps its label with inline avatar thumbnails (plus a counter) so active participants are visible without modifying core sidebar components.
 - **Room UI**
   - `resenha-room` route/controller fetch full room metadata, render participant lists, and command the WebRTC service to join/leave rooms. `Resenha::VoiceCanvas` mounts `<audio>` sinks for local and remote streams during active calls.
+- **On-device media processing**
+  - Optional per-user features run entirely in the participant's browser, with their runtimes/models served from the plugin's `public/javascripts/` dir (committed, refreshed by pinned `scripts/fetch-*.sh` scripts) and lazily fetched on first use: noise suppression (DTLN WASM audio worklet on the outgoing mic), camera background blur (MediaPipe selfie segmentation), and live subtitles (Moonshine speech-to-text over each remote participant's audio, viewer-side, so captions never depend on what other participants run).
 
 ## Message Flow
 

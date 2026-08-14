@@ -74,6 +74,10 @@ export default class ResenhaVoiceSettingsModal extends Component {
     return this.resenhaWebrtc.noiseSuppressionEnabled;
   }
 
+  get subtitlesAvailable() {
+    return this.resenhaWebrtc.subtitlesAvailable;
+  }
+
   get qualityOptions() {
     return this.resenhaWebrtc.allowedVoiceQualityTiers().map((tier) => ({
       id: tier,
@@ -198,6 +202,11 @@ export default class ResenhaVoiceSettingsModal extends Component {
         this.busy = false;
       }
     }
+  }
+
+  @action
+  toggleSubtitles() {
+    this.resenhaWebrtc.toggleSubtitles();
   }
 
   @action
@@ -377,6 +386,19 @@ export default class ResenhaVoiceSettingsModal extends Component {
               {{i18n "resenha.voice_settings.noise_suppression_hint"}}
             </p>
           </div>
+
+          {{#if this.subtitlesAvailable}}
+            <div class="resenha-voice-settings__field">
+              <DToggleSwitch
+                @state={{this.resenhaWebrtc.subtitlesEnabled}}
+                @label="resenha.voice_settings.subtitles"
+                {{on "click" this.toggleSubtitles}}
+              />
+              <p class="resenha-voice-settings__hint">
+                {{i18n "resenha.voice_settings.subtitles_hint"}}
+              </p>
+            </div>
+          {{/if}}
 
           {{#if this.showQuality}}
             <div class="resenha-voice-settings__field">

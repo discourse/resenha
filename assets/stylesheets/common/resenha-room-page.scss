@@ -791,3 +791,43 @@ html.discourse-touch .resenha-call-widget {
     transform: translateX(100%);
   }
 }
+
+// Live subtitles. A zero-height flow child between the video area and the
+// control bar: lines are packed toward the bottom so they overflow upward,
+// floating over the tiles without shifting the layout when they appear.
+.resenha-captions {
+  align-self: center;
+  width: min(100%, 46rem);
+  height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  row-gap: 0.25em;
+  z-index: 1;
+  pointer-events: none;
+
+  &__line {
+    margin: 0;
+    padding: 0.25em 0.75em;
+    max-width: 100%;
+    border-radius: var(--d-border-radius);
+    background: rgb(0 0 0 / 65%);
+    color: #fff;
+    text-align: center;
+    text-wrap: balance;
+
+    &.--loading {
+      color: rgb(255 255 255 / 75%);
+      font-style: italic;
+    }
+  }
+
+  &__speaker {
+    font-weight: bold;
+
+    &::after {
+      content: ":";
+    }
+  }
+}

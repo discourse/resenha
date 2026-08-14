@@ -47,6 +47,8 @@ en:
         recording_stopped_toast: "The recording has stopped."
       room_page:
         empty: "No one is here yet — join to get things started."
+      subtitles:
+        loading: "Preparing subtitles…"
       widget:
         title: "Active voice room: %{room}"
         open_chat: "Open room chat"
@@ -150,6 +152,9 @@ en:
         noise_suppression: "Suppress background noise"
         noise_suppression_hint: "Filters noise like fans and keyboard clicks from your microphone."
         noise_suppression_failed: "Noise suppression couldn't be started, so it was turned off."
+        subtitles: "Show live subtitles"
+        subtitles_hint: "Generates captions for what others say, on your device — nothing is sent anywhere. English only. Turning it on downloads a ~40 MB model once."
+        subtitles_failed: "Subtitles couldn't be started, so they were turned off."
         test_output: "Test"
         choose_output: "Choose output device"
         quality: "Audio quality"

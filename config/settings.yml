@@ -132,3 +132,6 @@ plugins:
   resenha_chat_enabled:
     default: true
     client: true
+  resenha_subtitles_enabled:
+    default: true
+    client: true

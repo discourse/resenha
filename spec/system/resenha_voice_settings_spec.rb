@@ -39,4 +39,24 @@ describe "Resenha voice settings", type: :system do
       expect(page).to have_content(I18n.t("js.resenha.voice_settings.noise_suppression"))
     end
   end
+
+  it "offers a subtitles toggle" do
+    join_room
+    open_voice_settings
+
+    within(".resenha-voice-settings") do
+      expect(page).to have_content(I18n.t("js.resenha.voice_settings.subtitles"))
+    end
+  end
+
+  it "hides the subtitles toggle when the site setting is disabled" do
+    SiteSetting.resenha_subtitles_enabled = false
+
+    join_room
+    open_voice_settings
+
+    within(".resenha-voice-settings") do
+      expect(page).to have_no_content(I18n.t("js.resenha.voice_settings.subtitles"))
+    end
+  end
 end
