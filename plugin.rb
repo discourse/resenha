@@ -20,6 +20,7 @@ register_svg_icon "volume-xmark"
 register_svg_icon "walkie-talkie"
 register_svg_icon "keyboard"
 register_svg_icon "phone-slash"
+register_svg_icon "phone-volume"
 register_svg_icon "podcast"
 register_svg_icon "handshake"
 register_svg_icon "users"
@@ -101,6 +102,15 @@ after_initialize do
   register_hashtag_type_priority_for_context("room", "chat-composer", 150)
   register_hashtag_type_priority_for_context("room", "topic-composer", 5)
   refresh_chat_hashtag_configurations
+
+  # Gates the user-card call button: the viewer needs the direct-call
+  # permission, the target needs voice-room access, and calling yourself or a
+  # bot is meaningless.
+  add_to_serializer(
+    :user_card,
+    :resenha_can_call,
+    include_condition: -> { scope.can_start_resenha_call? },
+  ) { object.id != scope.user.id && !object.bot? && object.guardian.can_access_resenha? }
 
   # Lets the client decide whether to render the rooms sidebar for anonymous
   # visitors without exposing the configured group ids.

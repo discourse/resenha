@@ -13,6 +13,7 @@ import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import { i18n } from "discourse-i18n";
+import { activeRingingEntries } from "../../lib/resenha/ringing";
 import {
   computeWidgetGrid,
   trackGridSize,
@@ -21,6 +22,7 @@ import ResenhaInviteUsersModal from "../modal/resenha-invite-users";
 import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
 import ResenhaRecordingBadge from "./recording-badge";
+import ResenhaRingingTile from "./ringing-tile";
 import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
@@ -62,19 +64,33 @@ export default class ResenhaCallWidget extends Component {
   @tracked tileAreaHeight = 0;
   @tracked tileAreaGap = 0;
 
+  // Ring windows expire by wall clock, which nothing tracked observes — a
+  // coarse ticker re-evaluates them so "Calling…" tiles disappear on time.
+  @tracked ringingClock = Date.now();
+
   resizeCorners = RESIZE_CORNERS;
 
   widgetElement = null;
   dragState = null;
   resizeState = null;
+  #ringingTicker = null;
 
   constructor() {
     super(...arguments);
     this.#loadSize();
+
+    // The widget is always mounted, so the tick only touches tracked state
+    // while an ephemeral call could actually be showing ringing tiles.
+    this.#ringingTicker = setInterval(() => {
+      if (this.room?.ephemeral) {
+        this.ringingClock = Date.now();
+      }
+    }, 5000);
   }
 
   willDestroy() {
     super.willDestroy(...arguments);
+    clearInterval(this.#ringingTicker);
     this.#removeResizeListeners();
     this.#removeDragListeners();
     window.clearTimeout(this.dragHoldTimer);
@@ -172,11 +188,17 @@ export default class ResenhaCallWidget extends Component {
     return this.room?.active_participants || [];
   }
 
+  get ringingEntries() {
+    return activeRingingEntries(this.room, this.ringingClock);
+  }
+
   get grid() {
     return computeWidgetGrid({
       width: this.tileAreaWidth,
       height: this.tileAreaHeight,
-      count: this.participants.length,
+      // Ringing pseudo-tiles occupy grid cells like everyone else so tile
+      // sizing accounts for them.
+      count: this.participants.length + this.ringingEntries.length,
       gap: this.tileAreaGap,
     });
   }
@@ -188,7 +210,13 @@ export default class ResenhaCallWidget extends Component {
   @cached
   get visibleParticipants() {
     const participants = this.participants;
-    const shown = this.grid?.shown ?? participants.length;
+    // Ringing pseudo-tiles always render, so they claim their share of the
+    // grid's slots before participants are picked for the rest.
+    const shown = Math.max(
+      0,
+      (this.grid?.shown ?? participants.length + this.ringingEntries.length) -
+        this.ringingEntries.length
+    );
     if (shown >= participants.length) {
       return participants;
     }
@@ -698,6 +726,10 @@ export default class ResenhaCallWidget extends Component {
                 @showVideo={{tile.showVideo}}
                 @onAspect={{this.noopAspect}}
               />
+            {{/each}}
+
+            {{#each this.ringingEntries key="user.id" as |entry|}}
+              <ResenhaRingingTile @user={{entry.user}} />
             {{/each}}
 
             {{#if this.overflowCount}}

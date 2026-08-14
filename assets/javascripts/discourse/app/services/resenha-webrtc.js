@@ -5,6 +5,7 @@ import { ajax } from "discourse/lib/ajax";
 import { i18n } from "discourse-i18n";
 import { confirmMeshPrivacy } from "../../components/modal/resenha-mesh-privacy-warning";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
+import { RING_SECONDS } from "../../lib/resenha/call-constants";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
 import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
 import { consumePendingInviteRef } from "../../lib/resenha/invite-ref";
@@ -35,6 +36,7 @@ import {
   setPreferredVoiceQuality,
 } from "../../lib/resenha/quality-preferences";
 import RemoteStreamRegistry from "../../lib/resenha/remote-stream-registry";
+import { activeRingingEntries } from "../../lib/resenha/ringing";
 import RoomMessageQueue from "../../lib/resenha/room-message-queue";
 import SignalingManager from "../../lib/resenha/signaling";
 import {
@@ -47,6 +49,8 @@ import {
   playUserJoinedSound,
   playUserLeftSound,
   schedulePlaybackResume,
+  startWaitingSound,
+  stopCallSounds,
 } from "../../lib/resenha/sound-effects";
 import { participantCanSpeak } from "../../lib/resenha/stage-roles";
 import { applyVoiceQuality } from "../../lib/resenha/video-quality";
@@ -572,6 +576,10 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    // Whatever call loop was sounding (ringtone on an answered call, waiting
+    // tone when hopping rooms) is over once a join starts.
+    stopCallSounds();
+
     // Bump the join revision so any in-flight join for a different room
     // will detect it has been superseded and abort.
     const revision = ++this.#joinRevision;
@@ -740,6 +748,22 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     playConnectedSound();
+
+    // Joining an ephemeral call room alone while someone is still being rung
+    // means the other side hasn't picked up yet: loop the waiting tone until
+    // a peer arrives or the last ring runs out. Merely being alone isn't
+    // enough — rejoining a call everyone has left must stay silent.
+    const others = (latestParticipants || []).filter(
+      (participant) => Number(participant?.id) !== this.currentUser?.id
+    );
+    const now = Date.now();
+    const ringing = activeRingingEntries(joinedRoom, now);
+    if (joinedRoom?.ephemeral && others.length === 0 && ringing.length > 0) {
+      const lastRingEndsAt =
+        Math.max(...ringing.map((entry) => entry.notified_at * 1000)) +
+        RING_SECONDS * 1000;
+      startWaitingSound(lastRingEndsAt - now);
+    }
   }
 
   leave(room, options = {}) {
@@ -763,6 +787,8 @@ export default class ResenhaWebrtcService extends Service {
       this.#joinRevision++;
     }
 
+    // Hanging up while still ringing (caller waiting alone) ends the ring.
+    stopCallSounds();
     this.#connectingParticipantSnapshots.delete(room.id);
     this.#connectingSignalQueue.delete(room.id);
     this.#pttManager.resetActive();
@@ -1573,6 +1599,9 @@ export default class ResenhaWebrtcService extends Service {
 
     if (this.#activeRoomIds.has(roomId)) {
       if (hasNewPeer) {
+        // If this client was ringing (caller waiting alone in a call room),
+        // someone arriving means the call was answered.
+        stopCallSounds();
         playUserJoinedSound();
       } else if (hasPeerLeft) {
         playUserLeftSound();

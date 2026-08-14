@@ -29,6 +29,8 @@ Resenha::Engine.routes.draw do
     end
   end
 
+  resources :calls, only: %i[create]
+
   # LiveKit server webhooks — machine-to-machine, authenticated by the
   # signature on the request body, not by a user session.
   post "livekit/webhook" => "livekit_webhooks#create"

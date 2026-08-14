@@ -9,6 +9,14 @@ module Resenha
     # frequent silently no-ops so repeat invites can't be used to spam
     # notifications at someone.
     RENOTIFY_AFTER = 1.day
+    # Ephemeral rooms are live calls: a ring that went unanswered may be
+    # retried once the previous ring has run out, but not while it is still
+    # sounding on the callee's devices.
+    RENOTIFY_EPHEMERAL_AFTER = 1.minute
+
+    # How long clients ring for. Also stamped on the ring payload so a tab
+    # waking up to a stale MessageBus backlog can discard expired rings.
+    RING_SECONDS = 60
 
     def self.invite!(room:, inviter:, users:)
       users.filter_map { |user| new(room: room, inviter: inviter, user: user).invite! }
@@ -46,7 +54,8 @@ module Resenha
       return false if notifications_blocked?
       return true if invite.previously_new_record?
 
-      invite.redeemed_at.nil? && invite.updated_at < RENOTIFY_AFTER.ago
+      renotify_after = @room.ephemeral? ? RENOTIFY_EPHEMERAL_AFTER : RENOTIFY_AFTER
+      invite.redeemed_at.nil? && invite.updated_at < renotify_after.ago
     end
 
     # Muting silences notifications; ignoring implies muting.
@@ -80,6 +89,10 @@ module Resenha
       # Marks the re-notify window without disturbing redemption state.
       invite.touch unless invite.previously_new_record?
 
+      # An invite into an ephemeral room is a call: the notification reads
+      # "is calling you" and the client rings instead of just chiming.
+      calling = @room.ephemeral?
+
       @user.notifications.create!(
         notification_type: Notification.types[:resenha_invitation],
         high_priority: true,
@@ -88,21 +101,19 @@ module Resenha
           room_slug: @room.slug,
           room_name: @room.name,
           display_username: @inviter.username,
-        }.to_json,
+          call: calling || nil,
+        }.compact.to_json,
       )
 
+      i18n_scope = calling ? "resenha.call_notification" : "resenha.invite_notification"
       payload = nil
       I18n.with_locale(@user.effective_locale) do
         payload = {
           notification_type: Notification.types[:resenha_invitation],
           username: @inviter.username,
           translated_title:
-            I18n.t(
-              "resenha.invite_notification.title",
-              username: @inviter.username,
-              room_name: @room.name,
-            ),
-          excerpt: I18n.t("resenha.invite_notification.excerpt", room_name: @room.name),
+            I18n.t("#{i18n_scope}.title", username: @inviter.username, room_name: @room.name),
+          excerpt: I18n.t("#{i18n_scope}.excerpt", room_name: @room.name),
           post_url: invite_path,
           tag: "#{Discourse.current_hostname}-resenha-invite-#{@room.id}",
         }
@@ -110,6 +121,32 @@ module Resenha
 
       MessageBus.publish("/notification-alert/#{@user.id}", payload, user_ids: [@user.id])
       PostAlerter.push_notification(@user, payload)
+
+      ring! if calling
+    end
+
+    # Real-time ring for open clients. `sent_at` lets a tab that receives the
+    # event late (MessageBus backlog after waking) drop rings that have
+    # already run out instead of replaying them.
+    def ring!
+      notified_at = Time.current.to_i
+
+      MessageBus.publish(
+        "/resenha/call-ring/#{@user.id}",
+        {
+          room_id: @room.id,
+          room_slug: @room.slug,
+          room_name: @room.name,
+          caller_username: @inviter.username,
+          caller_name: @inviter.name,
+          caller_avatar_template: @inviter.avatar_template,
+          sent_at: notified_at,
+          ring_seconds: RING_SECONDS,
+        },
+        user_ids: [@user.id],
+      )
+
+      Resenha::RoomBroadcaster.publish_ringing(@room, @user, notified_at: notified_at)
     end
   end
 end

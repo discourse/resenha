@@ -227,6 +227,13 @@ en:
           participant: "Participant"
           remove: "Remove"
           creator: "Creator"
+      call:
+        button: "Call"
+        calling: "Calling %{username}…"
+        incoming_title: "Incoming call"
+        incoming_state: "is calling you…"
+        answer: "Answer"
+        decline: "Decline"
       invite:
         title: "Invite to %{room_name}"
         menu: "Invite people"
@@ -357,8 +364,10 @@ en:
           created_at: "Created"
     notifications:
       resenha_invitation: "invited you to join %{room_name}"
+      resenha_call: "is calling you"
       titles:
         resenha_invitation: "Voice room invite"
+        resenha_call: "Incoming voice call"
     review:
       types:
         reviewable_resenha_user:

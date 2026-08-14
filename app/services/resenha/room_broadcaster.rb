@@ -22,6 +22,16 @@ module Resenha
       new(room).publish_hand_raise(user_id, raised: raised, raised_at: raised_at, reason: reason)
     end
 
+    # Someone in the room started ringing `user` — lets open room pages show
+    # a pending tile for them without refetching the room.
+    def self.publish_ringing(room, user, notified_at:)
+      new(room).publish_room(
+        type: "ringing",
+        user: BasicUserSerializer.new(user, scope: Guardian.new(nil), root: false).as_json,
+        notified_at: notified_at,
+      )
+    end
+
     def initialize(room)
       @room = room
     end

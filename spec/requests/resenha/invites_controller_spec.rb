@@ -193,6 +193,56 @@ RSpec.describe Resenha::InvitesController do
 
       expect(response.status).to eq(403)
     end
+
+    context "when the room is ephemeral" do
+      fab!(:call_room) do
+        Fabricate(:resenha_room, creator: room_owner, public: false, ephemeral: true)
+      end
+
+      it "sends a call-flavored notification and publishes a ring event to the invitee" do
+        sign_in(room_owner)
+
+        ring_messages =
+          MessageBus.track_publish("/resenha/call-ring/#{invitee.id}") do
+            post "/resenha/rooms/#{call_room.id}/invites.json",
+                 params: {
+                   usernames: [invitee.username],
+                 }
+          end
+
+        expect(response.status).to eq(200)
+
+        notification = invitee.notifications.order(:id).last
+        data = JSON.parse(notification.data)
+        expect(data["call"]).to eq(true)
+
+        expect(ring_messages.size).to eq(1)
+        expect(ring_messages.first.data[:room_id]).to eq(call_room.id)
+        expect(ring_messages.first.data[:caller_username]).to eq(room_owner.username)
+      end
+
+      it "rings again once the previous ring has run out, but not while it is still sounding" do
+        sign_in(room_owner)
+
+        2.times do
+          post "/resenha/rooms/#{call_room.id}/invites.json",
+               params: {
+                 usernames: [invitee.username],
+               }
+        end
+        expect(invitee.notifications.count).to eq(1)
+
+        Resenha::Invite.find_by(room_id: call_room.id, user_id: invitee.id).update_columns(
+          updated_at: 2.minutes.ago,
+        )
+        post "/resenha/rooms/#{call_room.id}/invites.json",
+             params: {
+               usernames: [invitee.username],
+             }
+
+        expect(invitee.notifications.count).to eq(2)
+      end
+    end
   end
 
   describe "#suggestions" do
