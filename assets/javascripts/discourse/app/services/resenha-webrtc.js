@@ -3,6 +3,7 @@ import { action } from "@ember/object";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
 import { i18n } from "discourse-i18n";
+import { confirmMeshPrivacy } from "../../components/modal/resenha-mesh-privacy-warning";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
 import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
@@ -52,6 +53,7 @@ import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
+  @service modal;
   @service siteSettings;
   @service("resenha-rooms") resenhaRooms;
   @service toasts;
@@ -556,6 +558,16 @@ export default class ResenhaWebrtcService extends Service {
       this.#activeRoomIds.has(room.id) ||
       this.#connectingRoomIds.has(room.id)
     ) {
+      return;
+    }
+
+    // Confirmed before any join state is touched, so cancelling leaves
+    // nothing to unwind.
+    const meshPrivacyConfirmed = await confirmMeshPrivacy(room, {
+      currentUser: this.currentUser,
+      modal: this.modal,
+    });
+    if (!meshPrivacyConfirmed) {
       return;
     }
 
