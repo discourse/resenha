@@ -2,27 +2,20 @@ import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
-import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
-import BackgroundBlurManager from "../../lib/resenha/background-blur";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
 import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
-import InputGateManager, { sliderToRms } from "../../lib/resenha/input-gate";
 import { consumePendingInviteRef } from "../../lib/resenha/invite-ref";
 import LivekitRoomSession from "../../lib/resenha/livekit-session";
+import LocalAudioPipeline from "../../lib/resenha/local-audio-pipeline";
+import LocalVideoManager from "../../lib/resenha/local-video-manager";
 import {
   applyOutputDevice,
-  audioConstraints,
-  cameraConstraints,
-  preferredInputDeviceId,
   preferredOutputDeviceId,
-  preferredVideoInputDeviceId,
-  setPreferredInputDeviceId,
   setPreferredOutputDeviceId,
-  setPreferredVideoInputDeviceId,
 } from "../../lib/resenha/media-devices";
-import NoiseSuppressionManager from "../../lib/resenha/noise-suppression";
+import MeshSignalHandler from "../../lib/resenha/mesh-signal-handler";
 import ParticipantAudio from "../../lib/resenha/participant-audio";
 import PeerManager from "../../lib/resenha/peer-manager";
 import PresencePendingPeers from "../../lib/resenha/presence-pending-peers";
@@ -35,7 +28,6 @@ import {
   preferredScreenQuality,
   preferredVoiceQuality,
   QUALITY_STANDARD,
-  SCREEN_CONTENT_MOTION,
   setPreferredCameraQuality,
   setPreferredScreenContent,
   setPreferredScreenQuality,
@@ -43,7 +35,6 @@ import {
 } from "../../lib/resenha/quality-preferences";
 import RemoteStreamRegistry from "../../lib/resenha/remote-stream-registry";
 import RoomMessageQueue from "../../lib/resenha/room-message-queue";
-import { iceUfrag } from "../../lib/resenha/sdp-utils";
 import SignalingManager from "../../lib/resenha/signaling";
 import {
   playConnectedSound,
@@ -57,12 +48,7 @@ import {
   schedulePlaybackResume,
 } from "../../lib/resenha/sound-effects";
 import { participantCanSpeak } from "../../lib/resenha/stage-roles";
-import {
-  applyScreenAudioQuality,
-  applyVideoQuality,
-  applyVoiceQuality,
-  screenCaptureFramerate,
-} from "../../lib/resenha/video-quality";
+import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
@@ -70,13 +56,9 @@ export default class ResenhaWebrtcService extends Service {
   @service("resenha-rooms") resenhaRooms;
   @service toasts;
 
-  @tracked localStream;
-  @tracked localVideoStream;
-  @tracked localVideoKind = null;
   @tracked activeRoomId = null;
   @tracked watchingRoomId = null;
   @tracked audioEnabled = true;
-  @tracked noiseSuppressionEnabled = false;
   @tracked deafened = false;
   @tracked remoteStreamsRevision = 0;
   @tracked connectionRevision = 0;
@@ -86,12 +68,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked pttActive = false;
   @tracked autoStatusEnabled = true;
   @tracked callWidgetHidden = false;
-  @tracked gateThreshold = 0;
-  @tracked inputDeviceId;
   @tracked outputDeviceId;
-  @tracked videoBlurEnabled = BackgroundBlurManager.isPreferred();
-  @tracked videoBlurAmount = BackgroundBlurManager.storedAmount();
-  @tracked videoInputDeviceId = preferredVideoInputDeviceId();
   @tracked voiceQuality = preferredVoiceQuality();
   @tracked cameraQuality = preferredCameraQuality();
   @tracked screenQuality = preferredScreenQuality();
@@ -122,25 +99,14 @@ export default class ResenhaWebrtcService extends Service {
   #roomHandlerCallbacks = new Map();
   #deferredTeardownTimers = new Set();
   #pendingPlaybackElements = new WeakSet();
-  #rawLocalStream = null;
-  #upstreamStream = null;
-  #rawLocalVideoStream = null;
-  #backgroundBlur = null;
-
-  // All async mutations of the video pipeline (blur toggle, device switch)
-  // run through this queue so they can't interleave, and each op validates
-  // the epoch after every await so a camera stop/restart during the await
-  // (which can take seconds on first model load) is detected instead of
-  // resurrecting streams that were already stopped.
-  #videoPipelineQueue = Promise.resolve();
-  #videoEpoch = 0;
 
   #signaling;
   #peerManager;
+  #meshSignals;
   #audioMonitor;
   #idleTracker;
-  #noiseSuppression;
-  #inputGate;
+  #localAudio;
+  #localVideo;
   #pttManager;
   #roomMessageQueue;
   #remoteStreamRegistry;
@@ -171,9 +137,9 @@ export default class ResenhaWebrtcService extends Service {
       getIceTransportPolicy: () => this.iceTransportPolicy,
       getLocalStream: () => this.localStream,
       getLocalVideoTrack: (roomId, uid) =>
-        this.#localVideoTrackFor(roomId, uid),
+        this.#localVideo.trackFor(roomId, uid),
       getLocalScreenAudioTrack: (roomId, uid) =>
-        this.#localScreenAudioTrackFor(roomId, uid),
+        this.#localVideo.screenAudioTrackFor(roomId, uid),
       sendSignal: (roomId, uid, payload) =>
         this.#signaling.send(roomId, uid, payload),
       flushQueuedSignals: (roomId, uid) =>
@@ -193,7 +159,7 @@ export default class ResenhaWebrtcService extends Service {
         }
       },
       shouldRestartPeer: (roomId, uid) =>
-        this.#shouldMaintainPeerConnection(roomId, uid),
+        this.#meshSignals.shouldMaintainPeerConnection(roomId, uid),
     });
 
     this.#audioMonitor = new AudioMonitor({
@@ -210,14 +176,19 @@ export default class ResenhaWebrtcService extends Service {
       getThresholds: () => idleThresholds(this.siteSettings),
     });
 
-    this.#noiseSuppression = new NoiseSuppressionManager({
-      onStreamReady: (stream) => this.#setOutgoingStream(stream),
+    this.#localAudio = new LocalAudioPipeline({
+      onStreamChanged: () => this.#syncLocalStreamState(),
+      onSuppressionFailed: () => {
+        this.toasts.error({
+          duration: 5000,
+          data: {
+            message: i18n("resenha.voice_settings.noise_suppression_failed"),
+          },
+        });
+      },
+      replaceTrackOnPeers: () => this.#replaceTrackOnAllPeers(),
     });
-    this.noiseSuppressionEnabled = this.#noiseSuppression.isPreferred();
 
-    this.#inputGate = new InputGateManager();
-    this.gateThreshold = InputGateManager.storedSliderValue();
-    this.inputDeviceId = preferredInputDeviceId();
     this.outputDeviceId = preferredOutputDeviceId();
 
     this.#roomMessageQueue = new RoomMessageQueue();
@@ -240,8 +211,51 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#presencePending = new PresencePendingPeers({
       onExpired: (roomId, userId) => {
-        if (!this.#shouldMaintainPeerConnection(roomId, userId)) {
+        if (!this.#meshSignals.shouldMaintainPeerConnection(roomId, userId)) {
           this.#peerManager.destroy(roomId, userId);
+        }
+      },
+    });
+
+    this.#localVideo = new LocalVideoManager({
+      peerManager: this.#peerManager,
+      getLivekitSession: (roomId) => this.#livekitSessions.get(roomId),
+      isMeshRoom: (roomId) => this.#isMeshRoom(roomId),
+      isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
+      isConnectingRoom: (roomId) => this.#connectingRoomIds.has(roomId),
+      getFirstActiveRoomId: () => this.#firstActiveRoomId(),
+      getActiveRoomId: () => this.activeRoomId,
+      getRoom: (roomId) => this.resenhaRooms?.roomById(roomId),
+      canPublishVideo: (roomId) => this.canPublishVideo(roomId),
+      getCameraQuality: (roomId) => this.effectiveCameraQuality(roomId),
+      getScreenQuality: (roomId) => this.effectiveScreenQuality(roomId),
+      getScreenContent: () => this.screenContent,
+      isBlurAllowed: () => this.videoBlurAvailable,
+      setParticipantVideoState: (roomId, state) =>
+        this.resenhaRooms?.setParticipantVideoState(
+          roomId,
+          this.currentUser?.id,
+          state
+        ),
+      showError: (messageKey) =>
+        this.toasts.error({
+          duration: 5000,
+          data: { message: i18n(messageKey) },
+        }),
+    });
+
+    this.#meshSignals = new MeshSignalHandler({
+      peerManager: this.#peerManager,
+      signaling: this.#signaling,
+      presencePending: this.#presencePending,
+      getCurrentUserId: () => this.currentUser?.id,
+      isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
+      getRoom: (roomId) => this.resenhaRooms?.roomById(roomId),
+      isRoleChangeInProgress: (roomId) =>
+        this.#roleChangeInProgress.has(roomId),
+      onOfferHandled: async (roomId) => {
+        if (this.localVideoKind) {
+          await this.#localVideo.syncSenders(roomId);
         }
       },
     });
@@ -273,14 +287,9 @@ export default class ResenhaWebrtcService extends Service {
     this.#livekitSessions.clear();
     this.#livekitRosterIds.clear();
     this.#signaling.destroy();
-    this.#noiseSuppression.teardown();
 
-    this.localVideoStream?.getTracks().forEach((track) => track.stop());
-    this.localVideoStream = null;
-    this.localVideoKind = null;
-    this.#teardownVideoEffects();
-
-    this.#stopLocalStream();
+    this.#localVideo.destroy();
+    this.#localAudio.stop();
 
     this.#roomHandlerCallbacks.forEach((callback, roomId) => {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
@@ -303,6 +312,36 @@ export default class ResenhaWebrtcService extends Service {
 
   get iceTransportPolicy() {
     return this.#iceConfig?.transport_policy ?? "all";
+  }
+
+  // --- Local audio pipeline delegates ---
+
+  get localStream() {
+    return this.#localAudio.stream;
+  }
+
+  get noiseSuppressionEnabled() {
+    return this.#localAudio.noiseSuppressionEnabled;
+  }
+
+  get gateThreshold() {
+    return this.#localAudio.gateThreshold;
+  }
+
+  get inputDeviceId() {
+    return this.#localAudio.inputDeviceId;
+  }
+
+  toggleNoiseSuppression() {
+    return this.#localAudio.toggleNoiseSuppression();
+  }
+
+  setInputDevice(deviceId) {
+    return this.#localAudio.setInputDevice(deviceId);
+  }
+
+  setGateThreshold(value) {
+    return this.#localAudio.setGateThreshold(value);
   }
 
   get remoteStreams() {
@@ -597,7 +636,7 @@ export default class ResenhaWebrtcService extends Service {
       joinedRoom?.room_type === "stage" && !this.#canSpeakInRoom(joinedRoom);
 
     if (!isStageListener && !this.localStream) {
-      const acquired = await this.#acquireMicrophone();
+      const acquired = await this.#localAudio.acquireMicrophone();
       if (!acquired) {
         ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
         this.#handleJoinFailure(room.id);
@@ -672,7 +711,7 @@ export default class ResenhaWebrtcService extends Service {
 
     if (this.#isMeshRoom(room.id)) {
       for (const payload of queuedSignals) {
-        await this.#handleSignal(room.id, payload);
+        await this.#meshSignals.handle(room.id, payload);
       }
     }
 
@@ -704,7 +743,7 @@ export default class ResenhaWebrtcService extends Service {
     const wasConnected = this.#activeRoomIds.has(room.id);
 
     if (this.localVideoKind && (wasConnected || wasConnecting)) {
-      this.#stopLocalVideo({ broadcast: false }).catch(() => {});
+      this.#localVideo.stop({ broadcast: false }).catch(() => {});
     }
 
     if (wasConnecting) {
@@ -739,7 +778,7 @@ export default class ResenhaWebrtcService extends Service {
       this.#teardownRoom(room.id);
 
       if (!keepLocalStream && this.#activeRoomIds.size === 0) {
-        this.#stopLocalStream();
+        this.#localAudio.stop();
       }
     };
 
@@ -894,56 +933,6 @@ export default class ResenhaWebrtcService extends Service {
     this.#broadcastMuteState();
   }
 
-  async toggleNoiseSuppression() {
-    // Without a live mic (e.g. a stage listener) just store the preference;
-    // it applies when the microphone is next acquired.
-    if (!this.#rawLocalStream) {
-      this.noiseSuppressionEnabled = !this.noiseSuppressionEnabled;
-      this.#noiseSuppression.setPreference(this.noiseSuppressionEnabled);
-      return;
-    }
-
-    if (this.noiseSuppressionEnabled) {
-      this.#noiseSuppression.teardown();
-      this.noiseSuppressionEnabled = false;
-      this.#setOutgoingStream(this.#rawLocalStream);
-      this.#noiseSuppression.setPreference(false);
-      // eslint-disable-next-line no-console
-      console.log("[resenha] noise suppression disabled");
-    } else {
-      try {
-        await this.#noiseSuppression.setup(this.#rawLocalStream);
-        this.noiseSuppressionEnabled = true;
-        this.#noiseSuppression.setPreference(true);
-        // eslint-disable-next-line no-console
-        console.log("[resenha] noise suppression enabled");
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to enable noise suppression", error);
-        this.#revertNoiseSuppressionPreference();
-        // #setOutgoingStream rebuilds the input gate, so localStream may be
-        // a brand-new track; peers must be moved onto it or they keep the
-        // torn-down gate's dead track and hear silence.
-        this.#setOutgoingStream(this.#rawLocalStream);
-        await this.#replaceTrackOnAllPeers();
-        return;
-      }
-    }
-
-    await this.#replaceTrackOnAllPeers();
-  }
-
-  #revertNoiseSuppressionPreference() {
-    this.noiseSuppressionEnabled = false;
-    this.#noiseSuppression.setPreference(false);
-    this.toasts.error({
-      duration: 5000,
-      data: {
-        message: i18n("resenha.voice_settings.noise_suppression_failed"),
-      },
-    });
-  }
-
   // --- Quality tiers ---
 
   // Effective tier: the user's stored preference clamped by the room's
@@ -1009,22 +998,21 @@ export default class ResenhaWebrtcService extends Service {
   setCameraQuality(tier) {
     this.cameraQuality = tier;
     setPreferredCameraQuality(tier);
-    this.#refreshLocalVideoQuality();
+    this.#localVideo.refreshQuality();
   }
 
   @action
   setScreenQuality(tier) {
     this.screenQuality = tier;
     setPreferredScreenQuality(tier);
-    this.#refreshLocalVideoQuality();
+    this.#localVideo.refreshQuality();
   }
 
   @action
   setScreenContent(content) {
     this.screenContent = content;
     setPreferredScreenContent(content);
-    this.#applyLocalContentHint();
-    this.#refreshLocalVideoQuality();
+    this.#localVideo.refreshQuality({ contentHintChanged: true });
   }
 
   // The screen-share audio sender also carries kind "audio"; voice quality
@@ -1055,130 +1043,12 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  #applyLocalContentHint() {
-    if (this.localVideoKind !== "screen") {
-      return;
-    }
-    const track = this.localVideoStream?.getVideoTracks?.()?.[0];
-    if (track && "contentHint" in track) {
-      track.contentHint =
-        this.screenContent === SCREEN_CONTENT_MOTION ? "motion" : "detail";
-    }
-  }
-
-  // Live re-apply after a preference change: encoder ceilings are cheap
-  // (setParameters, no renegotiation) and camera capture follows via
-  // applyConstraints. Screen capture framerate and LiveKit publish options
-  // are fixed at capture/publish time and pick up the change on the next
-  // share or join.
-  async #refreshLocalVideoQuality() {
-    const roomId = this.activeRoomId;
-    if (!roomId || !this.localVideoKind) {
-      return;
-    }
-
-    if (this.localVideoKind === "camera") {
-      const track =
-        this.#rawLocalVideoStream?.getVideoTracks?.()?.[0] ??
-        this.localVideoStream?.getVideoTracks?.()?.[0];
-      if (track) {
-        try {
-          await track.applyConstraints(
-            cameraConstraints(
-              this.videoInputDeviceId,
-              this.effectiveCameraQuality(roomId)
-            )
-          );
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            "[resenha] failed to re-apply camera constraints",
-            error
-          );
-        }
-      }
-    }
-
-    await this.#applyVideoQuality(roomId);
-  }
-
   // --- Device selection & input sensitivity ---
-
-  async setInputDevice(deviceId) {
-    const previousDeviceId = this.inputDeviceId;
-    this.inputDeviceId = deviceId;
-    setPreferredInputDeviceId(deviceId);
-
-    if (!this.#rawLocalStream) {
-      return true;
-    }
-
-    let newRawStream;
-    try {
-      newRawStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints(deviceId, { exact: true }),
-      });
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to switch input device", error);
-      this.inputDeviceId = previousDeviceId;
-      setPreferredInputDeviceId(previousDeviceId);
-      return false;
-    }
-
-    const oldRawStream = this.#rawLocalStream;
-    this.#rawLocalStream = newRawStream;
-
-    if (this.noiseSuppressionEnabled) {
-      this.#noiseSuppression.teardown();
-      try {
-        await this.#noiseSuppression.setup(newRawStream);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          "[resenha] noise suppression setup failed after device switch",
-          error
-        );
-        this.#revertNoiseSuppressionPreference();
-        this.#setOutgoingStream(newRawStream);
-      }
-    } else {
-      this.#setOutgoingStream(newRawStream);
-    }
-
-    oldRawStream.getTracks().forEach((track) => track.stop());
-    await this.#replaceTrackOnAllPeers();
-    return true;
-  }
 
   setOutputDevice(deviceId) {
     this.outputDeviceId = deviceId;
     setPreferredOutputDeviceId(deviceId);
     this.#participantAudio.setOutputDevice(deviceId);
-  }
-
-  async setGateThreshold(value) {
-    const clamped = Math.max(0, Math.min(100, Math.round(value)));
-    this.gateThreshold = clamped;
-    InputGateManager.storeSliderValue(clamped);
-
-    if (!this.#upstreamStream) {
-      return;
-    }
-
-    // Adjusting an already-running gate is just a new compare value; only
-    // crossing zero (gate off ↔ on) restructures the pipeline and needs the
-    // peers' senders updated.
-    if (this.#inputGate.active && clamped > 0) {
-      this.#inputGate.setThreshold(sliderToRms(clamped));
-      return;
-    }
-    if (!this.#inputGate.active && clamped === 0) {
-      return;
-    }
-
-    this.#setOutgoingStream(this.#upstreamStream);
-    await this.#replaceTrackOnAllPeers();
   }
 
   // --- Video & screen sharing ---
@@ -1220,22 +1090,44 @@ export default class ResenhaWebrtcService extends Service {
     );
   }
 
-  async toggleCamera() {
-    if (this.localVideoKind === "camera") {
-      await this.#stopLocalVideo();
-      return;
-    }
-
-    await this.#startLocalVideo("camera");
+  get localVideoStream() {
+    return this.#localVideo.stream;
   }
 
-  async toggleScreenShare() {
-    if (this.localVideoKind === "screen") {
-      await this.#stopLocalVideo();
-      return;
-    }
+  get localVideoKind() {
+    return this.#localVideo.kind;
+  }
 
-    await this.#startLocalVideo("screen");
+  get videoBlurEnabled() {
+    return this.#localVideo.blurEnabled;
+  }
+
+  get videoBlurAmount() {
+    return this.#localVideo.blurAmount;
+  }
+
+  get videoInputDeviceId() {
+    return this.#localVideo.inputDeviceId;
+  }
+
+  toggleCamera() {
+    return this.#localVideo.toggleCamera();
+  }
+
+  toggleScreenShare() {
+    return this.#localVideo.toggleScreenShare();
+  }
+
+  toggleVideoBlur() {
+    return this.#localVideo.toggleBlur();
+  }
+
+  setVideoBlurAmount(value) {
+    this.#localVideo.setBlurAmount(value);
+  }
+
+  setVideoInputDevice(deviceId) {
+    return this.#localVideo.setInputDevice(deviceId);
   }
 
   // Whether the site allows background blur; distinct from browser support
@@ -1245,224 +1137,7 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   get videoBlurSupported() {
-    return BackgroundBlurManager.isSupported();
-  }
-
-  #enqueueVideoOp(operation) {
-    const run = this.#videoPipelineQueue.then(operation, operation);
-    this.#videoPipelineQueue = run.catch(() => {});
-    return run;
-  }
-
-  toggleVideoBlur() {
-    return this.#enqueueVideoOp(() => this.#toggleVideoBlurOp());
-  }
-
-  async #toggleVideoBlurOp() {
-    const enabled = !this.videoBlurEnabled;
-    this.videoBlurEnabled = enabled;
-    BackgroundBlurManager.setPreference(enabled);
-    await this.#reconcileVideoBlurOp();
-  }
-
-  // Brings the pipeline in line with the current preference: wraps or
-  // unwraps the published camera stream. A no-op when the camera is off
-  // (the preference simply applies at the next camera start) or when the
-  // pipeline already matches.
-  async #reconcileVideoBlurOp() {
-    if (this.localVideoKind !== "camera") {
-      return;
-    }
-
-    const wantBlur =
-      this.videoBlurEnabled &&
-      this.videoBlurAvailable &&
-      this.videoBlurSupported;
-
-    if (wantBlur === !!this.#backgroundBlur) {
-      return;
-    }
-
-    if (wantBlur) {
-      const raw = this.localVideoStream;
-      const epoch = this.#videoEpoch;
-      const result = await this.#createBackgroundBlur(raw);
-
-      // The camera may have been stopped or replaced, or blur toggled back
-      // off, while the model loaded.
-      if (epoch !== this.#videoEpoch || this.localVideoStream !== raw) {
-        result?.manager.teardown();
-        return;
-      }
-
-      if (!result) {
-        this.#revertVideoBlurPreference();
-        return;
-      }
-
-      if (!this.videoBlurEnabled) {
-        result.manager.teardown();
-        return;
-      }
-
-      this.#backgroundBlur = result.manager;
-      this.#rawLocalVideoStream = raw;
-      this.localVideoStream = result.processed;
-    } else {
-      this.localVideoStream = this.#rawLocalVideoStream;
-      this.#teardownVideoEffects();
-    }
-
-    const roomId = this.#firstActiveRoomId();
-    if (roomId) {
-      await this.#syncVideoSenders(roomId);
-    }
-  }
-
-  #revertVideoBlurPreference() {
-    this.videoBlurEnabled = false;
-    BackgroundBlurManager.setPreference(false);
-    this.toasts.error({
-      duration: 5000,
-      data: { message: i18n("resenha.video_settings.blur_failed") },
-    });
-  }
-
-  setVideoBlurAmount(value) {
-    const clamped = Math.max(0, Math.min(100, Math.round(value)));
-    this.videoBlurAmount = clamped;
-    BackgroundBlurManager.storeAmount(clamped);
-    this.#backgroundBlur?.setAmount(clamped);
-  }
-
-  setVideoInputDevice(deviceId) {
-    return this.#enqueueVideoOp(() => this.#setVideoInputDeviceOp(deviceId));
-  }
-
-  async #setVideoInputDeviceOp(deviceId) {
-    const previousDeviceId = this.videoInputDeviceId;
-    this.videoInputDeviceId = deviceId;
-
-    if (this.localVideoKind !== "camera") {
-      setPreferredVideoInputDeviceId(deviceId);
-      return true;
-    }
-
-    const epoch = this.#videoEpoch;
-
-    let newStream;
-    try {
-      newStream = await navigator.mediaDevices.getUserMedia({
-        video: cameraConstraints(deviceId, this.effectiveCameraQuality(), {
-          exact: true,
-        }),
-      });
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to switch camera", error);
-      this.videoInputDeviceId = previousDeviceId;
-      this.toasts.error({
-        duration: 5000,
-        data: { message: i18n("resenha.video.capture_failed") },
-      });
-      return false;
-    }
-
-    setPreferredVideoInputDeviceId(deviceId);
-
-    const track = newStream.getVideoTracks()[0];
-
-    // The camera may have been stopped while the new capture started; the
-    // preference is kept but nothing is swapped.
-    if (epoch !== this.#videoEpoch || this.localVideoKind !== "camera") {
-      newStream.getTracks().forEach((streamTrack) => streamTrack.stop());
-      return true;
-    }
-
-    if (!track) {
-      newStream.getTracks().forEach((streamTrack) => streamTrack.stop());
-      return false;
-    }
-
-    track.contentHint = "motion";
-    track.addEventListener("ended", () => this.#handleLocalVideoEnded(), {
-      once: true,
-    });
-
-    const oldStream = this.localVideoStream;
-    const oldRaw = this.#rawLocalVideoStream;
-
-    let outgoingStream = newStream;
-    let blurResult = null;
-
-    if (this.#backgroundBlur) {
-      blurResult = await this.#createBackgroundBlur(newStream);
-
-      if (
-        epoch !== this.#videoEpoch ||
-        this.localVideoKind !== "camera" ||
-        this.localVideoStream !== oldStream
-      ) {
-        blurResult?.manager.teardown();
-        newStream.getTracks().forEach((streamTrack) => streamTrack.stop());
-        return true;
-      }
-
-      if (blurResult) {
-        outgoingStream = blurResult.processed;
-      } else {
-        this.#revertVideoBlurPreference();
-      }
-    }
-
-    this.#backgroundBlur?.teardown();
-    this.#backgroundBlur = blurResult?.manager ?? null;
-    this.#rawLocalVideoStream = blurResult ? newStream : null;
-    this.localVideoStream = outgoingStream;
-
-    oldStream?.getTracks().forEach((streamTrack) => streamTrack.stop());
-    if (oldRaw && oldRaw !== oldStream) {
-      oldRaw.getTracks().forEach((streamTrack) => streamTrack.stop());
-    }
-
-    const roomId = this.#firstActiveRoomId();
-    if (roomId) {
-      await this.#syncVideoSenders(roomId);
-    }
-
-    return true;
-  }
-
-  // Builds the blur pipeline without touching service state, so callers can
-  // validate that the world hasn't changed across the await before wiring
-  // the result in. Returns null when the effect can't start (asset fetch
-  // failed, GPU unavailable, …).
-  async #createBackgroundBlur(rawStream) {
-    const manager = new BackgroundBlurManager();
-    try {
-      const processed = await manager.setup(rawStream, this.videoBlurAmount);
-      processed.getVideoTracks().forEach((track) => {
-        track.contentHint = "motion";
-      });
-      return { manager, processed };
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to start background blur", error);
-      manager.teardown();
-      return null;
-    }
-  }
-
-  #teardownVideoEffects() {
-    this.#backgroundBlur?.teardown();
-    this.#backgroundBlur = null;
-
-    if (this.#rawLocalVideoStream) {
-      if (this.#rawLocalVideoStream !== this.localVideoStream) {
-        this.#rawLocalVideoStream.getTracks().forEach((track) => track.stop());
-      }
-      this.#rawLocalVideoStream = null;
-    }
+    return this.#localVideo.blurSupported;
   }
 
   setWatching(roomId, watching, options = {}) {
@@ -1483,7 +1158,7 @@ export default class ResenhaWebrtcService extends Service {
     const keepVideo = options.keepVideo === true;
     const stoppingVideo = !watching && !keepVideo && !!this.localVideoKind;
     if (stoppingVideo) {
-      this.#stopLocalVideo({ broadcast: false }).catch((error) => {
+      this.#localVideo.stop({ broadcast: false }).catch((error) => {
         // eslint-disable-next-line no-console
         console.warn("[resenha] failed to stop video on page leave", error);
       });
@@ -1539,174 +1214,6 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  async #startLocalVideo(kind) {
-    const roomId = this.#firstActiveRoomId();
-    if (!roomId) {
-      return;
-    }
-
-    if (!this.canPublishVideo(roomId)) {
-      this.toasts.error({
-        duration: 5000,
-        data: { message: i18n("resenha.video.publisher_limit") },
-      });
-      return;
-    }
-
-    // Capture must be the first await: Firefox only allows getDisplayMedia
-    // while the click's transient activation is alive, and awaiting anything
-    // else first (e.g. stopping the current camera) consumes it. The old
-    // stream is torn down after the picker succeeds, which also keeps the
-    // camera running when the user cancels the picker.
-    let stream;
-    try {
-      if (kind === "screen") {
-        // Tab/system audio rides along for watch-along use. Voice processing
-        // is disabled because it is tuned for speech and mangles content
-        // audio; browsers without display-audio support just return no audio
-        // track. The user can still untick audio in the picker.
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            frameRate: {
-              max: screenCaptureFramerate(this.effectiveScreenQuality(roomId)),
-            },
-          },
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-          systemAudio: "include",
-        });
-      } else {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: cameraConstraints(
-            this.videoInputDeviceId,
-            this.effectiveCameraQuality(roomId)
-          ),
-        });
-      }
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn(`[resenha] failed to obtain ${kind} stream`, error);
-      if (error?.name !== "NotAllowedError" && error?.name !== "AbortError") {
-        this.toasts.error({
-          duration: 5000,
-          data: { message: i18n("resenha.video.capture_failed") },
-        });
-      }
-      return;
-    }
-
-    // The user may have left the room while the capture picker was open.
-    if (!this.#activeRoomIds.has(roomId)) {
-      stream.getTracks().forEach((streamTrack) => streamTrack.stop());
-      return;
-    }
-
-    if (this.localVideoKind) {
-      await this.#stopLocalVideo({ broadcast: false });
-    }
-
-    const track = stream.getVideoTracks()[0];
-    if (!track) {
-      stream.getTracks().forEach((streamTrack) => streamTrack.stop());
-      return;
-    }
-
-    // Steers the encoder's sharpness/smoothness trade-off; the matching
-    // degradationPreference is applied per-sender in applyVideoQuality.
-    if (kind === "screen" && "contentHint" in track) {
-      track.contentHint =
-        this.screenContent === SCREEN_CONTENT_MOTION ? "motion" : "detail";
-    }
-
-    const epoch = ++this.#videoEpoch;
-
-    track.contentHint = kind === "screen" ? "detail" : "motion";
-    track.addEventListener("ended", () => this.#handleLocalVideoEnded(), {
-      once: true,
-    });
-
-    const audioTrack =
-      kind === "screen" ? stream.getAudioTracks()[0] : undefined;
-    if (audioTrack) {
-      audioTrack.contentHint = "music";
-    }
-
-    let outgoingStream = stream;
-    if (
-      kind === "camera" &&
-      this.videoBlurEnabled &&
-      this.videoBlurAvailable &&
-      this.videoBlurSupported
-    ) {
-      const result = await this.#createBackgroundBlur(stream);
-
-      if (epoch !== this.#videoEpoch || !this.#activeRoomIds.has(roomId)) {
-        result?.manager.teardown();
-        stream.getTracks().forEach((streamTrack) => streamTrack.stop());
-        return;
-      }
-
-      if (result) {
-        this.#backgroundBlur = result.manager;
-        this.#rawLocalVideoStream = stream;
-        outgoingStream = result.processed;
-      } else {
-        this.#revertVideoBlurPreference();
-      }
-    }
-
-    this.localVideoStream = outgoingStream;
-    this.localVideoKind = kind;
-
-    try {
-      await this.#broadcastVideoState(roomId);
-    } catch (error) {
-      await this.#stopLocalVideo({ broadcast: false });
-      popupAjaxError(error);
-      return;
-    }
-
-    await this.#syncVideoSenders(roomId);
-
-    // Applies any blur preference change that raced this startup (e.g. the
-    // toggle was flipped while the model loaded for the initial wrap).
-    this.#enqueueVideoOp(() => this.#reconcileVideoBlurOp());
-  }
-
-  async #stopLocalVideo({ broadcast = true } = {}) {
-    // Invalidates any queued pipeline op that is mid-await on this session.
-    this.#videoEpoch++;
-
-    const roomId = this.#firstActiveRoomId();
-    const stream = this.localVideoStream;
-
-    this.localVideoStream = null;
-    this.localVideoKind = null;
-
-    stream?.getTracks().forEach((track) => track.stop());
-    this.#teardownVideoEffects();
-
-    if (roomId) {
-      await this.#syncVideoSenders(roomId);
-      if (broadcast) {
-        this.#broadcastVideoState(roomId).catch(() => {});
-      }
-    }
-  }
-
-  #handleLocalVideoEnded() {
-    if (!this.localVideoKind) {
-      return;
-    }
-    this.#stopLocalVideo().catch((error) => {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to stop local video", error);
-    });
-  }
-
   #firstActiveRoomId() {
     for (const roomId of this.#activeRoomIds) {
       return roomId;
@@ -1715,144 +1222,11 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   get localVideoTrack() {
-    return this.localVideoStream?.getVideoTracks()?.[0] || null;
+    return this.#localVideo.track;
   }
 
   get localScreenAudioTrack() {
-    if (this.localVideoKind !== "screen") {
-      return null;
-    }
-    return this.localVideoStream?.getAudioTracks()?.[0] || null;
-  }
-
-  #localScreenAudioTrackFor(roomId, remoteUserId) {
-    if (!this.localScreenAudioTrack) {
-      return null;
-    }
-    return this.#localVideoTrackFor(roomId, remoteUserId)
-      ? this.localScreenAudioTrack
-      : null;
-  }
-
-  #localVideoTrackFor(roomId, remoteUserId) {
-    const track = this.localVideoTrack;
-    if (!track) {
-      return null;
-    }
-
-    if (
-      !this.#activeRoomIds.has(roomId) &&
-      !this.#connectingRoomIds.has(roomId)
-    ) {
-      return null;
-    }
-
-    const room = this.resenhaRooms?.roomById(roomId);
-    const participant = (room?.active_participants || []).find(
-      (entry) => Number(entry?.id) === Number(remoteUserId)
-    );
-
-    return participant?.watching_video ? track : null;
-  }
-
-  // Each peer has a dedicated sender, so video is only attached toward peers
-  // currently watching the room page — every skipped peer saves an entire
-  // encoder session, not just bandwidth.
-  async #syncVideoSenders(roomId) {
-    if (!this.#isMeshRoom(roomId)) {
-      // The SFU is published to once regardless of watchers; per-watcher
-      // receive gating happens on the subscriber side instead
-      // (setVideoSubscriptionsEnabled).
-      await this.#livekitSessions
-        .get(roomId)
-        ?.syncLocalVideo(
-          this.localVideoTrack,
-          this.localScreenAudioTrack,
-          this.localVideoKind
-        );
-      return;
-    }
-
-    const peers = this.#peerManager.getRoomPeers(roomId);
-    if (!peers) {
-      return;
-    }
-
-    for (const [remoteUserId, pc] of peers) {
-      const desired = this.#localVideoTrackFor(roomId, remoteUserId);
-
-      const transceiver = PeerManager.videoTransceiverFor(pc);
-      if (transceiver && transceiver.sender.track !== desired) {
-        try {
-          await transceiver.sender.replaceTrack(desired);
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `[resenha] failed to sync video sender for user ${remoteUserId}`,
-            error
-          );
-        }
-      }
-
-      // Screen audio follows the same watching gate as the video track, so
-      // non-watchers don't get a soundtrack without a picture.
-      const desiredAudio = desired ? this.localScreenAudioTrack : null;
-      const audioTransceiver = PeerManager.screenAudioTransceiverFor(pc);
-      if (audioTransceiver && audioTransceiver.sender.track !== desiredAudio) {
-        try {
-          await audioTransceiver.sender.replaceTrack(desiredAudio);
-          if (desiredAudio) {
-            await applyScreenAudioQuality(audioTransceiver.sender);
-          }
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `[resenha] failed to sync screen audio sender for user ${remoteUserId}`,
-            error
-          );
-        }
-      }
-    }
-
-    await this.#applyVideoQuality(roomId);
-  }
-
-  async #applyVideoQuality(roomId) {
-    const peers = this.#peerManager.getRoomPeers(roomId);
-    if (!peers || !this.localVideoKind) {
-      return;
-    }
-
-    const sendingSenders = [];
-    for (const [, pc] of peers) {
-      const sender = PeerManager.videoTransceiverFor(pc)?.sender;
-      if (sender?.track) {
-        sendingSenders.push(sender);
-      }
-    }
-
-    await applyVideoQuality(sendingSenders, this.localVideoKind, {
-      tier:
-        this.localVideoKind === "screen"
-          ? this.effectiveScreenQuality(roomId)
-          : this.effectiveCameraQuality(roomId),
-      screenContent: this.screenContent,
-    });
-  }
-
-  #broadcastVideoState(roomId) {
-    const video = this.localVideoKind === "camera";
-    const screen = this.localVideoKind === "screen";
-
-    this.resenhaRooms?.setParticipantVideoState(roomId, this.currentUser?.id, {
-      is_video_on: video,
-      is_screen_sharing: screen,
-    });
-
-    return ajax(`/resenha/rooms/${roomId}/state`, {
-      type: "POST",
-      data: { video, screen },
-    });
+    return this.#localVideo.screenAudioTrack;
   }
 
   // Room state updates in resenhaRooms; this only surfaces the change to
@@ -1887,7 +1261,7 @@ export default class ResenhaWebrtcService extends Service {
 
     const room = this.resenhaRooms?.roomById(roomId);
     if (room && !this.videoAllowedIn(room)) {
-      this.#stopLocalVideo().catch(() => {});
+      this.#localVideo.stop().catch(() => {});
       this.toasts.default({
         duration: 5000,
         data: { message: i18n("resenha.video.room_disabled") },
@@ -2083,7 +1457,7 @@ export default class ResenhaWebrtcService extends Service {
     if (payload.type === "signal") {
       // Mesh-only: non-mesh transports never exchange WebRTC signals.
       if (this.#isMeshRoom(roomId)) {
-        await this.#handleSignal(roomId, payload);
+        await this.#meshSignals.handle(roomId, payload);
       }
     } else if (payload.type === "participants") {
       await this.#handleParticipants(roomId, payload);
@@ -2097,174 +1471,6 @@ export default class ResenhaWebrtcService extends Service {
       this.#handleRoomUpdated(roomId);
     } else if (payload.type === "recording") {
       this.#handleRecordingChanged(payload);
-    }
-  }
-
-  async #handleSignal(roomId, payload) {
-    const remoteUserId = Number(payload.sender_id);
-    const data = payload.data;
-
-    if (!Number.isFinite(remoteUserId) || remoteUserId <= 0) {
-      return;
-    }
-
-    if (remoteUserId === this.currentUser?.id) {
-      return;
-    }
-
-    if (this.#roleChangeInProgress.has(roomId)) {
-      return;
-    }
-
-    this.#peerManager.clearPeerRestart(roomId, remoteUserId);
-
-    const hadPeer = this.#peerManager.has(roomId, remoteUserId);
-    if (!hadPeer && data?.type === "candidate") {
-      if (this.#canEngageEarlyOffer(roomId)) {
-        this.#peerManager.queuePendingCandidate(
-          roomId,
-          remoteUserId,
-          data.candidate
-        );
-      }
-      return;
-    }
-
-    if (!hadPeer && !this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
-      return;
-    }
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] 📥 received ${data.type} from user ${remoteUserId} in room ${roomId}`
-    );
-    let pc = await this.#peerManager.create(roomId, remoteUserId);
-    if (!pc) {
-      return;
-    }
-
-    if (!this.#shouldEngagePeer(roomId, remoteUserId, data?.type)) {
-      this.#peerManager.destroy(roomId, remoteUserId);
-      return;
-    }
-
-    if (data.type === "offer") {
-      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
-      if (!this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
-        this.#presencePending.mark(roomId, remoteUserId);
-      }
-
-      // If the remote restarted its ICE session — it left and rejoined, so its
-      // offer carries fresh ICE credentials — renegotiating on the old, dead
-      // transport won't recover. Tear the stale peer down and rebuild it so ICE
-      // starts clean. Detected by a changed ice-ufrag vs our current remote
-      // description; a merely resent offer keeps the same ufrag and is left
-      // alone. Skip while mid-glare (have-local-offer), which the block below
-      // already resolves.
-      if (pc.signalingState !== "have-local-offer") {
-        const priorUfrag = iceUfrag(pc.remoteDescription?.sdp);
-        const incomingUfrag = iceUfrag(data.sdp);
-        if (priorUfrag && incomingUfrag && priorUfrag !== incomingUfrag) {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[resenha] remote ICE restart from user ${remoteUserId}; recreating peer`
-          );
-          this.#peerManager.destroy(roomId, remoteUserId);
-          pc = await this.#peerManager.create(roomId, remoteUserId);
-          if (!pc) {
-            return;
-          }
-        }
-      }
-
-      if (pc.signalingState === "have-local-offer") {
-        if (this.currentUser?.id < remoteUserId) {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[resenha] glare detected, rolling back local offer for user ${remoteUserId}`
-          );
-          await pc.setLocalDescription({ type: "rollback" });
-        } else {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[resenha] glare detected, ignoring remote offer from user ${remoteUserId}`
-          );
-          return;
-        }
-      }
-
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(data));
-        PeerManager.alignVideoTransceiverForAnswer(pc);
-        PeerManager.alignScreenAudioTransceiverForAnswer(pc);
-        await this.#peerManager.flushPendingCandidates(
-          roomId,
-          remoteUserId,
-          pc
-        );
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        this.#signaling.send(roomId, remoteUserId, answer).catch((error) => {
-          // eslint-disable-next-line no-console
-          console.warn("[resenha] failed to send answer", error);
-        });
-
-        if (this.localVideoKind) {
-          await this.#syncVideoSenders(roomId);
-        }
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha] failed to handle offer from user ${remoteUserId}`,
-          error
-        );
-      }
-    } else if (data.type === "answer") {
-      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
-
-      if (pc.signalingState !== "have-local-offer") {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha] ignoring answer in state ${pc.signalingState} from user ${remoteUserId}`
-        );
-        return;
-      }
-
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(data));
-        await this.#peerManager.flushPendingCandidates(
-          roomId,
-          remoteUserId,
-          pc
-        );
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha] failed to handle answer from user ${remoteUserId}`,
-          error
-        );
-      }
-    } else if (data.type === "candidate") {
-      this.#peerManager.clearOfferRetry(roomId, remoteUserId);
-
-      if (!pc.remoteDescription) {
-        this.#peerManager.queuePendingCandidate(
-          roomId,
-          remoteUserId,
-          data.candidate
-        );
-        return;
-      }
-
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha] failed to add ICE candidate from user ${remoteUserId}`,
-          error
-        );
-      }
     }
   }
 
@@ -2369,7 +1575,7 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (this.localVideoKind) {
-      await this.#syncVideoSenders(roomId);
+      await this.#localVideo.syncSenders(roomId);
     }
   }
 
@@ -2455,43 +1661,6 @@ export default class ResenhaWebrtcService extends Service {
     this.leave({ id: roomId });
   }
 
-  async #acquireMicrophone() {
-    try {
-      const rawStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints(this.inputDeviceId),
-      });
-      // eslint-disable-next-line no-console
-      console.log("[resenha] local stream obtained");
-
-      this.#rawLocalStream = rawStream;
-
-      if (this.#noiseSuppression.isPreferred()) {
-        try {
-          await this.#noiseSuppression.setup(rawStream);
-          this.noiseSuppressionEnabled = true;
-          // eslint-disable-next-line no-console
-          console.log("[resenha] noise suppression enabled");
-        } catch (nsError) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            "[resenha] noise suppression setup failed, using raw stream",
-            nsError
-          );
-          this.noiseSuppressionEnabled = false;
-          this.#setOutgoingStream(rawStream);
-        }
-      } else {
-        this.#setOutgoingStream(rawStream);
-      }
-
-      return true;
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to obtain local stream", error);
-      return false;
-    }
-  }
-
   async #handleRoleChange(roomId, payload) {
     const targetUserId = Number(payload.user_id);
     const newRole = payload.role;
@@ -2523,7 +1692,7 @@ export default class ResenhaWebrtcService extends Service {
 
     if (canSpeak) {
       if (!this.localStream) {
-        const acquired = await this.#acquireMicrophone();
+        const acquired = await this.#localAudio.acquireMicrophone();
         if (!acquired) {
           this.#roleChangeInProgress.delete(roomId);
           this.toasts.error({
@@ -2552,9 +1721,9 @@ export default class ResenhaWebrtcService extends Service {
       });
     } else {
       if (this.localVideoKind) {
-        await this.#stopLocalVideo();
+        await this.#localVideo.stop();
       }
-      this.#stopLocalStream();
+      this.#localAudio.stop();
       this.audioEnabled = false;
       this.toasts.default({
         duration: 5000,
@@ -2629,64 +1798,6 @@ export default class ResenhaWebrtcService extends Service {
     } else {
       this.#peerManager.scheduleOfferRetry(roomId, remoteUserId);
     }
-  }
-
-  #shouldMaintainPeerConnection(roomId, remoteUserId) {
-    if (!this.#activeRoomIds.has(roomId)) {
-      return false;
-    }
-
-    const room = this.resenhaRooms?.roomById(roomId);
-    if (!room) {
-      return false;
-    }
-
-    const participant = (room.active_participants || []).find(
-      (entry) => Number(entry?.id) === Number(remoteUserId)
-    );
-
-    if (!participant) {
-      return false;
-    }
-
-    if (room.room_type !== "stage") {
-      return true;
-    }
-
-    const iCanSpeak = this.#canSpeakInRoom(room);
-    const theyCanSpeak =
-      participant.role === "moderator" || participant.role === "speaker";
-
-    return iCanSpeak || theyCanSpeak;
-  }
-
-  // A targeted offer is implicit proof the sender shares this room with us:
-  // presence (active_participants) lags behind WebRTC signaling when two peers
-  // join near-simultaneously, so #shouldMaintainPeerConnection can still be
-  // false at the instant the offer arrives. Gating offers on presence silently
-  // drops that legitimate first offer and strands the media connection (the
-  // sender finishes gathering before we ever engage, so its candidates are
-  // never re-sent). Honor early offers in non-stage rooms, where peering does
-  // not depend on the sender's presence-derived speaker role. Stage rooms keep
-  // strict gating for exactly that reason.
-  #canEngageEarlyOffer(roomId) {
-    if (!this.#activeRoomIds.has(roomId)) {
-      return false;
-    }
-    const room = this.resenhaRooms?.roomById(roomId);
-    return !!room && room.room_type !== "stage";
-  }
-
-  // Whether we should set up / keep a peer for a signal of the given type.
-  // Falls back to the implicit-presence rule above for offers.
-  #shouldEngagePeer(roomId, remoteUserId, signalType) {
-    if (this.#shouldMaintainPeerConnection(roomId, remoteUserId)) {
-      return true;
-    }
-    return (
-      (signalType === "offer" || signalType === "candidate") &&
-      this.#canEngageEarlyOffer(roomId)
-    );
   }
 
   #reconnectAllPeers(roomId) {
@@ -2796,51 +1907,8 @@ export default class ResenhaWebrtcService extends Service {
     this.#teardownRoom(roomId);
 
     if (this.#activeRoomIds.size === 0) {
-      this.#stopLocalStream();
+      this.#localAudio.stop();
     }
-  }
-
-  #stopLocalStream() {
-    this.#noiseSuppression.teardown();
-    this.noiseSuppressionEnabled = this.#noiseSuppression.isPreferred();
-    this.#inputGate.teardown();
-    this.#upstreamStream = null;
-
-    if (this.#rawLocalStream) {
-      this.#rawLocalStream.getTracks().forEach((track) => track.stop());
-      this.#rawLocalStream = null;
-    }
-
-    if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
-      this.localStream = null;
-    }
-
-    this.#syncLocalStreamState();
-  }
-
-  // Final hop of the local pipeline: raw mic → optional noise suppression
-  // (the `upstream` argument) → optional input gate → localStream.
-  #setOutgoingStream(upstream) {
-    this.#upstreamStream = upstream;
-    this.#inputGate.teardown();
-
-    let stream = upstream;
-    if (upstream && this.gateThreshold > 0) {
-      try {
-        stream = this.#inputGate.setup(
-          upstream,
-          sliderToRms(this.gateThreshold)
-        );
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to set up input gate", error);
-        stream = upstream;
-      }
-    }
-
-    this.localStream = stream;
-    this.#syncLocalStreamState();
   }
 
   #syncLocalStreamState() {
