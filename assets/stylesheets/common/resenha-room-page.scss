@@ -1,8 +1,14 @@
+// One step above the fixed site header so a widget dragged to the top edge
+// stays visible and grabbable, while everything that already outranked the
+// header (mobile composer, fullscreen layers, modals) keeps outranking the
+// widget. Menus opened from the widget sit one step higher still.
+$resenha-widget-z: z("header") + 1;
+
 .resenha-call-widget {
   position: fixed;
   inset-inline-end: max(1rem, env(safe-area-inset-right));
   inset-block-end: max(1rem, env(safe-area-inset-bottom));
-  z-index: z("footer-nav");
+  z-index: $resenha-widget-z;
 
   // border-box so the inline width/height set during resize match the
   // border-box geometry the resize math measures (getBoundingClientRect);
@@ -480,11 +486,11 @@ html.discourse-touch .resenha-call-widget {
 }
 
 // Float-kit menus portal to a body-level layer at z("dropdown") (300), but the
-// persistent call widget sits at z("footer-nav") (900) and would otherwise
-// cover any menu opened from it. Lift the call menus above the widget. Harmless
-// on the room page, which has no competing high-z layer.
+// persistent call widget sits above the site header and would otherwise cover
+// any menu opened from it. Lift the call menus above the widget. Harmless on
+// the room page, which has no competing high-z layer.
 .fk-d-menu[data-identifier^="resenha-"] {
-  z-index: z("header");
+  z-index: $resenha-widget-z + 1;
 }
 
 // Below this the 22rem sidebar would squash the video column into a sliver,
