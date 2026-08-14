@@ -231,24 +231,91 @@ export default class LocalVideoManager {
     }
 
     const epoch = this.#epoch;
+    const constraints = {
+      video: cameraConstraints(deviceId, this.#getCameraQuality(), {
+        exact: true,
+      }),
+    };
 
     let newStream;
     try {
-      newStream = await navigator.mediaDevices.getUserMedia({
-        video: cameraConstraints(deviceId, this.#getCameraQuality(), {
-          exact: true,
-        }),
-      });
+      newStream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("[resenha] failed to switch camera", error);
-      this.inputDeviceId = previousDeviceId;
-      this.#showError("resenha.video.capture_failed");
-      return false;
+      if (!this.#cameraBusyError(error)) {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to switch camera", error);
+        this.inputDeviceId = previousDeviceId;
+        this.#showSwitchError(error);
+        return false;
+      }
+
+      if (epoch !== this.#epoch || this.kind !== "camera") {
+        setPreferredVideoInputDeviceId(deviceId);
+        return true;
+      }
+
+      // Phones expose a single camera pipeline: the next device can't open
+      // while the current one is still capturing, so release ours and retry.
+      this.#stopCurrentCapture();
+
+      try {
+        newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (retryError) {
+        return this.#rollbackSwitch(previousDeviceId, epoch, retryError);
+      }
     }
 
     setPreferredVideoInputDeviceId(deviceId);
+    return this.#swapCameraStream(newStream, epoch);
+  }
 
+  // Failure modes for busy hardware, as opposed to a denied permission or a
+  // missing device.
+  #cameraBusyError(error) {
+    return error?.name === "NotReadableError" || error?.name === "AbortError";
+  }
+
+  #stopCurrentCapture() {
+    const capture = this.#rawStream ?? this.stream;
+    capture?.getVideoTracks().forEach((track) => track.stop());
+  }
+
+  #showSwitchError(error) {
+    this.#showError(
+      error?.name === "NotAllowedError"
+        ? "resenha.video.camera_switch_denied"
+        : "resenha.video.camera_switch_failed"
+    );
+  }
+
+  // The old capture was already released for the retry, so a failed switch
+  // can't silently keep the previous stream: reacquire it, and if even that
+  // fails treat the camera as gone.
+  async #rollbackSwitch(previousDeviceId, epoch, error) {
+    // eslint-disable-next-line no-console
+    console.warn("[resenha] failed to switch camera", error);
+    this.inputDeviceId = previousDeviceId;
+
+    if (epoch === this.#epoch && this.kind === "camera") {
+      let previousStream;
+      try {
+        previousStream = await navigator.mediaDevices.getUserMedia({
+          video: cameraConstraints(previousDeviceId, this.#getCameraQuality()),
+        });
+      } catch {
+        await this.stop();
+      }
+
+      if (previousStream) {
+        await this.#swapCameraStream(previousStream, epoch);
+      }
+    }
+
+    this.#showSwitchError(error);
+    return false;
+  }
+
+  async #swapCameraStream(newStream, epoch) {
     const track = newStream.getVideoTracks()[0];
 
     // The camera may have been stopped while the new capture started; the
