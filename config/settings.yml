@@ -118,6 +118,9 @@ plugins:
   resenha_auto_status_enabled:
     default: true
     client: true
+  resenha_mesh_privacy_warning_enabled:
+    default: true
+    client: true
   resenha_badges_enabled:
     default: false
   resenha_analytics_enabled:

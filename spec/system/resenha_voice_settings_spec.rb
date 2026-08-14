@@ -10,6 +10,7 @@ describe "Resenha voice settings", type: :system do
   before do
     user.activate
     SiteSetting.resenha_enabled = true
+    SiteSetting.resenha_mesh_privacy_warning_enabled = false
     SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone]
     sign_in(user)
     install_resenha_fake_media

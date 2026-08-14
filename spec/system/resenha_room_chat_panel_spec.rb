@@ -19,6 +19,7 @@ describe "Resenha room chat panel", type: :system do
 
   before do
     SiteSetting.resenha_enabled = true
+    SiteSetting.resenha_mesh_privacy_warning_enabled = false
     SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone]
     chat_system_bootstrap(user, [channel])
     sign_in(user)

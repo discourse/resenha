@@ -32,8 +32,15 @@ function rememberAcknowledgement() {
 // room can learn everyone else's IP address. Resolves to whether the join
 // may proceed, gating mesh rooms on an explicit acknowledgement; "don't
 // show this again" persists per device.
-export async function confirmMeshPrivacy(room, { currentUser, modal }) {
-  if (!currentUser || room.expected_transport !== "mesh") {
+export async function confirmMeshPrivacy(
+  room,
+  { currentUser, modal, siteSettings }
+) {
+  if (
+    !siteSettings.resenha_mesh_privacy_warning_enabled ||
+    !currentUser ||
+    room.expected_transport !== "mesh"
+  ) {
     return true;
   }
 

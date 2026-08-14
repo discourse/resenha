@@ -566,6 +566,7 @@ export default class ResenhaWebrtcService extends Service {
     const meshPrivacyConfirmed = await confirmMeshPrivacy(room, {
       currentUser: this.currentUser,
       modal: this.modal,
+      siteSettings: this.siteSettings,
     });
     if (!meshPrivacyConfirmed) {
       return;

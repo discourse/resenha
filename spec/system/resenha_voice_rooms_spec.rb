@@ -36,6 +36,7 @@ describe "Resenha voice rooms", type: :system do
   before do
     user.activate
     SiteSetting.resenha_enabled = true
+    SiteSetting.resenha_mesh_privacy_warning_enabled = false
     SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone]
     SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
   end
