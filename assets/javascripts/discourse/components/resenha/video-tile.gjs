@@ -58,8 +58,20 @@ export default class ResenhaVideoTile extends Component {
     toggleTileFullscreen(event.currentTarget.closest(".resenha-video-tile"));
   }
 
+  // The menu only offers audio controls for a call the user is in, so
+  // page visitors who haven't joined the room don't get one.
+  get canShowMenu() {
+    return (
+      this.resenhaWebrtc.connectionStateFor(this.args.room?.id) === "connected"
+    );
+  }
+
   @action
   openContextMenu(event) {
+    if (!this.canShowMenu) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
     this.#showParticipantMenu(virtualElementFromEvent(event), "bottom-start");
@@ -179,15 +191,17 @@ export default class ResenhaVideoTile extends Component {
         {{/if}}
       </div>
 
-      <button
-        type="button"
-        class="btn btn-icon no-text resenha-video-tile__menu"
-        title={{i18n "resenha.participant.menu_title"}}
-        aria-label={{i18n "resenha.participant.menu_title"}}
-        {{on "click" this.openTileMenu}}
-      >
-        {{dIcon "ellipsis-vertical"}}
-      </button>
+      {{#if this.canShowMenu}}
+        <button
+          type="button"
+          class="btn btn-icon no-text resenha-video-tile__menu"
+          title={{i18n "resenha.participant.menu_title"}}
+          aria-label={{i18n "resenha.participant.menu_title"}}
+          {{on "click" this.openTileMenu}}
+        >
+          {{dIcon "ellipsis-vertical"}}
+        </button>
+      {{/if}}
 
       {{#if this.showVideo}}
         <button

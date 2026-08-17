@@ -272,7 +272,12 @@ export default {
             }
 
             get #showMenu() {
-              return !capabilities.isIpadOS && !!this.currentUser;
+              return (
+                !capabilities.isIpadOS &&
+                !!this.currentUser &&
+                this.resenhaWebrtc.connectionStateFor(this.room.id) ===
+                  "connected"
+              );
             }
 
             get #isAudiblySpeaking() {
@@ -733,6 +738,11 @@ export default {
             (p) => p.id === participantId
           );
           if (!participant) {
+            return;
+          }
+
+          // The menu only offers audio controls for a call the user is in.
+          if (resenhaWebrtc.connectionStateFor(room.id) !== "connected") {
             return;
           }
 
