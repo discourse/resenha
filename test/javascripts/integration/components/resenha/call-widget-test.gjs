@@ -55,6 +55,10 @@ class ResenhaWebrtcStub extends Service {
     return true;
   }
 
+  connectionStateFor() {
+    return "connected";
+  }
+
   remoteStreamFor(roomId, userId) {
     return this.videoStreams.get(`${roomId}:${userId}`);
   }
