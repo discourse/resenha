@@ -791,3 +791,48 @@ html.discourse-touch .resenha-call-widget {
     transform: translateX(100%);
   }
 }
+
+.resenha-ringing-tile {
+  // No measured video to derive a shape from — assume the default tile
+  // aspect so it packs into the grid like everyone else.
+  aspect-ratio: 16 / 9;
+  border: 1px dashed var(--primary-low-mid);
+  background: var(--primary-very-low);
+
+  &__animation {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+
+    // Placeholder styling until the bespoke ringing SVG animation replaces
+    // the icon.
+    .d-icon {
+      font-size: var(--font-up-4);
+      color: var(--primary-medium);
+      animation: resenha-ringing-pulse 1.4s ease-in-out infinite;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+      }
+    }
+  }
+
+  .resenha-video-tile__name {
+    font-style: italic;
+  }
+}
+
+@keyframes resenha-ringing-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}

@@ -11,8 +11,22 @@ export default {
         "resenha_invitation",
         (NotificationTypeBase) => {
           return class extends NotificationTypeBase {
-            linkTitle = i18n("notifications.titles.resenha_invitation");
-            icon = "microphone-lines";
+            // An invitation into an ephemeral room is a call.
+            get isCall() {
+              return !!this.notification.data.call;
+            }
+
+            get linkTitle() {
+              return i18n(
+                this.isCall
+                  ? "notifications.titles.resenha_call"
+                  : "notifications.titles.resenha_invitation"
+              );
+            }
+
+            get icon() {
+              return this.isCall ? "phone" : "microphone-lines";
+            }
 
             get linkHref() {
               const data = this.notification.data;
@@ -26,6 +40,10 @@ export default {
             }
 
             get description() {
+              if (this.isCall) {
+                return i18n("notifications.resenha_call");
+              }
+
               return i18n("notifications.resenha_invitation", {
                 room_name: this.notification.data.room_name,
               });

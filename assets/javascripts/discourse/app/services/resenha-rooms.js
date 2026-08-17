@@ -188,6 +188,8 @@ export default class ResenhaRoomsService extends Service {
       );
     } else if (payload.type === "recording") {
       this.setRoomRecording(payload.room_id, payload.recording);
+    } else if (payload.type === "ringing") {
+      this.#addRinging(payload.room_id, payload.user, payload.notified_at);
     }
 
     this.#forwardToRoomHandlers(payload.room_id, payload);
@@ -229,6 +231,23 @@ export default class ResenhaRoomsService extends Service {
     }
 
     room.recording = recording ?? null;
+    this.rooms = [...this.rooms];
+  }
+
+  // Someone in an ephemeral call room started ringing `user` — record it so
+  // the room page can show a pending tile. A repeat ring for the same user
+  // replaces their entry, restarting the ring window. Entries are never
+  // pruned here; the display filters out present users and expired rings.
+  #addRinging(roomId, user, notifiedAt) {
+    const room = this.#roomsById.get(roomId);
+    if (!room || !user?.id) {
+      return;
+    }
+
+    const others = (room.ringing || []).filter(
+      (entry) => Number(entry.user?.id) !== Number(user.id)
+    );
+    room.ringing = [...others, { user, notified_at: notifiedAt }];
     this.rooms = [...this.rooms];
   }
 

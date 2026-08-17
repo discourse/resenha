@@ -11,6 +11,7 @@ import { trustHTML } from "@ember/template";
 import DMenu from "discourse/float-kit/components/d-menu";
 import discourseLater from "discourse/lib/later";
 import { defaultHomepage } from "discourse/lib/utilities";
+import { or } from "discourse/truth-helpers";
 import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
@@ -20,6 +21,7 @@ import {
   toggleFullscreen,
   trackFullscreen,
 } from "../../lib/resenha/fullscreen";
+import { activeRingingEntries } from "../../lib/resenha/ringing";
 import { speakQueue } from "../../lib/resenha/speak-queue";
 import {
   bestRowHeight,
@@ -32,6 +34,7 @@ import ResenhaCallControls from "./call-controls";
 import ResenhaCallSubmenu from "./call-submenu";
 import ResenhaChatPanel from "./chat-panel";
 import ResenhaRecordingBadge from "./recording-badge";
+import ResenhaRingingTile from "./ringing-tile";
 import ResenhaSpeakQueue from "./speak-queue";
 import ResenhaVideoTile from "./video-tile";
 
@@ -64,13 +67,28 @@ export default class ResenhaRoomPage extends Component {
   @tracked chatClosing = false;
   @tracked layoutMode = this.#isStageRoom ? LAYOUT_PRESENTATION : LAYOUT_TILED;
 
+  // Ring windows expire by wall clock, which nothing tracked observes — a
+  // coarse ticker re-evaluates them so "Calling…" tiles disappear on time.
+  @tracked ringingClock = Date.now();
+
   gridElement = null;
   trackGridSize = trackGridSize;
   trackFullscreen = trackFullscreen;
   #chatCloseFallback = null;
+  #ringingTicker = null;
+
+  constructor() {
+    super(...arguments);
+    if (this.args.room?.ephemeral) {
+      this.#ringingTicker = setInterval(() => {
+        this.ringingClock = Date.now();
+      }, 5000);
+    }
+  }
 
   willDestroy() {
     super.willDestroy(...arguments);
+    clearInterval(this.#ringingTicker);
     cancel(this.#chatCloseFallback);
     const resenhaWebrtc = this.resenhaWebrtc;
     const roomId = this.args.room.id;
@@ -133,6 +151,10 @@ export default class ResenhaRoomPage extends Component {
       }
       return { participant, isSelf, showVideo };
     });
+  }
+
+  get ringingEntries() {
+    return activeRingingEntries(this.room, this.ringingClock);
   }
 
   get presentationTile() {
@@ -250,9 +272,13 @@ export default class ResenhaRoomPage extends Component {
       return null;
     }
 
-    const aspects = this.tiles.map(
-      (tile) => this.tileAspects.get(tile.participant.id) ?? DEFAULT_TILE_ASPECT
-    );
+    const aspects = [
+      ...this.tiles.map(
+        (tile) =>
+          this.tileAspects.get(tile.participant.id) ?? DEFAULT_TILE_ASPECT
+      ),
+      ...this.ringingEntries.map(() => DEFAULT_TILE_ASPECT),
+    ];
 
     const rowHeight = bestRowHeight(
       this.gridWidth,
@@ -477,7 +503,12 @@ export default class ResenhaRoomPage extends Component {
                     />
                   </div>
 
-                  {{#if this.presentationRailTiles.length}}
+                  {{#if
+                    (or
+                      this.presentationRailTiles.length
+                      this.ringingEntries.length
+                    )
+                  }}
                     <div class="resenha-room-page__presentation-rail">
                       {{#each
                         this.presentationRailTiles key="participant.id"
@@ -490,6 +521,9 @@ export default class ResenhaRoomPage extends Component {
                           @showVideo={{tile.showVideo}}
                           @onAspect={{this.reportTileAspect}}
                         />
+                      {{/each}}
+                      {{#each this.ringingEntries key="user.id" as |entry|}}
+                        <ResenhaRingingTile @user={{entry.user}} />
                       {{/each}}
                     </div>
                   {{/if}}
@@ -520,6 +554,9 @@ export default class ResenhaRoomPage extends Component {
                       @showVideo={{tile.showVideo}}
                       @onAspect={{this.reportTileAspect}}
                     />
+                  {{/each}}
+                  {{#each this.ringingEntries key="user.id" as |entry|}}
+                    <ResenhaRingingTile @user={{entry.user}} />
                   {{/each}}
                 </div>
               {{/if}}

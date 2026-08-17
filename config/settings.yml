@@ -14,6 +14,12 @@ plugins:
     default: "1|2|12"
     allow_any: false
     refresh: true
+  resenha_direct_calls_allowed_groups:
+    type: group_list
+    list_type: compact
+    default: ""
+    allow_any: false
+    refresh: true
   resenha_max_rooms_per_user:
     default: 5
   resenha_max_invites_per_day:

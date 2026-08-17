@@ -34,6 +34,14 @@ module Resenha
       user.in_any_groups?(SiteSetting.resenha_create_room_allowed_groups_map)
     end
 
+    # Starting a direct call is gated separately from receiving one: anyone
+    # with voice-room access can be called, but only these groups get the
+    # call button and the calls endpoint.
+    def can_start_resenha_call?
+      return false unless can_access_resenha?
+      user.in_any_groups?(SiteSetting.resenha_direct_calls_allowed_groups_map)
+    end
+
     # Being allowed to create rooms grants nothing over other people's rooms:
     # a room is managed by site staff, its creator, and its moderators only.
     def can_manage_resenha_room?(room)

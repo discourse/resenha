@@ -30,9 +30,32 @@ module Resenha
                :livekit_enabled,
                :expected_transport,
                :max_quality_profile,
-               :recording
+               :recording,
+               :ringing
 
     has_one :membership, serializer: Resenha::RoomMembershipSerializer, embed: :objects
+
+    def include_ringing?
+      object.ephemeral?
+    end
+
+    # People this call is still reaching out to: unredeemed invites, stamped
+    # with when they were last rung so clients can stop showing ones whose
+    # ring has run out. The client hides entries for users already present.
+    def ringing
+      invites = Resenha::Invite.where(room_id: object.id, redeemed_at: nil)
+      users = User.real.not_staged.where(id: invites.map(&:user_id)).index_by(&:id)
+
+      invites.filter_map do |invite|
+        user = users[invite.user_id]
+        next unless user
+
+        {
+          user: BasicUserSerializer.new(user, scope: scope, root: false).as_json,
+          notified_at: invite.updated_at.to_i,
+        }
+      end
+    end
 
     def membership
       object.room_memberships.find { |membership| membership.user_id == scope.user&.id }
