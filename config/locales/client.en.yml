@@ -175,6 +175,8 @@ en:
         dismiss_request: "Dismiss"
         dismiss_request_menu: "Dismiss request to speak"
       participant:
+        spotlight: "Spotlight for me"
+        remove_spotlight: "Remove from spotlight"
         menu_title: "Participant options"
         volume: "Volume"
         mute: "Mute"

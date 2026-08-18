@@ -29,6 +29,7 @@ Resenha adds lightweight WebRTC voice rooms to Discourse without proxying audio/
   - `resenha-sidebar` initializer registers a sidebar section with custom links for each room. Each link swaps its label with inline avatar thumbnails (plus a counter) so active participants are visible without modifying core sidebar components.
 - **Room UI**
   - `resenha-room` route/controller fetch full room metadata, render participant lists, and command the WebRTC service to join/leave rooms. `Resenha::VoiceCanvas` mounts `<audio>` sinks for local and remote streams during active calls.
+  - Presentation layout automatically features the first screen share or active camera. A viewer can locally override that choice from a participant's video-tile menu; selecting a layout through the standard control restores automatic selection.
 
 ## Message Flow
 
