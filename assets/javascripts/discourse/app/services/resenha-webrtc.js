@@ -747,7 +747,7 @@ export default class ResenhaWebrtcService extends Service {
       this.setWatching(room.id, true);
     }
 
-    playConnectedSound();
+    playConnectedSound(this.currentUser?.chat_sound);
 
     // Joining an ephemeral call room alone while someone is still being rung
     // means the other side hasn't picked up yet: loop the waiting tone until
@@ -762,7 +762,7 @@ export default class ResenhaWebrtcService extends Service {
       const lastRingEndsAt =
         Math.max(...ringing.map((entry) => entry.notified_at * 1000)) +
         RING_SECONDS * 1000;
-      startWaitingSound(lastRingEndsAt - now);
+      startWaitingSound(lastRingEndsAt - now, this.currentUser?.chat_sound);
     }
   }
 
@@ -802,7 +802,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#bumpConnectionRevision();
 
     if (wasConnected && !keepLocalStream) {
-      playDisconnectedSound();
+      playDisconnectedSound(this.currentUser?.chat_sound);
     }
     this.#removeLocalParticipant(room.id);
     this.#heartbeat.stop(room.id);
@@ -919,11 +919,11 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (this.audioEnabled) {
-      playUnmuteSound();
+      playUnmuteSound(this.currentUser?.chat_sound);
       this.#idleTracker.wasAutoMuted = false;
       this.#idleTracker.resetActivity();
     } else {
-      playMuteSound();
+      playMuteSound(this.currentUser?.chat_sound);
     }
 
     if (this.audioEnabled && this.deafened) {
@@ -937,9 +937,9 @@ export default class ResenhaWebrtcService extends Service {
     this.deafened = !this.deafened;
 
     if (this.deafened) {
-      playDeafenSound();
+      playDeafenSound(this.currentUser?.chat_sound);
     } else {
-      playUndeafenSound();
+      playUndeafenSound(this.currentUser?.chat_sound);
     }
 
     if (this.deafened) {
@@ -1602,9 +1602,9 @@ export default class ResenhaWebrtcService extends Service {
         // If this client was ringing (caller waiting alone in a call room),
         // someone arriving means the call was answered.
         stopCallSounds();
-        playUserJoinedSound();
+        playUserJoinedSound(this.currentUser?.chat_sound);
       } else if (hasPeerLeft) {
-        playUserLeftSound();
+        playUserLeftSound(this.currentUser?.chat_sound);
       }
     }
 
