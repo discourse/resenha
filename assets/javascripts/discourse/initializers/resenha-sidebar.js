@@ -1,6 +1,7 @@
 import { later, next } from "@ember/runloop";
 import noop from "discourse/helpers/noop";
 import { avatarUrl } from "discourse/lib/avatar-utils";
+import getURL from "discourse/lib/get-url";
 import { withPluginApi } from "discourse/lib/plugin-api";
 import { prioritizeNameInUx } from "discourse/lib/settings";
 import { i18n } from "discourse-i18n";
@@ -686,6 +687,17 @@ export default {
         }
 
         const connectionState = resenhaWebrtc.connectionStateFor(room.id);
+
+        if (event.shiftKey) {
+          // Hand the call over cleanly: two windows joined as the same user
+          // would fight over presence.
+          if (connectionState === "connected") {
+            resenhaWebrtc.leave(room);
+          }
+
+          window.open(getURL(`/resenha/r/${room.slug}?join`));
+          return;
+        }
 
         if (connectionState === "connecting") {
           return;
