@@ -91,7 +91,7 @@ export default class ResenhaCallsService extends Service {
     // Best effort: without a prior user gesture in this tab the browser
     // keeps the AudioContext suspended. The answer modal still shows, and
     // the first gesture while it's up starts the ringtone late.
-    startRingtone().then((played) => {
+    startRingtone(this.currentUser.chat_sound).then((played) => {
       if (!played && !this.isDestroying) {
         this.#retryRingtoneOnGesture();
       }
@@ -128,7 +128,7 @@ export default class ResenhaCallsService extends Service {
 
     const retry = () => {
       this.#cancelRingtoneRetry();
-      startRingtone();
+      startRingtone(this.currentUser.chat_sound);
     };
     this.#ringtoneRetry = retry;
     document.addEventListener("pointerdown", retry, { once: true });
