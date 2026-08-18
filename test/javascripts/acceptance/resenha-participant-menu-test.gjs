@@ -60,5 +60,10 @@ acceptance("Resenha participant context menu", function (needs) {
     assert
       .dom(".resenha-participant-sidebar-context-menu__volume-slider")
       .exists("audio controls are available");
+    assert
+      .dom(".resenha-participant-sidebar-context-menu__spotlight-btn")
+      .doesNotExist(
+        "page-only spotlight controls are not shown in the sidebar"
+      );
   });
 });

@@ -1,6 +1,6 @@
 import { tracked } from "@glimmer/tracking";
 import Service from "@ember/service";
-import { click, render } from "@ember/test-helpers";
+import { click, render, settled } from "@ember/test-helpers";
 import { module, test } from "qunit";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
 import pretender, { response } from "discourse/tests/helpers/create-pretender";
@@ -52,6 +52,14 @@ class ResenhaWebrtcStub extends Service {
   toggleCamera() {}
   toggleScreenShare() {}
   attachVideoStream() {}
+  getParticipantVolume() {
+    return 1;
+  }
+
+  isParticipantMuted() {
+    return false;
+  }
+
   remoteStreamFor() {
     return { id: "stream" };
   }
@@ -70,7 +78,14 @@ class CapabilitiesStub extends Service {
   touch = false;
 }
 
-module("Integration | Component | resenha/room-page", function (hooks) {
+async function selectParticipantFromOpenMenu(owner) {
+  const menuService = owner.lookup("service:menu");
+  const menu = menuService.getByIdentifier("resenha-participant-menu");
+  menu.options.data.onSpotlight(menu.options.data.participant.id);
+  await menuService.close(menu);
+}
+
+module("Integration | Component | Resenha | RoomPage", function (hooks) {
   setupRenderingTest(hooks);
 
   hooks.beforeEach(function () {
@@ -156,6 +171,161 @@ module("Integration | Component | resenha/room-page", function (hooks) {
     assert
       .dom(".resenha-room-page__presentation")
       .exists("renders the featured-presenter layout");
+  });
+
+  test("presentation layout automatically features the first screen share", async function (assert) {
+    this.room.room_type = "stage";
+    this.room.chat_available = false;
+    this.room.active_participants[1].is_screen_sharing = true;
+    this.room.active_participants[2].is_screen_sharing = true;
+
+    await render(<template><ResenhaRoomPage @room={{this.room}} /></template>);
+
+    assert
+      .dom(
+        ".resenha-room-page__presentation-main .resenha-video-tile[data-user-id='2']"
+      )
+      .exists("automatically features the first screen share");
+    assert
+      .dom(
+        ".resenha-room-page__presentation-rail .resenha-video-tile[data-user-id='3']"
+      )
+      .exists("keeps the other screen share in the rail");
+  });
+
+  test("spotlights a selected participant for the viewer", async function (assert) {
+    this.room.active_participants[1].is_screen_sharing = true;
+    this.room.active_participants[2].is_screen_sharing = true;
+
+    await render(<template><ResenhaRoomPage @room={{this.room}} /></template>);
+
+    await click(
+      ".resenha-video-tile[data-user-id='3'] .resenha-video-tile__menu"
+    );
+    await selectParticipantFromOpenMenu(this.owner);
+    await settled();
+
+    assert
+      .dom(".resenha-room-page")
+      .hasClass("--presentation", "switches to presentation layout");
+    assert
+      .dom(
+        ".resenha-room-page__presentation-main .resenha-video-tile[data-user-id='3']"
+      )
+      .exists("features the selected screen share");
+
+    await click(
+      ".resenha-room-page__presentation-main .resenha-video-tile__menu"
+    );
+    const participantMenu = this.owner
+      .lookup("service:menu")
+      .getByIdentifier("resenha-participant-menu");
+    assert.true(
+      participantMenu.options.data.isSpotlighted,
+      "marks the spotlight as active"
+    );
+    await selectParticipantFromOpenMenu(this.owner);
+    await settled();
+
+    assert
+      .dom(
+        ".resenha-room-page__presentation-main .resenha-video-tile[data-user-id='2']"
+      )
+      .exists("returns to automatic screen-share selection");
+  });
+
+  test("the normal presentation layout control restores automatic selection", async function (assert) {
+    this.room.active_participants[1].is_screen_sharing = true;
+    this.room.active_participants[2].is_screen_sharing = true;
+
+    await render(<template><ResenhaRoomPage @room={{this.room}} /></template>);
+
+    await click(
+      ".resenha-video-tile[data-user-id='3'] .resenha-video-tile__menu"
+    );
+    await selectParticipantFromOpenMenu(this.owner);
+    await settled();
+    await click(".resenha-room-menu-trigger");
+    await click(".resenha-room-page__layout-trigger");
+
+    this.owner
+      .lookup("service:menu")
+      .getByIdentifier("resenha-call-submenu")
+      .options.data.onSelect("presentation");
+    await settled();
+
+    assert
+      .dom(
+        ".resenha-room-page__presentation-main .resenha-video-tile[data-user-id='2']"
+      )
+      .exists("the default control restores automatic selection");
+  });
+
+  test("a spotlighted publisher receives the mobile video budget", async function (assert) {
+    this.owner.lookup("service:capabilities").viewport.md = false;
+    this.room.active_participants.push(
+      ...[4, 5, 6].map((id) => ({
+        id,
+        username: `user${id}`,
+        avatar_template: `/letter_avatar_proxy/v4/letter/u/{size}.png`,
+        is_video_on: true,
+      }))
+    );
+
+    await render(<template><ResenhaRoomPage @room={{this.room}} /></template>);
+
+    assert
+      .dom(".resenha-video-tile[data-user-id='6']")
+      .hasClass("--avatar", "the last publisher starts outside the budget");
+
+    await click(
+      ".resenha-video-tile[data-user-id='6'] .resenha-video-tile__menu"
+    );
+    await selectParticipantFromOpenMenu(this.owner);
+    await settled();
+
+    assert
+      .dom(
+        ".resenha-room-page__presentation-main .resenha-video-tile[data-user-id='6']"
+      )
+      .hasClass("--video", "the spotlighted publisher receives live video");
+  });
+
+  test("falls back when the spotlighted participant leaves", async function (assert) {
+    this.room.active_participants[1].is_screen_sharing = true;
+    this.room.active_participants[2].is_screen_sharing = true;
+
+    await render(<template><ResenhaRoomPage @room={{this.room}} /></template>);
+    await click(
+      ".resenha-video-tile[data-user-id='3'] .resenha-video-tile__menu"
+    );
+    await selectParticipantFromOpenMenu(this.owner);
+    await settled();
+
+    this.resenhaRooms.rooms = [
+      {
+        ...this.room,
+        active_participants: this.room.active_participants.filter(
+          (participant) => participant.id !== 3
+        ),
+      },
+    ];
+    await settled();
+
+    assert
+      .dom(
+        ".resenha-room-page__presentation-main .resenha-video-tile[data-user-id='2']"
+      )
+      .exists("falls back to automatic selection");
+
+    this.resenhaRooms.rooms = [this.room];
+    await settled();
+
+    assert
+      .dom(
+        ".resenha-room-page__presentation-main .resenha-video-tile[data-user-id='2']"
+      )
+      .exists("does not restore a stale spotlight if the participant rejoins");
   });
 
   test("a joined stage room with chat available opens the chat panel by default", async function (assert) {

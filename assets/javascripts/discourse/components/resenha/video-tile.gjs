@@ -94,6 +94,8 @@ export default class ResenhaVideoTile extends Component {
         participant: this.participant,
         canManageRoom: this.args.room?.can_manage,
         isCurrentUser: this.args.isSelf,
+        isSpotlighted: this.args.spotlighted,
+        onSpotlight: this.args.onSpotlight,
       },
     });
   }

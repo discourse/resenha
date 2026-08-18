@@ -5,6 +5,7 @@ import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
+import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import { cancel, next } from "@ember/runloop";
 import { service } from "@ember/service";
 import { trustHTML } from "@ember/template";
@@ -66,6 +67,7 @@ export default class ResenhaRoomPage extends Component {
   @tracked chatOpen = !!this.args.openChat || this.#isStageRoom;
   @tracked chatClosing = false;
   @tracked layoutMode = this.#isStageRoom ? LAYOUT_PRESENTATION : LAYOUT_TILED;
+  @tracked spotlightParticipantId = null;
 
   // Ring windows expire by wall clock, which nothing tracked observes — a
   // coarse ticker re-evaluates them so "Calling…" tiles disappear on time.
@@ -138,19 +140,40 @@ export default class ResenhaRoomPage extends Component {
     const budget = this.capabilities.viewport.md
       ? Infinity
       : MOBILE_VIDEO_TILE_BUDGET;
-    let videoCount = 0;
+    const videoParticipantIds = new Set();
+
+    const spotlightParticipant = this.participants.find(
+      (participant) => participant.id === this.spotlightParticipantId
+    );
+    if (spotlightParticipant && this.#isPublishing(spotlightParticipant)) {
+      videoParticipantIds.add(spotlightParticipant.id);
+    }
+
+    for (const participant of this.participants) {
+      if (videoParticipantIds.size >= budget) {
+        break;
+      }
+      if (this.#isPublishing(participant)) {
+        videoParticipantIds.add(participant.id);
+      }
+    }
 
     return this.participants.map((participant) => {
       const isSelf = participant.id === this.currentUser?.id;
-      const publishing = isSelf
-        ? !!this.resenhaWebrtc.localVideoKind
-        : participant.is_video_on || participant.is_screen_sharing;
-      const showVideo = publishing && videoCount < budget;
-      if (showVideo) {
-        videoCount++;
-      }
-      return { participant, isSelf, showVideo };
+      return {
+        participant,
+        isSelf,
+        showVideo: videoParticipantIds.has(participant.id),
+        spotlighted: participant.id === this.spotlightParticipantId,
+      };
     });
+  }
+
+  #isPublishing(participant) {
+    if (participant.id === this.currentUser?.id) {
+      return !!this.resenhaWebrtc.localVideoKind;
+    }
+    return participant.is_video_on || participant.is_screen_sharing;
   }
 
   get ringingEntries() {
@@ -159,6 +182,7 @@ export default class ResenhaRoomPage extends Component {
 
   get presentationTile() {
     return (
+      this.tiles.find((tile) => tile.spotlighted) ??
       this.tiles.find((tile) => tile.participant.is_screen_sharing) ??
       this.tiles.find((tile) => tile.showVideo && !tile.isSelf) ??
       this.tiles.find((tile) => tile.showVideo) ??
@@ -180,6 +204,31 @@ export default class ResenhaRoomPage extends Component {
 
   get presentationLayout() {
     return this.layoutMode === LAYOUT_PRESENTATION;
+  }
+
+  @action
+  toggleSpotlight(participantId) {
+    this.spotlightParticipantId =
+      this.spotlightParticipantId === participantId ? null : participantId;
+    this.layoutMode = LAYOUT_PRESENTATION;
+  }
+
+  @action
+  setLayoutMode(layoutMode) {
+    this.spotlightParticipantId = null;
+    this.layoutMode = layoutMode;
+  }
+
+  @action
+  reconcileSpotlight() {
+    if (
+      this.spotlightParticipantId &&
+      !this.participants.some(
+        (participant) => participant.id === this.spotlightParticipantId
+      )
+    ) {
+      this.spotlightParticipantId = null;
+    }
   }
 
   @action
@@ -460,7 +509,7 @@ export default class ResenhaRoomPage extends Component {
           selected: this.tiledLayout,
         },
       ],
-      (id) => (this.layoutMode = id)
+      this.setLayoutMode
     );
   }
 
@@ -474,6 +523,7 @@ export default class ResenhaRoomPage extends Component {
       }}
       {{didInsert this.watchRoom}}
       {{didInsert this.autoJoinIfRequested}}
+      {{didUpdate this.reconcileSpotlight this.participants}}
     >
       <div class="resenha-room-page__body">
         <div class="resenha-room-page__main">
@@ -499,6 +549,8 @@ export default class ResenhaRoomPage extends Component {
                       @participant={{this.presentationTile.participant}}
                       @isSelf={{this.presentationTile.isSelf}}
                       @showVideo={{this.presentationTile.showVideo}}
+                      @onSpotlight={{this.toggleSpotlight}}
+                      @spotlighted={{this.presentationTile.spotlighted}}
                       @onAspect={{this.reportTileAspect}}
                     />
                   </div>
@@ -519,6 +571,8 @@ export default class ResenhaRoomPage extends Component {
                           @participant={{tile.participant}}
                           @isSelf={{tile.isSelf}}
                           @showVideo={{tile.showVideo}}
+                          @onSpotlight={{this.toggleSpotlight}}
+                          @spotlighted={{tile.spotlighted}}
                           @onAspect={{this.reportTileAspect}}
                         />
                       {{/each}}
@@ -552,6 +606,8 @@ export default class ResenhaRoomPage extends Component {
                       @participant={{tile.participant}}
                       @isSelf={{tile.isSelf}}
                       @showVideo={{tile.showVideo}}
+                      @onSpotlight={{this.toggleSpotlight}}
+                      @spotlighted={{tile.spotlighted}}
                       @onAspect={{this.reportTileAspect}}
                     />
                   {{/each}}

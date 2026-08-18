@@ -53,6 +53,20 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     return this.args.data.canManageRoom;
   }
 
+  get canSpotlight() {
+    return !!this.args.data.onSpotlight;
+  }
+
+  get isSpotlighted() {
+    return !!this.args.data.isSpotlighted;
+  }
+
+  get spotlightLabel() {
+    return this.isSpotlighted
+      ? i18n("resenha.participant.remove_spotlight")
+      : i18n("resenha.participant.spotlight");
+  }
+
   get canKick() {
     return this.canManageRoom && this.participant.id !== this.room.creator_id;
   }
@@ -194,6 +208,12 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
   }
 
   @action
+  toggleSpotlight() {
+    this.args.data.onSpotlight(this.participant.id);
+    this.args.close();
+  }
+
+  @action
   async kick() {
     try {
       await ajax(`/resenha/rooms/${this.room.id}/kick`, {
@@ -320,6 +340,18 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
       class="resenha-participant-sidebar-context-menu"
       as |dropdown|
     >
+      {{#if this.canSpotlight}}
+        <dropdown.item>
+          <DButton
+            @action={{this.toggleSpotlight}}
+            @icon="person-chalkboard"
+            @translatedLabel={{this.spotlightLabel}}
+            @translatedTitle={{this.spotlightLabel}}
+            @ariaPressed={{this.isSpotlighted}}
+            class="resenha-participant-sidebar-context-menu__spotlight-btn"
+          />
+        </dropdown.item>
+      {{/if}}
       {{#if this.isCurrentUser}}
         {{#unless this.isListenerInStage}}
           <dropdown.item>
