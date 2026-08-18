@@ -107,6 +107,96 @@ RSpec.describe Resenha::CallsController do
       expect(Resenha::Room.ephemeral.count).to eq(0)
     end
 
+    context "when the callee's preferences screen out the caller" do
+      before { sign_in(caller) }
+
+      it "returns 403 when the callee has muted the caller" do
+        MutedUser.create!(user_id: callee.id, muted_user_id: caller.id)
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(403)
+        expect(response.parsed_body["errors"]).to include(I18n.t("resenha.errors.cannot_call_user"))
+        expect(Resenha::Room.ephemeral.count).to eq(0)
+        expect(callee.notifications.count).to eq(0)
+      end
+
+      it "returns 403 when the callee has ignored the caller" do
+        IgnoredUser.create!(
+          user_id: callee.id,
+          ignored_user_id: caller.id,
+          expiring_at: 1.day.from_now,
+        )
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(403)
+        expect(Resenha::Room.ephemeral.count).to eq(0)
+      end
+
+      it "returns 403 when the callee does not accept personal messages" do
+        callee.user_option.update!(allow_private_messages: false)
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(403)
+        expect(Resenha::Room.ephemeral.count).to eq(0)
+      end
+
+      it "returns 403 when the callee only accepts personal messages from a list that omits the caller" do
+        callee.user_option.update!(enable_allowed_pm_users: true)
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(403)
+        expect(Resenha::Room.ephemeral.count).to eq(0)
+      end
+
+      it "connects the call when the caller is on the callee's allowed list" do
+        callee.user_option.update!(enable_allowed_pm_users: true)
+        AllowedPmUser.create!(user: callee, allowed_pm_user: caller)
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(200)
+        expect(Resenha::Room.ephemeral.count).to eq(1)
+      end
+    end
+
+    it "leaves a missed-call notification instead of ringing a callee in do not disturb" do
+      callee.do_not_disturb_timings.create!(starts_at: Time.zone.now, ends_at: 1.hour.from_now)
+      sign_in(caller)
+
+      messages =
+        MessageBus.track_publish do
+          post "/resenha/calls.json", params: { username: callee.username }
+        end
+
+      expect(response.status).to eq(200)
+      expect(messages.map(&:channel)).not_to include("/resenha/call-ring/#{callee.id}")
+
+      # The caller still sees a normal outgoing ring so do-not-disturb status
+      # is not revealed; the call simply goes unanswered.
+      ringing = response.parsed_body["room"]["ringing"]
+      expect(ringing.map { |entry| entry["user"]["id"] }).to contain_exactly(callee.id)
+
+      notification = callee.notifications.order(:id).last
+      expect(notification.notification_type).to eq(Notification.types[:resenha_invitation])
+    end
+
+    it "lets staff call a user whose preferences would screen out other callers" do
+      SiteSetting.resenha_direct_calls_allowed_groups = Group::AUTO_GROUPS[:staff]
+      admin = Fabricate(:admin)
+      MutedUser.create!(user_id: callee.id, muted_user_id: admin.id)
+      callee.user_option.update!(allow_private_messages: false)
+      sign_in(admin)
+
+      post "/resenha/calls.json", params: { username: callee.username }
+
+      expect(response.status).to eq(200)
+      expect(callee.notifications.count).to eq(1)
+    end
+
     it "returns 403 when the caller is outside the direct-call groups (the default)" do
       SiteSetting.resenha_direct_calls_allowed_groups = ""
       sign_in(caller)

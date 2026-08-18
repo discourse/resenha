@@ -18,6 +18,17 @@ module Resenha
         raise Discourse::InvalidParameters.new(:username)
       end
 
+      # One message for every preference-based refusal (mute, ignore, personal
+      # messages disabled or allowlisted), matching what personal messages and
+      # chat DMs reveal without saying which preference applied.
+      unless guardian.can_call_resenha_user?(callee)
+        raise Discourse::InvalidAccess.new(
+                "cannot call user",
+                nil,
+                custom_message: "resenha.errors.cannot_call_user",
+              )
+      end
+
       RateLimiter.new(current_user, "resenha-calls", 10, 1.minute).performed!
 
       room =

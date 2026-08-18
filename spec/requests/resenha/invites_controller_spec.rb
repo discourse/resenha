@@ -122,6 +122,16 @@ RSpec.describe Resenha::InvitesController do
       expect(invitee.notifications.count).to eq(0)
     end
 
+    it "silently drops the notification when the invitee does not accept personal messages" do
+      invitee.user_option.update!(allow_private_messages: false)
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/invites.json", params: { usernames: [invitee.username] }
+
+      expect(response.parsed_body["invited_usernames"]).to eq([invitee.username])
+      expect(invitee.notifications.count).to eq(0)
+    end
+
     it "rate limits invite notifications per day" do
       RateLimiter.enable
       SiteSetting.resenha_max_invites_per_day = 1

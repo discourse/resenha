@@ -104,13 +104,14 @@ after_initialize do
   refresh_chat_hashtag_configurations
 
   # Gates the user-card call button: the viewer needs the direct-call
-  # permission, the target needs voice-room access, and calling yourself or a
-  # bot is meaningless.
+  # permission and the target must be callable by them — voice-room access,
+  # not the viewer themselves or a bot, and not screened out by the target's
+  # mute, ignore, or personal message preferences.
   add_to_serializer(
     :user_card,
     :resenha_can_call,
     include_condition: -> { scope.can_start_resenha_call? },
-  ) { object.id != scope.user.id && !object.bot? && object.guardian.can_access_resenha? }
+  ) { scope.can_call_resenha_user?(object) }
 
   # Lets the client decide whether to render the rooms sidebar for anonymous
   # visitors without exposing the configured group ids.

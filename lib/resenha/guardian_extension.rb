@@ -42,6 +42,21 @@ module Resenha
       user.in_any_groups?(SiteSetting.resenha_direct_calls_allowed_groups_map)
     end
 
+    # A specific user may be rung only by callers they could receive a
+    # personal message from: muting or ignoring the caller, disabling
+    # personal messages, or an allowlist that omits the caller all block the
+    # call. Staff are exempt, as they are for personal messages.
+    def can_call_resenha_user?(target)
+      return false unless can_start_resenha_call?
+      return false if target.blank? || target.bot? || target.id == user.id
+      return false unless target.guardian.can_access_resenha?
+
+      !UserCommScreener.new(
+        acting_user: user,
+        target_user_ids: [target.id],
+      ).disallowing_pms_from_actor?(target.id)
+    end
+
     # Being allowed to create rooms grants nothing over other people's rooms:
     # a room is managed by site staff, its creator, and its moderators only.
     def can_manage_resenha_room?(room)

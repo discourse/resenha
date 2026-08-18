@@ -58,10 +58,14 @@ module Resenha
       invite.redeemed_at.nil? && invite.updated_at < renotify_after.ago
     end
 
-    # Muting silences notifications; ignoring implies muting.
+    # Anyone the invitee could not receive a personal message from — muted,
+    # ignored, or screened out by their personal message preferences — cannot
+    # ring or notify them either.
     def notifications_blocked?
-      MutedUser.exists?(user_id: @user.id, muted_user_id: @inviter.id) ||
-        IgnoredUser.exists?(user_id: @user.id, ignored_user_id: @inviter.id)
+      UserCommScreener.new(
+        acting_user: @inviter,
+        target_user_ids: [@user.id],
+      ).disallowing_pms_from_actor?(@user.id)
     end
 
     # The room page prompts for the invite to be redeemed on an actual join,
@@ -131,6 +135,16 @@ module Resenha
     def ring!
       notified_at = Time.current.to_i
 
+      # A callee in do-not-disturb is not rung, but the caller still sees a
+      # normal outgoing ring: the call simply goes unanswered, without
+      # revealing the do-not-disturb status, and the missed-call notification
+      # is waiting once it ends.
+      ring_devices!(notified_at) unless @user.do_not_disturb?
+
+      Resenha::RoomBroadcaster.publish_ringing(@room, @user, notified_at: notified_at)
+    end
+
+    def ring_devices!(notified_at)
       MessageBus.publish(
         "/resenha/call-ring/#{@user.id}",
         {
@@ -145,8 +159,6 @@ module Resenha
         },
         user_ids: [@user.id],
       )
-
-      Resenha::RoomBroadcaster.publish_ringing(@room, @user, notified_at: notified_at)
     end
   end
 end

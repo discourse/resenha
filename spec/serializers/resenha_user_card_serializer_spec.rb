@@ -29,6 +29,20 @@ RSpec.describe UserCardSerializer do
       expect(serialize(outsider, viewer)[:resenha_can_call]).to eq(false)
     end
 
+    it "is false when the target has muted the viewer" do
+      SiteSetting.resenha_direct_calls_allowed_groups = Group::AUTO_GROUPS[:trust_level_2]
+      MutedUser.create!(user_id: target.id, muted_user_id: viewer.id)
+
+      expect(serialize(target, viewer)[:resenha_can_call]).to eq(false)
+    end
+
+    it "is false when the target does not accept personal messages from the viewer" do
+      SiteSetting.resenha_direct_calls_allowed_groups = Group::AUTO_GROUPS[:trust_level_2]
+      target.user_option.update!(allow_private_messages: false)
+
+      expect(serialize(target, viewer)[:resenha_can_call]).to eq(false)
+    end
+
     it "is omitted entirely when direct calls are disabled (the default)" do
       expect(serialize(target, viewer)).not_to have_key(:resenha_can_call)
     end
