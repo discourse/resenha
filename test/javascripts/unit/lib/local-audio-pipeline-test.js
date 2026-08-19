@@ -62,7 +62,7 @@ function installFakeEnvironment(context, { rawStream, processedStream }) {
     port = {
       onmessage: null,
       postMessage: (data) => {
-        if (data?.type === "wasm") {
+        if (data?.type === "init") {
           this.wasmReceived = true;
         }
       },

@@ -396,7 +396,7 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
     port = {
       onmessage: null,
       postMessage: (data) => {
-        if (data?.type === "wasm") {
+        if (data?.type === "init") {
           Promise.resolve().then(() =>
             this.port.onmessage?.({ data: { type: "ready" } })
           );
