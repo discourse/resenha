@@ -62,7 +62,7 @@ function installFakeEnvironment(context, { rawStream, processedStream }) {
     port = {
       onmessage: null,
       postMessage: (data) => {
-        if (data?.type === "wasm") {
+        if (data?.type === "init") {
           this.wasmReceived = true;
         }
       },
@@ -96,7 +96,7 @@ function installFakeEnvironment(context, { rawStream, processedStream }) {
   window.AudioContext = FakeAudioContext;
   globalThis.AudioWorkletNode = FakeAudioWorkletNode;
   globalThis.fetch = (url, options) => {
-    if (String(url).includes("/plugins/resenha/javascripts/dtln/")) {
+    if (String(url).includes("/plugins/resenha/javascripts/")) {
       return Promise.resolve({
         ok: true,
         arrayBuffer: async () => new ArrayBuffer(8),
@@ -190,7 +190,7 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
   test("AI mode resolves only after the worklet ready handshake and disables native suppression", async function (assert) {
     await this.pipeline.acquireMicrophone();
 
-    const change = this.pipeline.setNoiseSuppressionMode("ai");
+    const change = this.pipeline.setNoiseSuppressionMode("ai:dtln");
     const node = await waitForWorkletNode(this.env.workletNodes);
 
     assert.strictEqual(
@@ -219,7 +219,7 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
     );
     assert.strictEqual(
       localStorage.getItem("resenha:noise-suppression-mode"),
-      "ai",
+      "ai:dtln",
       "persists the mode only on success"
     );
     assert.strictEqual(this.trackReplacements, 1);
@@ -228,7 +228,7 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
   test("worklet init error reverts to the previous mode and notifies", async function (assert) {
     await this.pipeline.acquireMicrophone();
 
-    const change = this.pipeline.setNoiseSuppressionMode("ai");
+    const change = this.pipeline.setNoiseSuppressionMode("ai:dtln");
     const node = await waitForWorkletNode(this.env.workletNodes);
     node.emit({ type: "error", message: "boom" });
     await change;
@@ -255,7 +255,7 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
   test("rapid mode changes are serialized", async function (assert) {
     await this.pipeline.acquireMicrophone();
 
-    const first = this.pipeline.setNoiseSuppressionMode("ai");
+    const first = this.pipeline.setNoiseSuppressionMode("ai:dtln");
     const second = this.pipeline.setNoiseSuppressionMode("standard");
 
     const node = await waitForWorkletNode(this.env.workletNodes);
@@ -284,7 +284,7 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
   test("stop() during setup supersedes it without failure side effects", async function (assert) {
     await this.pipeline.acquireMicrophone();
 
-    const change = this.pipeline.setNoiseSuppressionMode("ai");
+    const change = this.pipeline.setNoiseSuppressionMode("ai:dtln");
     await waitForWorkletNode(this.env.workletNodes);
 
     this.pipeline.stop();
@@ -299,7 +299,7 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
   });
 
   test("mid-call bypass falls back to standard suppression", async function (assert) {
-    localStorage.setItem("resenha:noise-suppression-mode", "ai");
+    localStorage.setItem("resenha:noise-suppression-mode", "ai:dtln");
     this.pipeline = this.buildPipeline();
 
     const acquired = this.pipeline.acquireMicrophone();
@@ -328,12 +328,12 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
   });
 
   test("changing the mode without a microphone only stores the preference", async function (assert) {
-    await this.pipeline.setNoiseSuppressionMode("ai");
+    await this.pipeline.setNoiseSuppressionMode("ai:dtln");
 
-    assert.strictEqual(this.pipeline.noiseSuppressionMode, "ai");
+    assert.strictEqual(this.pipeline.noiseSuppressionMode, "ai:dtln");
     assert.strictEqual(
       localStorage.getItem("resenha:noise-suppression-mode"),
-      "ai"
+      "ai:dtln"
     );
     assert.strictEqual(
       this.env.workletNodes.length,
@@ -353,7 +353,48 @@ module("Resenha | Unit | Lib | local-audio-pipeline", function (hooks) {
 
     const pipeline = this.buildPipeline();
 
-    assert.strictEqual(pipeline.noiseSuppressionMode, "ai");
+    assert.strictEqual(pipeline.noiseSuppressionMode, "ai:dtln");
+  });
+
+  test('migrates the legacy plain "ai" mode to the DTLN engine', function (assert) {
+    localStorage.setItem("resenha:noise-suppression-mode", "ai");
+
+    const pipeline = this.buildPipeline();
+
+    assert.strictEqual(pipeline.noiseSuppressionMode, "ai:dtln");
+  });
+
+  test("switching between AI engines rebuilds the worklet pipeline", async function (assert) {
+    await this.pipeline.acquireMicrophone();
+
+    const first = this.pipeline.setNoiseSuppressionMode("ai:dtln");
+    (await waitForWorkletNode(this.env.workletNodes, 0)).emit({
+      type: "ready",
+    });
+    await first;
+
+    const second = this.pipeline.setNoiseSuppressionMode("ai:rnnoise");
+    (await waitForWorkletNode(this.env.workletNodes, 1)).emit({
+      type: "ready",
+    });
+    await second;
+
+    assert.strictEqual(this.pipeline.noiseSuppressionMode, "ai:rnnoise");
+    assert.strictEqual(this.pipeline.noiseSuppressionState, "on");
+    assert.strictEqual(
+      this.pipeline.stream,
+      this.processedStream,
+      "publishes the new engine's stream"
+    );
+    assert.strictEqual(
+      this.env.workletNodes.length,
+      2,
+      "each engine got its own worklet"
+    );
+    assert.false(
+      this.env.captureConstraints.at(-1).noiseSuppression,
+      "native suppression stays off across AI engines"
+    );
   });
 
   test("echo cancellation and auto gain changes recapture with new constraints", async function (assert) {

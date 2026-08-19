@@ -2,6 +2,7 @@ import { tracked } from "@glimmer/tracking";
 import {
   autoGainControlPreferred,
   echoCancellationPreferred,
+  isAiMode,
   preferredNoiseSuppressionMode,
   setAutoGainControlPreferred,
   setEchoCancellationPreferred,
@@ -14,19 +15,20 @@ import {
   setPreferredInputDeviceId,
 } from "./media-devices";
 import NoiseSuppressionManager, { SupersededError } from "./noise-suppression";
+import { engineForMode } from "./ns-engines";
 
 // Owns the local microphone pipeline: raw mic (with the browser's echo
 // cancellation / auto gain / native noise suppression applied per the stored
-// preferences) → optional DTLN noise suppression → optional input gate → the
+// preferences) → optional AI noise suppression → optional input gate → the
 // published `stream`. All restructures of the pipeline (device switch,
 // processing changes, suppression mode, gate crossing zero) notify the
 // service so it can re-sync monitors and move peers onto the new track.
 export default class LocalAudioPipeline {
-  // "none" | "standard" (browser native) | "ai" (DTLN worklet).
+  // "none" | "standard" (browser native) | "ai:<engine>" (see ns-engines.js).
   @tracked noiseSuppressionMode = preferredNoiseSuppressionMode();
 
-  // "off" | "starting" | "on" — the DTLN worklet's lifecycle; "on" means the
-  // ready handshake confirmed it is filtering. Always "off" outside AI mode.
+  // "off" | "starting" | "on" — the AI worklet's lifecycle; "on" means the
+  // ready handshake confirmed it is filtering. Always "off" outside AI modes.
   @tracked noiseSuppressionState = "off";
 
   @tracked echoCancellation = echoCancellationPreferred();
@@ -310,7 +312,8 @@ export default class LocalAudioPipeline {
   async #buildProcessedStream(rawStream, { userGesture = false } = {}) {
     this.#noiseSuppression.teardown();
 
-    if (this.noiseSuppressionMode !== "ai") {
+    const engine = engineForMode(this.noiseSuppressionMode);
+    if (!engine) {
       this.noiseSuppressionState = "off";
       this.#setOutgoingStream(rawStream);
       return true;
@@ -318,7 +321,7 @@ export default class LocalAudioPipeline {
 
     this.noiseSuppressionState = "starting";
     try {
-      const suppressed = await this.#noiseSuppression.setup(rawStream, {
+      const suppressed = await this.#noiseSuppression.setup(rawStream, engine, {
         userGesture,
       });
       this.noiseSuppressionState = "on";
@@ -338,12 +341,12 @@ export default class LocalAudioPipeline {
     }
   }
 
-  // The worklet reported a mid-call breakdown (repeated DTLN failures or a
+  // The worklet reported a mid-call breakdown (repeated engine failures or a
   // late init error): drop back to standard suppression so peers don't keep
   // listening through a dead passthrough graph or an unfiltered mic.
   #handleSuppressionRuntimeFailure() {
     this.#serialize(async () => {
-      if (this.noiseSuppressionMode !== "ai" || !this.#rawStream) {
+      if (!isAiMode(this.noiseSuppressionMode) || !this.#rawStream) {
         return;
       }
       this.noiseSuppressionMode = "standard";

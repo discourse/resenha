@@ -2,6 +2,9 @@
   "private": true,
   "scripts": {
     "build:dtln-worklet": "./scripts/build-dtln-worklet.sh",
+    "build:rnnoise-worklet": "./scripts/build-rnnoise-worklet.sh",
+    "build:dfn3-worklet": "./scripts/build-dfn3-worklet.sh",
+    "smoke:ns-worklet": "node scripts/smoke-ns-worklet.mjs",
     "build:livekit": "./scripts/build-livekit-bundle.sh",
     "resenha:bots": "node scripts/resenha-fake-participants.mjs",
     "lint": "concurrently \"pnpm:lint:*(!fix)\" --names \"lint:\"",

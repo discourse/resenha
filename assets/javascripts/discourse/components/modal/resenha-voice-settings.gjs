@@ -10,6 +10,7 @@ import DButton from "discourse/ui-kit/d-button";
 import DModal from "discourse/ui-kit/d-modal";
 import DToggleSwitch from "discourse/ui-kit/d-toggle-switch";
 import { i18n } from "discourse-i18n";
+import { NOISE_SUPPRESSION_MODES } from "../../lib/resenha/audio-processing";
 import { rmsToPercent, sampleRms } from "../../lib/resenha/input-gate";
 import {
   applyOutputDevice,
@@ -18,7 +19,11 @@ import {
   outputSelectionSupported,
   SYSTEM_DEFAULT_DEVICE_ID,
 } from "../../lib/resenha/media-devices";
-import { prefetchDtlnWasm } from "../../lib/resenha/noise-suppression";
+import { prefetchEngineAssets } from "../../lib/resenha/noise-suppression";
+import {
+  engineForMode,
+  noiseSuppressionModeLabel,
+} from "../../lib/resenha/ns-engines";
 
 const METER_INTERVAL_MS = 50;
 
@@ -41,7 +46,10 @@ export default class ResenhaVoiceSettingsModal extends Component {
     this.startPreview();
     // Someone opening voice settings may be about to enable suppression;
     // warming the model bytes makes that toggle near-instant.
-    prefetchDtlnWasm().catch(() => {});
+    const engine = engineForMode(this.resenhaWebrtc.noiseSuppressionMode);
+    if (engine) {
+      prefetchEngineAssets(engine).catch(() => {});
+    }
     navigator.mediaDevices?.addEventListener?.(
       "devicechange",
       this.#onDeviceChange
@@ -78,9 +86,9 @@ export default class ResenhaVoiceSettingsModal extends Component {
   }
 
   get noiseSuppressionModeOptions() {
-    return ["none", "standard", "ai"].map((mode) => ({
+    return NOISE_SUPPRESSION_MODES.map((mode) => ({
       id: mode,
-      name: i18n(`resenha.voice_settings.noise_suppression_modes.${mode}`),
+      name: noiseSuppressionModeLabel(mode),
     }));
   }
 

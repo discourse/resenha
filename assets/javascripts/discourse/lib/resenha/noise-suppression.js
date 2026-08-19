@@ -1,5 +1,4 @@
 import getURL from "discourse/lib/get-url";
-import { DTLN_WASM_PATH, DTLN_WORKLET_PATH } from "./dtln-assets";
 
 // How long setup() waits for the worklet's "ready" handshake. Instantiating
 // the (already fetched) wasm and warming the model up takes well under a
@@ -20,24 +19,41 @@ export class SupersededError extends Error {
   }
 }
 
-let wasmBytesPromise = null;
+const assetPromises = new Map();
 
-// Fetching the ~6MB model once and keeping the bytes lets re-enables and
-// device switches skip the network entirely. A failed fetch is not cached,
-// so a flaky connection doesn't brick the feature until reload.
-export function prefetchDtlnWasm() {
-  wasmBytesPromise ??= fetch(getURL(DTLN_WASM_PATH))
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`DTLN wasm fetch failed: ${response.status}`);
-      }
-      return response.arrayBuffer();
-    })
-    .catch((error) => {
-      wasmBytesPromise = null;
-      throw error;
-    });
-  return wasmBytesPromise;
+function fetchBytes(path) {
+  if (!assetPromises.has(path)) {
+    assetPromises.set(
+      path,
+      fetch(getURL(path))
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`${path} fetch failed: ${response.status}`);
+          }
+          return response.arrayBuffer();
+        })
+        .catch((error) => {
+          // A failed fetch is not cached, so a flaky connection doesn't
+          // brick the feature until reload.
+          assetPromises.delete(path);
+          throw error;
+        })
+    );
+  }
+  return assetPromises.get(path);
+}
+
+// Fetching an engine's model once and keeping the bytes lets re-enables and
+// device switches skip the network entirely.
+export function prefetchEngineAssets(engine) {
+  const assets = { wasm: fetchBytes(engine.wasmPath) };
+  if (engine.modelPath) {
+    assets.model = fetchBytes(engine.modelPath);
+  }
+  return Promise.all(Object.values(assets)).then(async () => ({
+    wasm: await assets.wasm,
+    model: engine.modelPath ? await assets.model : undefined,
+  }));
 }
 
 function timeout(ms) {
@@ -65,11 +81,12 @@ export default class NoiseSuppressionManager {
   // confirmed the model is loaded and filtering (the "ready" handshake), so
   // a resolved setup() means noise suppression is actually working. Throws
   // SupersededError when a newer setup()/teardown() takes over mid-flight.
-  async setup(rawStream, { userGesture = false } = {}) {
+  // `engine` is a descriptor from ns-engines.js.
+  async setup(rawStream, engine, { userGesture = false } = {}) {
     const epoch = ++this.#epoch;
     const superseded = () => epoch !== this.#epoch;
 
-    const wasmBytes = await prefetchDtlnWasm();
+    const assets = await prefetchEngineAssets(engine);
     if (superseded()) {
       throw new SupersededError();
     }
@@ -114,7 +131,7 @@ export default class NoiseSuppressionManager {
     }
 
     try {
-      await audioContext.audioWorklet.addModule(getURL(DTLN_WORKLET_PATH));
+      await audioContext.audioWorklet.addModule(getURL(engine.workletPath));
     } catch (error) {
       abort();
       throw error;
@@ -125,7 +142,7 @@ export default class NoiseSuppressionManager {
       throw new SupersededError();
     }
 
-    // DTLN is mono. Forcing one channel downmixes stereo microphones ahead
+    // The engines are mono. Forcing one channel downmixes stereo mics ahead
     // of the worklet; left at the defaults the node mirrors the input's
     // channel count and a stereo mic ships a silent right channel.
     const workletNode = new AudioWorkletNode(
@@ -139,7 +156,7 @@ export default class NoiseSuppressionManager {
     );
 
     try {
-      await this.#awaitReady(workletNode, wasmBytes, superseded);
+      await this.#awaitReady(workletNode, assets, superseded);
     } catch (error) {
       abort();
       throw error;
@@ -175,7 +192,7 @@ export default class NoiseSuppressionManager {
     return destination.stream;
   }
 
-  #awaitReady(workletNode, wasmBytes, superseded) {
+  #awaitReady(workletNode, assets, superseded) {
     return new Promise((resolve, reject) => {
       let timer = null;
       const settle = (fn, value) => {
@@ -196,17 +213,23 @@ export default class NoiseSuppressionManager {
         } else if (type === "ready") {
           settle(resolve);
         } else if (type === "error") {
-          settle(reject, new Error(`DTLN init failed: ${message}`));
+          settle(reject, new Error(`engine init failed: ${message}`));
         }
       };
 
       timer = setTimeout(() => {
-        settle(reject, new Error("DTLN worklet ready handshake timed out"));
+        settle(reject, new Error("worklet ready handshake timed out"));
       }, READY_TIMEOUT_MS);
 
-      // The cached bytes stay usable: a copy is transferred, not the cache.
-      const bytes = wasmBytes.slice(0);
-      workletNode.port.postMessage({ type: "wasm", bytes }, [bytes]);
+      // The cached bytes stay usable: copies are transferred, not the cache.
+      const payload = { wasm: assets.wasm.slice(0) };
+      if (assets.model) {
+        payload.model = assets.model.slice(0);
+      }
+      workletNode.port.postMessage(
+        { type: "init", assets: payload },
+        Object.values(payload)
+      );
     });
   }
 

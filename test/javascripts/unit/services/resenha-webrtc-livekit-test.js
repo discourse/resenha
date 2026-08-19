@@ -419,7 +419,7 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
     port = {
       onmessage: null,
       postMessage: (data) => {
-        if (data?.type === "wasm") {
+        if (data?.type === "init") {
           Promise.resolve().then(() =>
             this.port.onmessage?.({ data: { type: "ready" } })
           );
@@ -436,7 +436,7 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
 
   const originalFetch = globalThis.fetch;
   const fakeFetch = (url, options) => {
-    if (String(url).includes("/plugins/resenha/javascripts/dtln/")) {
+    if (String(url).includes("/plugins/resenha/javascripts/")) {
       return Promise.resolve({
         ok: true,
         arrayBuffer: async () => new ArrayBuffer(8),
@@ -716,7 +716,7 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     await this.subject.join(this.room);
     await wait(50);
 
-    await this.subject.setNoiseSuppressionMode("ai");
+    await this.subject.setNoiseSuppressionMode("ai:dtln");
 
     const publication =
       this.FakeLivekitRoom.instances[0].localParticipant.published[0];

@@ -1,21 +1,32 @@
+import { NS_ENGINES } from "./ns-engines";
+
 // Per-device preferences for the browser's microphone processing chain and
 // the noise suppression mode. Echo cancellation and automatic gain control
 // default to on (matching what browsers do when the constraints are absent);
 // they are stored only when the user turns one off.
 //
-// Noise suppression is a three-way mode:
-//   "none"     — no filtering at all
-//   "standard" — the browser's native noise suppression
-//   "ai"       — the DTLN worklet; native suppression is turned OFF so the
-//                two filters don't stack (stacked suppressors produce the
-//                classic underwater/musical artifacts)
+// Noise suppression modes:
+//   "none"         — no filtering at all
+//   "standard"     — the browser's native noise suppression
+//   "ai:<engine>"  — an AI worklet engine (see ns-engines.js); native
+//                    suppression is turned OFF so the two filters don't
+//                    stack (stacked suppressors produce the classic
+//                    underwater/musical artifacts)
 
 const EC_STORAGE_KEY = "resenha:echo-cancellation";
 const AGC_STORAGE_KEY = "resenha:auto-gain-control";
 const NS_MODE_STORAGE_KEY = "resenha:noise-suppression-mode";
 const LEGACY_NS_STORAGE_KEY = "resenha:noise-suppression";
 
-export const NOISE_SUPPRESSION_MODES = ["none", "standard", "ai"];
+export const NOISE_SUPPRESSION_MODES = [
+  "none",
+  "standard",
+  ...Object.keys(NS_ENGINES).map((id) => `ai:${id}`),
+];
+
+export function isAiMode(mode) {
+  return !!mode?.startsWith?.("ai:");
+}
 
 function readDefaultOnFlag(key) {
   try {
@@ -59,9 +70,11 @@ export function preferredNoiseSuppressionMode() {
     if (NOISE_SUPPRESSION_MODES.includes(mode)) {
       return mode;
     }
-    // The boolean predates the mode: "1" meant the DTLN worklet was on.
-    if (localStorage.getItem(LEGACY_NS_STORAGE_KEY) === "1") {
-      return "ai";
+    // Two generations of stored values predate per-engine modes: the plain
+    // "ai" mode, and before that a boolean where "1" meant the DTLN worklet
+    // was on. Both meant DTLN.
+    if (mode === "ai" || localStorage.getItem(LEGACY_NS_STORAGE_KEY) === "1") {
+      return "ai:dtln";
     }
   } catch {
     // fall through to the default

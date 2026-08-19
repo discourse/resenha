@@ -396,7 +396,7 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
     port = {
       onmessage: null,
       postMessage: (data) => {
-        if (data?.type === "wasm") {
+        if (data?.type === "init") {
           Promise.resolve().then(() =>
             this.port.onmessage?.({ data: { type: "ready" } })
           );
@@ -413,7 +413,7 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
 
   const originalFetch = globalThis.fetch;
   const fakeFetch = (url, options) => {
-    if (String(url).includes("/plugins/resenha/javascripts/dtln/")) {
+    if (String(url).includes("/plugins/resenha/javascripts/")) {
       return Promise.resolve({
         ok: true,
         arrayBuffer: async () => new ArrayBuffer(8),
@@ -1638,7 +1638,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
       this.subject.toggleMute();
 
-      await this.subject.setNoiseSuppressionMode("ai");
+      await this.subject.setNoiseSuppressionMode("ai:dtln");
 
       assert.true(
         this.subject.noiseSuppressionEnabled,
@@ -1688,7 +1688,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       { id: 30, role: "speaker" },
     ];
 
-    localStorage.setItem("resenha:noise-suppression-mode", "ai");
+    localStorage.setItem("resenha:noise-suppression-mode", "ai:dtln");
 
     try {
       await this.subject.join(this.room);
@@ -1735,16 +1735,16 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
   test("changing the noise suppression mode without a microphone only stores the preference", async function (assert) {
     try {
-      await this.subject.setNoiseSuppressionMode("ai");
+      await this.subject.setNoiseSuppressionMode("ai:dtln");
 
       assert.strictEqual(
         this.subject.noiseSuppressionMode,
-        "ai",
+        "ai:dtln",
         "marks AI suppression as preferred for the next mic acquisition"
       );
       assert.strictEqual(
         localStorage.getItem("resenha:noise-suppression-mode"),
-        "ai",
+        "ai:dtln",
         "persists the preference"
       );
 
