@@ -30,6 +30,18 @@ const PREFERENCE_KEY = "resenha:subtitles";
 // includes the first-run model download.
 const READY_TIMEOUT_MS = 30 * 60 * 1000;
 
+// Interim captions: while a speaker keeps talking, the utterance-so-far is
+// re-transcribed on a cadence and shown as a provisional line, so long
+// sentences don't sit uncaptioned until the speaker pauses. The final
+// (speech-end) pass replaces the provisional text.
+const VAD_SAMPLE_RATE = 16000;
+const INTERIM_MIN_SAMPLES = 1 * VAD_SAMPLE_RATE;
+const INTERIM_INTERVAL_SAMPLES = 1.5 * VAD_SAMPLE_RATE;
+// Interims re-encode the whole snapshot, so very long monologues slide: only
+// the newest audio is transcribed provisionally; the final pass still covers
+// the full utterance.
+const INTERIM_WINDOW_MAX_SAMPLES = 15 * VAD_SAMPLE_RATE;
+
 // The bundle stays resident after first use so re-enabling is instant.
 let vadModulePromise = null;
 
@@ -80,6 +92,8 @@ export default class SubtitlesManager {
   #workerReady = false;
   #readyTimer = null;
   #jobCounter = 0;
+  #utteranceCounter = 0;
+  #retracted = new Set();
   #modelBaseUrl = null;
 
   #onCaption;
@@ -161,7 +175,19 @@ export default class SubtitlesManager {
     }
 
     const epoch = this.#epoch;
-    const tap = { roomId, userId, trackId, vad: null, ready: false };
+    const tap = {
+      roomId,
+      userId,
+      trackId,
+      vad: null,
+      ready: false,
+      speaking: false,
+      utteranceId: 0,
+      frames: [],
+      bufferedSamples: 0,
+      samplesSinceInterim: 0,
+      interimSent: false,
+    };
     this.#taps.set(key, tap);
     this.#onLoadingChange();
 
@@ -197,7 +223,11 @@ export default class SubtitlesManager {
         pauseStream: async () => {},
         resumeStream: async () => stream,
         startOnLoad: false,
+        onSpeechStart: () => this.#handleSpeechStart(tap, epoch),
+        onFrameProcessed: (_probabilities, frame) =>
+          this.#handleFrame(tap, epoch, frame),
         onSpeechEnd: (audio) => this.#handleUtterance(tap, epoch, audio),
+        onVADMisfire: () => this.#handleMisfire(tap, epoch),
       });
     } catch (error) {
       if (this.#taps.get(key) === tap) {
@@ -329,9 +359,29 @@ export default class SubtitlesManager {
         this.#failWorker(new Error(message.message));
         break;
       case "caption": {
+        if (!this.#enabled) {
+          break;
+        }
+        // The utterance was retracted (VAD misfire) while this job was in
+        // flight; showing its text would resurrect a withdrawn line.
+        if (this.#retracted.delete(message.utteranceId)) {
+          break;
+        }
         const text = message.text?.trim();
-        if (text && this.#enabled) {
-          this.#onCaption(message.roomId, message.userId, text);
+        if (text) {
+          this.#onCaption(message.roomId, message.userId, {
+            id: message.utteranceId,
+            text,
+            final: !message.interim,
+          });
+        } else if (!message.interim) {
+          // An empty final (the model heard nothing intelligible) must clear
+          // any provisional line the interims put up.
+          this.#onCaption(message.roomId, message.userId, {
+            id: message.utteranceId,
+            text: null,
+            final: true,
+          });
         }
         break;
       }
@@ -343,27 +393,118 @@ export default class SubtitlesManager {
     }
   }
 
-  #handleUtterance(tap, epoch, audio) {
-    if (
-      epoch !== this.#epoch ||
-      !this.#enabled ||
-      !this.#worker ||
-      !this.#workerReady
-    ) {
+  #live(tap, epoch) {
+    return epoch === this.#epoch && this.#enabled;
+  }
+
+  #handleSpeechStart(tap, epoch) {
+    if (!this.#live(tap, epoch)) {
+      return;
+    }
+    tap.speaking = true;
+    tap.utteranceId = ++this.#utteranceCounter;
+    tap.frames = [];
+    tap.bufferedSamples = 0;
+    tap.samplesSinceInterim = 0;
+    tap.interimSent = false;
+  }
+
+  // Fires for every VAD frame; only frames inside an utterance are kept, and
+  // once enough new audio accumulates the snapshot-so-far is transcribed as
+  // a provisional caption.
+  #handleFrame(tap, epoch, frame) {
+    if (!this.#live(tap, epoch) || !tap.speaking) {
       return;
     }
 
-    const pcm = audio.buffer.slice(0);
+    tap.frames.push(frame.slice());
+    tap.bufferedSamples += frame.length;
+    tap.samplesSinceInterim += frame.length;
+
+    while (
+      tap.bufferedSamples > INTERIM_WINDOW_MAX_SAMPLES &&
+      tap.frames.length > 1
+    ) {
+      tap.bufferedSamples -= tap.frames.shift().length;
+    }
+
+    if (
+      tap.bufferedSamples >= INTERIM_MIN_SAMPLES &&
+      tap.samplesSinceInterim >= INTERIM_INTERVAL_SAMPLES
+    ) {
+      tap.samplesSinceInterim = 0;
+
+      const snapshot = new Float32Array(tap.bufferedSamples);
+      let offset = 0;
+      for (const chunk of tap.frames) {
+        snapshot.set(chunk, offset);
+        offset += chunk.length;
+      }
+      if (this.#postTranscribe(tap, snapshot, true)) {
+        tap.interimSent = true;
+      }
+    }
+  }
+
+  #handleUtterance(tap, epoch, audio) {
+    if (!this.#live(tap, epoch)) {
+      return;
+    }
+    tap.speaking = false;
+    tap.frames = [];
+    tap.bufferedSamples = 0;
+    if (!tap.utteranceId) {
+      tap.utteranceId = ++this.#utteranceCounter;
+    }
+    this.#postTranscribe(tap, audio, false);
+  }
+
+  // Too short to be speech after all: withdraw any provisional line and make
+  // sure an in-flight interim result can't resurrect it.
+  #handleMisfire(tap, epoch) {
+    tap.speaking = false;
+    tap.frames = [];
+    tap.bufferedSamples = 0;
+
+    if (!this.#live(tap, epoch) || !tap.interimSent) {
+      return;
+    }
+    tap.interimSent = false;
+    this.#retracted.add(tap.utteranceId);
+    if (this.#retracted.size > 200) {
+      this.#retracted.clear();
+    }
+    this.#onCaption(tap.roomId, tap.userId, {
+      id: tap.utteranceId,
+      text: null,
+      final: true,
+    });
+  }
+
+  #postTranscribe(tap, audio, interim) {
+    if (!this.#enabled || !this.#worker || !this.#workerReady) {
+      return false;
+    }
+
+    // Respect the view bounds: the audio may be a window into a larger
+    // buffer, and slice(0) of the raw buffer would ship the wrong bytes.
+    const pcm = audio.buffer.slice(
+      audio.byteOffset,
+      audio.byteOffset + audio.byteLength
+    );
     this.#worker.postMessage(
       {
         type: "transcribe",
         jobId: ++this.#jobCounter,
         roomId: tap.roomId,
         userId: tap.userId,
+        utteranceId: tap.utteranceId,
+        interim,
         pcm,
       },
       [pcm]
     );
+    return true;
   }
 
   #failWorker(error) {

@@ -527,6 +527,11 @@ html.discourse-touch .resenha-call-widget {
       color: rgb(255 255 255 / 75%);
       font-style: italic;
     }
+
+    // Provisional text that will be replaced when the speaker pauses.
+    &.--interim {
+      color: rgb(255 255 255 / 85%);
+    }
   }
 
   &__speaker {

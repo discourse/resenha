@@ -215,8 +215,8 @@ export default class ResenhaWebrtcService extends Service {
     });
 
     this.#subtitles = new SubtitlesManager({
-      onCaption: (roomId, userId, text) =>
-        this.#addCaption(roomId, userId, text),
+      onCaption: (roomId, userId, utterance) =>
+        this.#upsertCaption(roomId, userId, utterance),
       onLoadingChange: () => {
         this.subtitlesLoading = this.#subtitles.loading;
         if (!this.subtitlesLoading) {
@@ -451,7 +451,35 @@ export default class ResenhaWebrtcService extends Service {
     );
   }
 
-  #addCaption(roomId, userId, text) {
+  // One caption line per utterance: interim passes update the line in place
+  // while the speaker is still talking, the final pass replaces it, and a
+  // null text withdraws it (VAD misfire, or a final that heard nothing).
+  #upsertCaption(roomId, userId, { id: utteranceId, text, final }) {
+    const existingIndex = this.captions.findIndex(
+      (caption) =>
+        caption.utteranceId === utteranceId &&
+        Number(caption.userId) === Number(userId) &&
+        Number(caption.roomId) === Number(roomId)
+    );
+
+    if (!text) {
+      if (existingIndex !== -1) {
+        this.captions = this.captions.filter(
+          (_, index) => index !== existingIndex
+        );
+      }
+      return;
+    }
+
+    if (existingIndex !== -1) {
+      this.captions = this.captions.map((caption, index) =>
+        index === existingIndex
+          ? { ...caption, text, interim: !final, at: Date.now() }
+          : caption
+      );
+      return;
+    }
+
     const participant = (
       this.resenhaRooms?.roomById(roomId)?.active_participants || []
     ).find((p) => Number(p?.id) === Number(userId));
@@ -462,10 +490,12 @@ export default class ResenhaWebrtcService extends Service {
       ...this.captions.slice(-19),
       {
         id: ++this.#captionCounter,
+        utteranceId,
         roomId,
         userId,
         username: participant?.username,
         text,
+        interim: !final,
         at: Date.now(),
       },
     ];

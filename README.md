@@ -131,7 +131,7 @@ Opt-in, viewer-side captions: the user who enables subtitles transcribes the rem
 remote stream → Silero VAD (per participant) → utterance PCM → Worker (Parakeet, WebGPU) → caption overlay
 ```
 
-Each remote mic stream gets a [Silero VAD](https://github.com/ricky0123/vad) finding utterance boundaries; committed utterances are transcribed by one shared model in a Web Worker (fp32 encoder on WebGPU, int8 decoder on single-threaded WASM — fp16 encoders silently produce empty transcriptions on some GPU stacks, and multithreaded WASM would require COOP/COEP headers). Requires WebGPU; gated by the `resenha_subtitles_enabled` site setting.
+Each remote mic stream gets a [Silero VAD](https://github.com/ricky0123/vad) finding utterance boundaries; while a speaker keeps talking, the utterance-so-far is re-transcribed every ~1.5s as a provisional line that updates in place, and the speech-end pass finalizes it. Utterances are transcribed by one shared model in a Web Worker (fp32 encoder on WebGPU, int8 decoder on single-threaded WASM — fp16 encoders silently produce empty transcriptions on some GPU stacks, and multithreaded WASM would require COOP/COEP headers). Requires WebGPU; gated by the `resenha_subtitles_enabled` site setting.
 
 The runtime bundles (worker, VAD, onnxruntime, ~41 MB) are pinned and committed under `public/javascripts/stt/` by `scripts/build-stt-assets.sh`. The ~2.5 GB model weights are **not** committed: they download on first use from Discourse's HuggingFace repository (kept in a durable Cache API store), or from a self-hosted mirror configured via `resenha_stt_model_base_url` — see [docs/subtitles-model-mirror.md](docs/subtitles-model-mirror.md) for what to mirror and how.
 

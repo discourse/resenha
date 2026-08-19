@@ -28,6 +28,12 @@ const MIN_UTTERANCE_SECONDS = 0.4;
 let model = null;
 let queue = Promise.resolve();
 
+// Interim (mid-utterance) jobs are coalesced: only the newest snapshot per
+// speaker is worth transcribing, and nothing interim may run once the
+// utterance's final pass has been queued behind it.
+const latestInterimJob = new Map();
+const lastFinalUtterance = new Map();
+
 // Fetches one model file with a durable Cache API copy and streamed byte
 // progress, returning an object URL for fromUrls. The Cache API stores the
 // multi-GB encoder weights on disk, so repeat enables skip the network even
@@ -147,16 +153,33 @@ async function initialize(config) {
   }
 }
 
-function enqueue({ jobId, roomId, userId, pcm }) {
+function enqueue({ jobId, roomId, userId, utteranceId, interim, pcm }) {
   const audio = new Float32Array(pcm);
   if (!model || audio.length < SAMPLE_RATE * MIN_UTTERANCE_SECONDS) {
     return;
   }
 
-  // One utterance at a time: the model is stateless across jobs but a single
+  const speaker = `${roomId}:${userId}`;
+  if (interim) {
+    latestInterimJob.set(speaker, jobId);
+  } else {
+    lastFinalUtterance.set(speaker, utteranceId);
+  }
+
+  // One job at a time: the model is stateless across jobs but a single
   // WebGPU queue serves everyone, and captions should arrive in order.
   queue = queue
     .then(async () => {
+      // Superseded by a newer snapshot (or by the utterance's own final
+      // pass) while waiting in the queue.
+      if (
+        interim &&
+        (latestInterimJob.get(speaker) !== jobId ||
+          (lastFinalUtterance.get(speaker) ?? -1) >= utteranceId)
+      ) {
+        return;
+      }
+
       const result = await model.transcribe(audio, SAMPLE_RATE);
       const text = result?.utterance_text ?? result?.text ?? "";
       // eslint-disable-next-line no-console
@@ -164,11 +187,20 @@ function enqueue({ jobId, roomId, userId, pcm }) {
         "[resenha] stt result",
         JSON.stringify({
           text,
+          interim: !!interim,
           samples: audio.length,
           metrics: result?.metrics,
         })
       );
-      self.postMessage({ type: "caption", jobId, roomId, userId, text });
+      self.postMessage({
+        type: "caption",
+        jobId,
+        roomId,
+        userId,
+        utteranceId,
+        interim: !!interim,
+        text,
+      });
     })
     .catch((error) => {
       self.postMessage({

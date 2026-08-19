@@ -37,7 +37,9 @@ class FakeWorker {
             type: "caption",
             roomId: message.roomId,
             userId: message.userId,
-            text: "hello world",
+            utteranceId: message.utteranceId,
+            interim: message.interim,
+            text: message.interim ? "hello" : "hello world",
           },
         })
       );
@@ -70,7 +72,25 @@ class FakeVad {
   }
 
   speak(samples = 16000) {
+    this.options.onSpeechStart?.();
     this.options.onSpeechEnd(new Float32Array(samples));
+  }
+
+  // Simulates an in-progress utterance: speech start plus `samples` worth of
+  // 512-sample VAD frames, without the closing speech end.
+  speakFrames(samples) {
+    this.options.onSpeechStart?.();
+    this.emitFrames(samples);
+  }
+
+  emitFrames(samples) {
+    for (let emitted = 0; emitted < samples; emitted += 512) {
+      this.options.onFrameProcessed?.({}, new Float32Array(512));
+    }
+  }
+
+  misfire() {
+    this.options.onVADMisfire?.();
   }
 }
 
@@ -96,8 +116,8 @@ module("Resenha | Unit | Lib | subtitles", function (hooks) {
     this.errors = [];
     this.progress = [];
     this.manager = new SubtitlesManager({
-      onCaption: (roomId, userId, text) =>
-        this.captions.push({ roomId, userId, text }),
+      onCaption: (roomId, userId, utterance) =>
+        this.captions.push({ roomId, userId, ...utterance }),
       onLoadingChange: () => {},
       onProgress: (message) => this.progress.push(message),
       onError: (error) => this.errors.push(error),
@@ -121,9 +141,13 @@ module("Resenha | Unit | Lib | subtitles", function (hooks) {
     FakeVad.instances[0].speak();
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    assert.deepEqual(this.captions, [
-      { roomId: 1, userId: 42, text: "hello world" },
-    ]);
+    assert.strictEqual(this.captions.length, 1);
+    assert.propContains(this.captions[0], {
+      roomId: 1,
+      userId: 42,
+      text: "hello world",
+      final: true,
+    });
     assert.strictEqual(
       FakeWorker.instances[0].jobs[0].userId,
       42,
@@ -186,6 +210,51 @@ module("Resenha | Unit | Lib | subtitles", function (hooks) {
 
     assert.strictEqual(this.errors.length, 1);
     assert.true(FakeWorker.instances[0].terminated);
+  });
+
+  test("a long in-progress utterance produces interim captions on a cadence", async function (assert) {
+    this.manager.setEnabled(true);
+    await this.manager.attach(1, 42, createFakeStream("s1"));
+    const vad = FakeVad.instances[0];
+    const worker = FakeWorker.instances[0];
+
+    // 3s of speech without a pause: past the 1s minimum and the 1.5s
+    // interim cadence (twice).
+    vad.speakFrames(3 * 16000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const interims = worker.jobs.filter((job) => job.interim);
+    assert.true(interims.length >= 1, "provisional snapshots were sent");
+    assert.false(this.captions.at(-1).final, "the caption is marked provisional");
+
+    vad.options.onSpeechEnd(new Float32Array(4 * 16000));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const finals = worker.jobs.filter((job) => !job.interim);
+    assert.strictEqual(finals.length, 1, "one final pass");
+    assert.strictEqual(
+      finals[0].utteranceId,
+      interims[0].utteranceId,
+      "final and interims share the utterance"
+    );
+    assert.propContains(this.captions.at(-1), {
+      text: "hello world",
+      final: true,
+    });
+  });
+
+  test("a VAD misfire retracts the provisional caption", async function (assert) {
+    this.manager.setEnabled(true);
+    await this.manager.attach(1, 42, createFakeStream("s1"));
+    const vad = FakeVad.instances[0];
+
+    vad.speakFrames(3 * 16000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.false(this.captions.at(-1).final);
+
+    vad.misfire();
+
+    assert.propContains(this.captions.at(-1), { text: null, final: true });
   });
 
   test("short utterances still reach the worker with identity attached", async function (assert) {
