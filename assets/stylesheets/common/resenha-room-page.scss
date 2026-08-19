@@ -471,23 +471,17 @@ html.discourse-touch .resenha-call-widget {
     border-inline-end: none !important; // ensure core hover/active/focus rules don't restore the border
   }
 
+  // Same look as the sidebar room lock: a tiny unobtrusive glyph tucked
+  // into the button's top-right corner, no backdrop.
   .resenha-call-controls__ns-badge {
     position: absolute;
-    top: -0.45em;
-    right: -0.45em;
+    top: 0.15em;
+    right: 0.2em;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5em;
-    height: 1.5em;
-    border-radius: 50%;
-    background: var(--tertiary);
-    color: var(--secondary);
 
     .d-icon {
-      width: 0.85em;
-      height: 0.85em;
-      color: inherit;
+      width: 0.5rem;
+      height: 0.5rem;
     }
 
     &.--starting {

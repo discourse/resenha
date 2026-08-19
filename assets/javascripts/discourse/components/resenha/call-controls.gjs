@@ -420,7 +420,7 @@ export default class ResenhaCallControls extends Component {
             }}
             aria-hidden="true"
           >
-            {{dIcon "wand-magic-sparkles"}}
+            {{dIcon "discourse-sparkles"}}
           </span>
         {{/if}}
       </DButton>
@@ -474,7 +474,7 @@ export default class ResenhaCallControls extends Component {
               <DButton
                 @action={{this.openNoiseSuppressionMenu}}
                 @forwardEvent={{true}}
-                @icon="wand-magic-sparkles"
+                @icon="discourse-sparkles"
                 @label="resenha.voice_settings.noise_suppression"
                 @suffixIcon="angle-right"
                 @disabled={{this.noiseSuppressionStarting}}
