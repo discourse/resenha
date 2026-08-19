@@ -1035,17 +1035,6 @@
   }
 }
 
-.resenha-call-menu__noise-suppression {
-  .d-button-label {
-    flex: 1 1 auto;
-    text-align: left;
-  }
-
-  &.--active .d-button__suffix-icon {
-    color: var(--success);
-  }
-}
-
 .resenha-invite-modal {
   .d-modal__body {
     display: flex;

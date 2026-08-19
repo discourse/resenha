@@ -487,6 +487,7 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     this.siteSettings.resenha_video_enabled = true;
     this.siteSettings.resenha_video_max_publishers = 4;
     localStorage.removeItem("resenha:noise-suppression");
+    localStorage.removeItem("resenha:noise-suppression-mode");
 
     this.owner.unregister("service:resenha-rooms");
     this.owner.register("service:resenha-rooms", ResenhaRoomsStub);
@@ -612,6 +613,7 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     setLivekitSdkLoaderForTesting(null);
     setLivekitReconnectDelaysForTesting(null);
     localStorage.removeItem("resenha:noise-suppression");
+    localStorage.removeItem("resenha:noise-suppression-mode");
     this.audioEnvironment.restore();
     if (this.originalGetDisplayMedia) {
       navigator.mediaDevices.getDisplayMedia = this.originalGetDisplayMedia;
@@ -714,7 +716,7 @@ module("Resenha | Unit | Service | resenha-webrtc-livekit", function (hooks) {
     await this.subject.join(this.room);
     await wait(50);
 
-    await this.subject.toggleNoiseSuppression();
+    await this.subject.setNoiseSuppressionMode("ai");
 
     const publication =
       this.FakeLivekitRoom.instances[0].localParticipant.published[0];

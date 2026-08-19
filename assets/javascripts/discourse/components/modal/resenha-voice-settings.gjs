@@ -73,12 +73,15 @@ export default class ResenhaVoiceSettingsModal extends Component {
     return this.resenhaWebrtc.gateThreshold;
   }
 
-  get noiseSuppressionEnabled() {
-    return this.resenhaWebrtc.noiseSuppressionEnabled;
-  }
-
   get busy() {
     return this.resenhaWebrtc.noiseSuppressionState === "starting";
+  }
+
+  get noiseSuppressionModeOptions() {
+    return ["none", "standard", "ai"].map((mode) => ({
+      id: mode,
+      name: i18n(`resenha.voice_settings.noise_suppression_modes.${mode}`),
+    }));
   }
 
   get qualityOptions() {
@@ -192,13 +195,30 @@ export default class ResenhaVoiceSettingsModal extends Component {
   }
 
   @action
-  toggleNoiseSuppression() {
+  onNoiseSuppressionModeChange(mode) {
     if (this.busy) {
       return;
     }
     // Serialization and state live in the audio pipeline; "starting" flows
     // back through noiseSuppressionState.
-    this.resenhaWebrtc.toggleNoiseSuppression();
+    this.resenhaWebrtc.setNoiseSuppressionMode(mode);
+  }
+
+  @action
+  async toggleEchoCancellation() {
+    await this.resenhaWebrtc.setEchoCancellation(
+      !this.resenhaWebrtc.echoCancellation
+    );
+    // Processing changes swap the capture out from under the level meter.
+    await this.startPreview();
+  }
+
+  @action
+  async toggleAutoGainControl() {
+    await this.resenhaWebrtc.setAutoGainControl(
+      !this.resenhaWebrtc.autoGainControl
+    );
+    await this.startPreview();
   }
 
   @action
@@ -368,14 +388,42 @@ export default class ResenhaVoiceSettingsModal extends Component {
           </div>
 
           <div class="resenha-voice-settings__field">
-            <DToggleSwitch
-              @state={{this.noiseSuppressionEnabled}}
-              @label="resenha.voice_settings.noise_suppression"
-              disabled={{this.busy}}
-              {{on "click" this.toggleNoiseSuppression}}
+            <label class="resenha-voice-settings__label">
+              {{i18n "resenha.voice_settings.noise_suppression"}}
+            </label>
+            <ComboBox
+              @content={{this.noiseSuppressionModeOptions}}
+              @value={{this.resenhaWebrtc.noiseSuppressionMode}}
+              @onChange={{this.onNoiseSuppressionModeChange}}
+              @options={{hash none=false disabled=this.busy}}
+              class="resenha-voice-settings__noise-suppression-select"
             />
             <p class="resenha-voice-settings__hint">
               {{i18n "resenha.voice_settings.noise_suppression_hint"}}
+            </p>
+          </div>
+
+          <div class="resenha-voice-settings__field">
+            <DToggleSwitch
+              @state={{this.resenhaWebrtc.echoCancellation}}
+              @label="resenha.voice_settings.echo_cancellation"
+              class="resenha-voice-settings__echo-cancellation-toggle"
+              {{on "click" this.toggleEchoCancellation}}
+            />
+            <p class="resenha-voice-settings__hint">
+              {{i18n "resenha.voice_settings.echo_cancellation_hint"}}
+            </p>
+          </div>
+
+          <div class="resenha-voice-settings__field">
+            <DToggleSwitch
+              @state={{this.resenhaWebrtc.autoGainControl}}
+              @label="resenha.voice_settings.auto_gain_control"
+              class="resenha-voice-settings__auto-gain-toggle"
+              {{on "click" this.toggleAutoGainControl}}
+            />
+            <p class="resenha-voice-settings__hint">
+              {{i18n "resenha.voice_settings.auto_gain_control_hint"}}
             </p>
           </div>
 

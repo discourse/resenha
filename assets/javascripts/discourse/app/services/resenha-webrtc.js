@@ -334,16 +334,36 @@ export default class ResenhaWebrtcService extends Service {
     return this.#localAudio.noiseSuppressionState;
   }
 
+  get noiseSuppressionMode() {
+    return this.#localAudio.noiseSuppressionMode;
+  }
+
+  get echoCancellation() {
+    return this.#localAudio.echoCancellation;
+  }
+
+  get autoGainControl() {
+    return this.#localAudio.autoGainControl;
+  }
+
+  setNoiseSuppressionMode(mode) {
+    return this.#localAudio.setNoiseSuppressionMode(mode);
+  }
+
+  setEchoCancellation(enabled) {
+    return this.#localAudio.setEchoCancellation(enabled);
+  }
+
+  setAutoGainControl(enabled) {
+    return this.#localAudio.setAutoGainControl(enabled);
+  }
+
   get gateThreshold() {
     return this.#localAudio.gateThreshold;
   }
 
   get inputDeviceId() {
     return this.#localAudio.inputDeviceId;
-  }
-
-  toggleNoiseSuppression() {
-    return this.#localAudio.toggleNoiseSuppression();
   }
 
   setInputDevice(deviceId) {

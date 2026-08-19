@@ -30,45 +30,61 @@ describe "Resenha voice settings", type: :system do
     expect(page).to have_css(".resenha-voice-settings-modal")
   end
 
-  it "offers a noise suppression toggle" do
+  it "offers the audio processing controls" do
     join_room
     open_voice_settings
 
     within(".resenha-voice-settings") do
-      expect(page).to have_css(".d-toggle-switch")
-      expect(page).to have_content(I18n.t("js.resenha.voice_settings.noise_suppression"))
+      expect(page).to have_css(".resenha-voice-settings__noise-suppression-select")
+      expect(page).to have_content(I18n.t("js.resenha.voice_settings.echo_cancellation"))
+      expect(page).to have_content(I18n.t("js.resenha.voice_settings.auto_gain_control"))
     end
   end
 
-  # These run the real DTLN pipeline (wasm fetch, worklet ready handshake),
-  # so the "on" assertions only pass once the filter is genuinely running.
-  it "enables noise suppression from the voice settings modal and shows the mic badge" do
+  it "toggles echo cancellation and automatic gain control" do
     join_room
     open_voice_settings
 
-    toggle =
+    ec_toggle =
       PageObjects::Components::DToggleSwitch.new(
-        ".resenha-voice-settings .d-toggle-switch__checkbox",
+        ".resenha-voice-settings__echo-cancellation-toggle",
       )
-    toggle.toggle
-    expect(page).to have_css(
-      ".resenha-voice-settings .d-toggle-switch__checkbox[aria-checked='true']",
-      visible: :all,
-      wait: 15,
-    )
+    agc_toggle =
+      PageObjects::Components::DToggleSwitch.new(".resenha-voice-settings__auto-gain-toggle")
 
-    expect(page).to have_css(".resenha-call-controls__ns-badge")
+    expect(ec_toggle.checked?).to eq(true)
+    expect(agc_toggle.checked?).to eq(true)
+
+    ec_toggle.toggle
+    expect(ec_toggle.unchecked?).to eq(true)
+    expect(agc_toggle.checked?).to eq(true)
   end
 
-  it "enables noise suppression from the mic dropdown quick toggle" do
+  # These run the real DTLN pipeline (wasm fetch, worklet ready handshake),
+  # so the "AI" assertions only pass once the filter is genuinely running.
+  it "enables AI noise cancellation from the voice settings modal and shows the mic badge" do
+    join_room
+    open_voice_settings
+
+    mode_select =
+      PageObjects::Components::SelectKit.new(".resenha-voice-settings__noise-suppression-select")
+    mode_select.expand
+    mode_select.select_row_by_value("ai")
+
+    expect(page).to have_css(".resenha-call-controls__ns-badge", wait: 15)
+  end
+
+  it "enables AI noise cancellation from the mic dropdown submenu" do
     join_room
 
     find("button[data-identifier='resenha-audio-menu']").click
     within(".fk-d-menu[data-identifier='resenha-audio-menu']") do
       click_button(I18n.t("js.resenha.voice_settings.noise_suppression"))
-      expect(page).to have_css(".resenha-call-menu__noise-suppression.--active", wait: 15)
+    end
+    within(".fk-d-menu[data-identifier='resenha-call-submenu']") do
+      click_button(I18n.t("js.resenha.voice_settings.noise_suppression_modes.ai"))
     end
 
-    expect(page).to have_css(".resenha-call-controls__ns-badge")
+    expect(page).to have_css(".resenha-call-controls__ns-badge", wait: 15)
   end
 end
