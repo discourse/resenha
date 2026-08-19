@@ -52,7 +52,9 @@ export default class ResenhaCaptionOverlay extends Component {
           </p>
         {{else}}
           {{#each this.visibleCaptions key="id" as |caption|}}
-            <p class="resenha-captions__line">
+            <p
+              class="resenha-captions__line {{if caption.interim '--interim'}}"
+            >
               {{#if caption.username}}
                 <span
                   class="resenha-captions__speaker"
