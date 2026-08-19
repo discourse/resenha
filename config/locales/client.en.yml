@@ -21,6 +21,7 @@ en:
         participants: "Listeners"
         mic_on: "Mute microphone"
         mic_off: "Unmute microphone"
+        noise_suppression_active: "Noise suppression active"
         connection_error: "We couldn't start a WebRTC session. Please ensure your browser has microphone permissions."
         deafen_on: "Deafen"
         deafen_off: "Undeafen"

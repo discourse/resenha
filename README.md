@@ -96,16 +96,17 @@ See [docs/livekit.md](docs/livekit.md) for the full deployment runbook (provisio
 
 ## Noise Suppression
 
-Optional DTLN-based noise suppression powered by [dtln-rs](https://github.com/DataDog/dtln-rs), compiled to WebAssembly. Users can toggle it from the voice settings modal. The preference persists per device via `localStorage`.
+Optional DTLN-based noise suppression powered by [dtln-rs](https://github.com/DataDog/dtln-rs), compiled to WebAssembly. Users can toggle it from the voice settings modal or the mic button's dropdown; a badge on the mic button shows when it is active. The preference persists per device via `localStorage`.
 
 ```
 Microphone → AudioContext → AudioWorkletNode (dtln) → MediaStreamDestination → WebRTC peers
 ```
 
-A pre-built worklet bundle is committed at `public/javascripts/dtln-worklet.js`. To rebuild (requires Rust + Emscripten + pnpm):
+The main thread fetches the model (`dtln_rs.<hash>.wasm`) and posts the bytes to the worklet, which instantiates it and answers a `ready` handshake once a warm-up denoise succeeds — only then is the suppressed track published, so an enabled toggle always means the filter is really running.
+
+Pre-built, content-hashed assets are committed under `public/javascripts/dtln/`, with their URLs in the generated `assets/javascripts/discourse/lib/resenha/dtln-assets.js`. The build clones dtln-rs at a pinned commit and applies the patches in `src/dtln-worklet/patches/`. To rebuild (requires Rust + Emscripten + pnpm):
 
 ```bash
-rustup target add wasm32-unknown-emscripten
 cd plugins/resenha && bash scripts/build-dtln-worklet.sh
 ```
 

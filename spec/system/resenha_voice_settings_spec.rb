@@ -39,4 +39,36 @@ describe "Resenha voice settings", type: :system do
       expect(page).to have_content(I18n.t("js.resenha.voice_settings.noise_suppression"))
     end
   end
+
+  # These run the real DTLN pipeline (wasm fetch, worklet ready handshake),
+  # so the "on" assertions only pass once the filter is genuinely running.
+  it "enables noise suppression from the voice settings modal and shows the mic badge" do
+    join_room
+    open_voice_settings
+
+    toggle =
+      PageObjects::Components::DToggleSwitch.new(
+        ".resenha-voice-settings .d-toggle-switch__checkbox",
+      )
+    toggle.toggle
+    expect(page).to have_css(
+      ".resenha-voice-settings .d-toggle-switch__checkbox[aria-checked='true']",
+      visible: :all,
+      wait: 15,
+    )
+
+    expect(page).to have_css(".resenha-call-controls__ns-badge")
+  end
+
+  it "enables noise suppression from the mic dropdown quick toggle" do
+    join_room
+
+    find("button[data-identifier='resenha-audio-menu']").click
+    within(".fk-d-menu[data-identifier='resenha-audio-menu']") do
+      click_button(I18n.t("js.resenha.voice_settings.noise_suppression"))
+      expect(page).to have_css(".resenha-call-menu__noise-suppression.--active", wait: 15)
+    end
+
+    expect(page).to have_css(".resenha-call-controls__ns-badge")
+  end
 end

@@ -18,6 +18,7 @@ import {
   outputSelectionSupported,
   SYSTEM_DEFAULT_DEVICE_ID,
 } from "../../lib/resenha/media-devices";
+import { prefetchDtlnWasm } from "../../lib/resenha/noise-suppression";
 import { queuePosition } from "../../lib/resenha/speak-queue";
 import ResenhaVideoSettingsModal from "../modal/resenha-video-settings";
 import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
@@ -109,13 +110,32 @@ export default class ResenhaCallControls extends Component {
       : lowerHand;
   }
 
+  get noiseSuppressionOn() {
+    return this.resenhaWebrtc.noiseSuppressionState === "on";
+  }
+
+  get noiseSuppressionStarting() {
+    return this.resenhaWebrtc.noiseSuppressionState === "starting";
+  }
+
+  get showNoiseSuppressionBadge() {
+    return (
+      this.resenhaWebrtc.audioEnabled &&
+      this.resenhaWebrtc.noiseSuppressionState !== "off"
+    );
+  }
+
   get micTitle() {
     if (this.resenhaWebrtc.pttEnabled) {
       return i18n("resenha.ptt.controlled_by_ptt");
     }
-    return this.resenhaWebrtc.audioEnabled
+    const title = this.resenhaWebrtc.audioEnabled
       ? i18n("resenha.room.mic_on")
       : i18n("resenha.room.mic_off");
+    if (this.showNoiseSuppressionBadge && this.noiseSuppressionOn) {
+      return `${title} — ${i18n("resenha.room.noise_suppression_active")}`;
+    }
+    return title;
   }
 
   get cameraTitle() {
@@ -252,7 +272,15 @@ export default class ResenhaCallControls extends Component {
   }
 
   @action
+  toggleNoiseSuppression() {
+    this.resenhaWebrtc.toggleNoiseSuppression();
+  }
+
+  @action
   async loadAudioDevices() {
+    // The menu opening is a strong hint a suppression toggle may follow;
+    // warming the model bytes makes that toggle near-instant.
+    prefetchDtlnWasm().catch(() => {});
     const { inputs, outputs } = await enumerateAudioDevices();
     if (this.isDestroying || this.isDestroyed) {
       return;
@@ -356,7 +384,19 @@ export default class ResenhaCallControls extends Component {
           "btn-default resenha-call-controls__combo-main"
           (if this.resenhaWebrtc.audioEnabled "" "--off")
         }}
-      />
+      >
+        {{#if this.showNoiseSuppressionBadge}}
+          <span
+            class={{dConcatClass
+              "resenha-call-controls__ns-badge"
+              (if this.noiseSuppressionStarting "--starting")
+            }}
+            aria-hidden="true"
+          >
+            {{dIcon "wand-magic-sparkles"}}
+          </span>
+        {{/if}}
+      </DButton>
       <DMenu
         @identifier="resenha-audio-menu"
         @icon="angle-down"
@@ -403,6 +443,22 @@ export default class ResenhaCallControls extends Component {
               </dropdown.item>
             {{/if}}
             <dropdown.divider />
+            <dropdown.item>
+              {{! The menu stays open on purpose: the check appearing (after
+              the worklet's ready handshake) is the confirmation the user is
+              waiting for. }}
+              <DButton
+                @action={{this.toggleNoiseSuppression}}
+                @icon="wand-magic-sparkles"
+                @label="resenha.voice_settings.noise_suppression"
+                @suffixIcon={{if this.noiseSuppressionOn "check"}}
+                @disabled={{this.noiseSuppressionStarting}}
+                class={{dConcatClass
+                  "btn-transparent resenha-call-menu__noise-suppression"
+                  (if this.noiseSuppressionOn "--active")
+                }}
+              />
+            </dropdown.item>
             <dropdown.item>
               <DButton
                 @action={{fn this.openVoiceSettings audioMenu.close}}
