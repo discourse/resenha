@@ -1,3 +1,4 @@
+import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
 import SubtitlesManager from "discourse/plugins/resenha/discourse/lib/resenha/subtitles";
 
@@ -82,6 +83,10 @@ function fakeVadModule() {
 }
 
 module("Resenha | Unit | Lib | subtitles", function (hooks) {
+  // The manager resolves asset URLs via Site.current(), which needs the
+  // application container even though the tests inject fake loaders.
+  setupTest(hooks);
+
   hooks.beforeEach(function () {
     localStorage.removeItem("resenha:subtitles");
     FakeWorker.instances = [];
