@@ -13,6 +13,7 @@ Resenha is a Discourse plugin that adds Discord-style voice rooms powered by Web
 - **Direct calls** — allowed users can call someone from their user card or profile.
 - **Themed audio cues** — synthesized tones for calls, connect/disconnect, user join/leave, and mute/deafen toggles follow each listener's existing **Chat notifications** sound choice. **None**, missing, or legacy choices use **Classic and clean**.
 - **Noise suppression** — optional DTLN-based background noise filtering via WebAssembly. See [Noise Suppression](#noise-suppression).
+- **Live subtitles** — optional viewer-side captions powered by NVIDIA Parakeet speech recognition running locally via WebGPU. See [Live Subtitles](#live-subtitles).
 - **Video and screen sharing** — optional, off by default. Each room gets a full page at `/resenha/r/<slug>` with a tile grid; camera and screen share toggle without renegotiation, and senders only encode toward peers who are actually watching the page. Rooms can opt out individually. See [Video](#video).
 - **Video settings with background blur** — a per-room video settings modal with a live preview, camera device picker, and MediaPipe-powered background blur with an adjustable strength slider. See [Background Blur](#background-blur).
 - **Pure browser WebRTC** — signaling through Discourse + MessageBus; media stays peer-to-peer, no SFU/MCU required.
@@ -120,6 +121,26 @@ bash scripts/build-dfn3-worklet.sh     # Rust + wasm-pack
 
 # Verify a built engine end-to-end in headless Chromium:
 node scripts/smoke-ns-worklet.mjs <rnnoise|dtln|dfn3>
+```
+
+## Live Subtitles
+
+Opt-in, viewer-side captions: the user who enables subtitles transcribes the remote audio they already receive with [parakeet.js](https://github.com/ysdede/parakeet.js) (NVIDIA Parakeet TDT 0.6b v3, multilingual) — no audio leaves the browser and nothing is required from the other participants, on either transport.
+
+```
+remote stream → Silero VAD (per participant) → utterance PCM → Worker (Parakeet, WebGPU) → caption overlay
+```
+
+Each remote mic stream gets a [Silero VAD](https://github.com/ricky0123/vad) finding utterance boundaries; committed utterances are transcribed by one shared model in a Web Worker (fp32 encoder on WebGPU, int8 decoder on single-threaded WASM — fp16 encoders silently produce empty transcriptions on some GPU stacks, and multithreaded WASM would require COOP/COEP headers). Requires WebGPU; gated by the `resenha_subtitles_enabled` site setting.
+
+The runtime bundles (worker, VAD, onnxruntime, ~41 MB) are pinned and committed under `public/javascripts/stt/` by `scripts/build-stt-assets.sh`. The ~2.5 GB model weights are **not** committed: they download on first use from Discourse's HuggingFace repository (kept in a durable Cache API store), or from a self-hosted mirror configured via `resenha_stt_model_base_url` — see [docs/subtitles-model-mirror.md](docs/subtitles-model-mirror.md) for what to mirror and how.
+
+```bash
+bash scripts/build-stt-assets.sh
+
+# End-to-end check (real model, WebGPU, persistent profile caches the download):
+flite -t "the quick brown fox jumps over the lazy dog" /tmp/fix.wav
+node scripts/smoke-stt-worker.mjs /tmp/fix.wav
 ```
 
 ## Development

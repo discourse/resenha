@@ -161,10 +161,16 @@ en:
         echo_cancellation_hint: "Prevents others from hearing their own audio through your microphone."
         auto_gain_control: "Automatic gain control"
         auto_gain_control_hint: "Keeps your volume steady by adjusting the microphone level automatically."
+        subtitles: "Show live subtitles"
+        subtitles_hint: "Generates captions for what others say, on your device — nothing is sent anywhere. Requires a GPU-capable browser and downloads a ~2.5 GB model once."
+        subtitles_failed: "Subtitles couldn't be started, so they were turned off."
         test_output: "Test"
         choose_output: "Choose output device"
         quality: "Audio quality"
         quality_hint: "Higher settings improve fidelity for good microphones at a small bandwidth cost. Standard is tuned for speech."
+      subtitles:
+        loading: "Preparing subtitles…"
+        downloading: "Downloading subtitles model… %{percent}%"
       stage:
         promoted_to_speaker: "You've been made a speaker."
         demoted_to_listener: "You've been moved to listeners."

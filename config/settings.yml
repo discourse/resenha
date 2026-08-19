@@ -82,6 +82,12 @@ plugins:
   resenha_video_background_blur_enabled:
     default: true
     client: true
+  resenha_subtitles_enabled:
+    default: false
+    client: true
+  resenha_stt_model_base_url:
+    default: ""
+    client: true
   resenha_max_voice_quality:
     default: "maximum"
     type: enum
