@@ -46,10 +46,16 @@ describe "Resenha voice settings", type: :system do
     join_room
     open_voice_settings
 
-    within(".resenha-voice-settings") do
-      find(".d-toggle-switch__checkbox").click
-      expect(page).to have_css(".d-toggle-switch__checkbox[aria-checked='true']", wait: 15)
-    end
+    toggle =
+      PageObjects::Components::DToggleSwitch.new(
+        ".resenha-voice-settings .d-toggle-switch__checkbox",
+      )
+    toggle.toggle
+    expect(page).to have_css(
+      ".resenha-voice-settings .d-toggle-switch__checkbox[aria-checked='true']",
+      visible: :all,
+      wait: 15,
+    )
 
     expect(page).to have_css(".resenha-call-controls__ns-badge")
   end
