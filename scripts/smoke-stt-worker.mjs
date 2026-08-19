@@ -10,10 +10,15 @@
 // Generate a fixture with e.g.:
 //   flite -t "the quick brown fox jumps over the lazy dog" /tmp/fix.wav
 //
-// Requires a WebGPU-capable GPU. First run downloads ~1.26GB from
+// Requires a WebGPU-capable GPU. First run downloads ~2.5GB from
 // HuggingFace into the profile at .local/stt-smoke-profile/.
+//
+// Env knobs: STT_MODEL_DIR=/path/to/mirror serves the model from a local
+// directory (validates the resenha_stt_model_base_url mirror path);
+// STT_BACKEND / STT_ENCODER_QUANT override the worker defaults.
 import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright";
@@ -54,7 +59,7 @@ window.runTest = async (paths) => {
   });
   worker.postMessage({
     type: "init",
-    config: { modelBaseUrl: null, ortWasmBase: new URL(paths.ortBase, location).href, backend: paths.backend, encoderQuant: paths.encoderQuant },
+    config: { modelBaseUrl: paths.modelBase ? new URL(paths.modelBase, location).href : null, ortWasmBase: new URL(paths.ortBase, location).href, backend: paths.backend, encoderQuant: paths.encoderQuant },
   });
   await ready;
   window.log("worker ready");
@@ -125,6 +130,11 @@ const server = http.createServer(async (req, res) => {
       res.end(PAGE);
     } else if (url === "/fixture.wav") {
       res.end(await readFile(fixturePath));
+    } else if (url.startsWith("/model/") && process.env.STT_MODEL_DIR) {
+      // Streamed: the encoder external-data file is >2GiB, past readFile's cap.
+      const file = path.join(process.env.STT_MODEL_DIR, url.slice(7));
+      res.setHeader("content-length", (await stat(file)).size);
+      createReadStream(file).pipe(res);
     } else if (url.startsWith("/stt/")) {
       const file = path.join(sttDir, url.slice(5));
       if (file.endsWith(".js") || file.endsWith(".mjs")) {
@@ -177,6 +187,7 @@ try {
     ortBase: toLocal(manifest.ORT_WASM_BASE),
     vadAssets: toLocal(manifest.VAD_ASSET_BASE),
     vadOrt: toLocal(manifest.VAD_ORT_BASE),
+    modelBase: process.env.STT_MODEL_DIR ? "/model/" : undefined,
     backend: process.env.STT_BACKEND || undefined,
     encoderQuant: process.env.STT_ENCODER_QUANT || undefined,
   });

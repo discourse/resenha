@@ -56,6 +56,10 @@ async function initialize(config) {
         encoderDataUrl: `${base}/encoder-model.onnx.data`,
         decoderUrl: `${base}/decoder_joint-model.int8.onnx`,
         tokenizerUrl: `${base}/vocab.txt`,
+        // Required for encoderDataUrl to take effect: ort maps the external
+        // data to "<filenames.encoder>.data", which must match the path the
+        // onnx file references internally.
+        filenames: { encoder: "encoder-model.onnx" },
         preprocessorBackend: "js",
       });
     } else {
