@@ -462,6 +462,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     this.siteSettings = this.owner.lookup("service:site-settings");
     this.siteSettings.resenha_auto_status_enabled = true;
     localStorage.removeItem("resenha:noise-suppression");
+    localStorage.removeItem("resenha:noise-suppression-mode");
 
     this.owner.unregister("service:resenha-rooms");
     this.owner.register("service:resenha-rooms", ResenhaRoomsStub);
@@ -1637,7 +1638,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
       this.subject.toggleMute();
 
-      await this.subject.toggleNoiseSuppression();
+      await this.subject.setNoiseSuppressionMode("ai");
 
       assert.true(
         this.subject.noiseSuppressionEnabled,
@@ -1687,14 +1688,14 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       { id: 30, role: "speaker" },
     ];
 
-    localStorage.setItem("resenha:noise-suppression", "1");
+    localStorage.setItem("resenha:noise-suppression-mode", "ai");
 
     try {
       await this.subject.join(this.room);
       await wait(50);
 
       this.subject.toggleMute();
-      await this.subject.toggleNoiseSuppression();
+      await this.subject.setNoiseSuppressionMode("standard");
 
       assert.false(
         this.subject.noiseSuppressionEnabled,
@@ -1727,37 +1728,40 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       });
     } finally {
       localStorage.removeItem("resenha:noise-suppression");
+      localStorage.removeItem("resenha:noise-suppression-mode");
       audioEnvironment.restore();
     }
   });
 
-  test("toggling noise suppression without a microphone only stores the preference", async function (assert) {
+  test("changing the noise suppression mode without a microphone only stores the preference", async function (assert) {
     try {
-      await this.subject.toggleNoiseSuppression();
+      await this.subject.setNoiseSuppressionMode("ai");
 
-      assert.true(
-        this.subject.noiseSuppressionEnabled,
-        "marks noise suppression as enabled for the next mic acquisition"
+      assert.strictEqual(
+        this.subject.noiseSuppressionMode,
+        "ai",
+        "marks AI suppression as preferred for the next mic acquisition"
       );
       assert.strictEqual(
-        localStorage.getItem("resenha:noise-suppression"),
-        "1",
+        localStorage.getItem("resenha:noise-suppression-mode"),
+        "ai",
         "persists the preference"
       );
 
-      await this.subject.toggleNoiseSuppression();
+      await this.subject.setNoiseSuppressionMode("standard");
 
-      assert.false(
-        this.subject.noiseSuppressionEnabled,
-        "marks noise suppression as disabled"
+      assert.strictEqual(
+        this.subject.noiseSuppressionMode,
+        "standard",
+        "marks standard suppression as preferred"
       );
       assert.strictEqual(
-        localStorage.getItem("resenha:noise-suppression"),
-        null,
-        "clears the preference"
+        localStorage.getItem("resenha:noise-suppression-mode"),
+        "standard",
+        "persists the new mode"
       );
     } finally {
-      localStorage.removeItem("resenha:noise-suppression");
+      localStorage.removeItem("resenha:noise-suppression-mode");
     }
   });
 

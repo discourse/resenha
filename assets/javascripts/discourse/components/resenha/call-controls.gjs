@@ -118,10 +118,19 @@ export default class ResenhaCallControls extends Component {
     return this.resenhaWebrtc.noiseSuppressionState === "starting";
   }
 
+  // Standard (native) suppression is the browser default everywhere, so
+  // only the AI mode earns an indicator.
   get showNoiseSuppressionBadge() {
     return (
       this.resenhaWebrtc.audioEnabled &&
+      this.resenhaWebrtc.noiseSuppressionMode === "ai" &&
       this.resenhaWebrtc.noiseSuppressionState !== "off"
+    );
+  }
+
+  get currentNoiseSuppressionModeName() {
+    return i18n(
+      `resenha.voice_settings.noise_suppression_modes.${this.resenhaWebrtc.noiseSuppressionMode}`
     );
   }
 
@@ -272,14 +281,23 @@ export default class ResenhaCallControls extends Component {
   }
 
   @action
-  toggleNoiseSuppression() {
-    this.resenhaWebrtc.toggleNoiseSuppression();
+  openNoiseSuppressionMenu(_actionArg, event) {
+    this.#openSubmenu(
+      event,
+      AUDIO_MENU,
+      ["none", "standard", "ai"].map((mode) => ({
+        id: mode,
+        label: i18n(`resenha.voice_settings.noise_suppression_modes.${mode}`),
+        selected: mode === this.resenhaWebrtc.noiseSuppressionMode,
+      })),
+      (mode) => this.resenhaWebrtc.setNoiseSuppressionMode(mode)
+    );
   }
 
   @action
   async loadAudioDevices() {
-    // The menu opening is a strong hint a suppression toggle may follow;
-    // warming the model bytes makes that toggle near-instant.
+    // The menu opening is a strong hint an AI suppression switch may follow;
+    // warming the model bytes makes that switch near-instant.
     prefetchDtlnWasm().catch(() => {});
     const { inputs, outputs } = await enumerateAudioDevices();
     if (this.isDestroying || this.isDestroyed) {
@@ -444,20 +462,19 @@ export default class ResenhaCallControls extends Component {
             {{/if}}
             <dropdown.divider />
             <dropdown.item>
-              {{! The menu stays open on purpose: the check appearing (after
-              the worklet's ready handshake) is the confirmation the user is
-              waiting for. }}
               <DButton
-                @action={{this.toggleNoiseSuppression}}
+                @action={{this.openNoiseSuppressionMenu}}
+                @forwardEvent={{true}}
                 @icon="wand-magic-sparkles"
                 @label="resenha.voice_settings.noise_suppression"
-                @suffixIcon={{if this.noiseSuppressionOn "check"}}
+                @suffixIcon="angle-right"
                 @disabled={{this.noiseSuppressionStarting}}
-                class={{dConcatClass
-                  "btn-transparent resenha-call-menu__noise-suppression"
-                  (if this.noiseSuppressionOn "--active")
-                }}
-              />
+                class="btn-transparent resenha-call-menu__device-row resenha-call-menu__noise-suppression"
+              >
+                <span class="resenha-call-menu__current-device">
+                  {{this.currentNoiseSuppressionModeName}}
+                </span>
+              </DButton>
             </dropdown.item>
             <dropdown.item>
               <DButton

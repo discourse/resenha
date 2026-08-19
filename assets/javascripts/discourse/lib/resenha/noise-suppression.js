@@ -243,24 +243,4 @@ export default class NoiseSuppressionManager {
       this.#context = null;
     }
   }
-
-  isPreferred() {
-    try {
-      return localStorage.getItem("resenha:noise-suppression") === "1";
-    } catch {
-      return false;
-    }
-  }
-
-  setPreference(enabled) {
-    try {
-      if (enabled) {
-        localStorage.setItem("resenha:noise-suppression", "1");
-      } else {
-        localStorage.removeItem("resenha:noise-suppression");
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }
 }

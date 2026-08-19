@@ -1,4 +1,12 @@
 import { tracked } from "@glimmer/tracking";
+import {
+  autoGainControlPreferred,
+  echoCancellationPreferred,
+  preferredNoiseSuppressionMode,
+  setAutoGainControlPreferred,
+  setEchoCancellationPreferred,
+  setPreferredNoiseSuppressionMode,
+} from "./audio-processing";
 import InputGateManager, { sliderToRms } from "./input-gate";
 import {
   audioConstraints,
@@ -7,15 +15,22 @@ import {
 } from "./media-devices";
 import NoiseSuppressionManager, { SupersededError } from "./noise-suppression";
 
-// Owns the local microphone pipeline: raw mic → optional noise suppression →
-// optional input gate → the published `stream`. All restructures of the
-// pipeline (device switch, suppression toggle, gate crossing zero) notify the
+// Owns the local microphone pipeline: raw mic (with the browser's echo
+// cancellation / auto gain / native noise suppression applied per the stored
+// preferences) → optional DTLN noise suppression → optional input gate → the
+// published `stream`. All restructures of the pipeline (device switch,
+// processing changes, suppression mode, gate crossing zero) notify the
 // service so it can re-sync monitors and move peers onto the new track.
 export default class LocalAudioPipeline {
-  // "off" | "starting" | "on". With a live microphone, "on" means the DTLN
-  // worklet confirmed it is filtering (the ready handshake); without one it
-  // mirrors the stored preference.
+  // "none" | "standard" (browser native) | "ai" (DTLN worklet).
+  @tracked noiseSuppressionMode = preferredNoiseSuppressionMode();
+
+  // "off" | "starting" | "on" — the DTLN worklet's lifecycle; "on" means the
+  // ready handshake confirmed it is filtering. Always "off" outside AI mode.
   @tracked noiseSuppressionState = "off";
+
+  @tracked echoCancellation = echoCancellationPreferred();
+  @tracked autoGainControl = autoGainControlPreferred();
   @tracked stream = null;
   @tracked gateThreshold = InputGateManager.storedSliderValue();
   @tracked inputDeviceId = preferredInputDeviceId();
@@ -28,10 +43,10 @@ export default class LocalAudioPipeline {
   #onSuppressionFailed;
   #replaceTrackOnPeers;
 
-  // Serializes every pipeline restructure. Suppression toggles now await a
-  // multi-second worklet handshake, and they can be triggered from several
-  // controls at once; interleaving a toggle with a device switch corrupts
-  // which stream peers end up on.
+  // Serializes every pipeline restructure. Suppression setup awaits a
+  // multi-second worklet handshake, and restructures can be triggered from
+  // several controls at once; interleaving a mode change with a device
+  // switch corrupts which stream peers end up on.
   #queue = Promise.resolve();
 
   constructor({ onStreamChanged, onSuppressionFailed, replaceTrackOnPeers }) {
@@ -42,9 +57,6 @@ export default class LocalAudioPipeline {
     this.#noiseSuppression = new NoiseSuppressionManager({
       onRuntimeFailure: () => this.#handleSuppressionRuntimeFailure(),
     });
-    this.noiseSuppressionState = this.#noiseSuppression.isPreferred()
-      ? "on"
-      : "off";
 
     this.#inputGate = new InputGateManager();
   }
@@ -76,31 +88,17 @@ export default class LocalAudioPipeline {
 
       this.#rawStream = rawStream;
 
-      if (this.#noiseSuppression.isPreferred()) {
-        this.noiseSuppressionState = "starting";
-        try {
-          const suppressed = await this.#noiseSuppression.setup(rawStream);
-          this.noiseSuppressionState = "on";
-          this.#setOutgoingStream(suppressed);
-          // eslint-disable-next-line no-console
-          console.log("[resenha] noise suppression enabled");
-        } catch (error) {
-          if (error instanceof SupersededError) {
-            return true;
-          }
-          // eslint-disable-next-line no-console
-          console.warn(
-            "[resenha] noise suppression setup failed, using raw stream",
-            error
-          );
-          // The preference survives a transient failure; the next
-          // acquisition retries.
-          this.noiseSuppressionState = "off";
-          this.#setOutgoingStream(rawStream);
+      try {
+        // A failed DTLN setup here is transient (the preference survives;
+        // the next acquisition retries) and already fell back to the raw
+        // stream, which has native suppression off in AI mode — no reacquire
+        // mid-join, the user can flip the mode if it persists.
+        await this.#buildProcessedStream(rawStream);
+      } catch (error) {
+        if (error instanceof SupersededError) {
+          return true;
         }
-      } else {
-        this.noiseSuppressionState = "off";
-        this.#setOutgoingStream(rawStream);
+        throw error;
       }
 
       return true;
@@ -111,56 +109,77 @@ export default class LocalAudioPipeline {
     }
   }
 
-  toggleNoiseSuppression() {
-    return this.#serialize(() => this.#toggleNoiseSuppression());
+  setNoiseSuppressionMode(mode) {
+    return this.#serialize(() => this.#setNoiseSuppressionMode(mode));
   }
 
-  async #toggleNoiseSuppression() {
-    // Without a live mic (e.g. a stage listener) just store the preference;
-    // it applies when the microphone is next acquired.
-    if (!this.#rawStream) {
-      const enabling = this.noiseSuppressionState === "off";
-      this.noiseSuppressionState = enabling ? "on" : "off";
-      this.#noiseSuppression.setPreference(enabling);
+  async #setNoiseSuppressionMode(mode) {
+    if (mode === this.noiseSuppressionMode) {
       return;
     }
 
-    if (this.noiseSuppressionState === "on") {
-      this.#noiseSuppression.teardown();
-      this.noiseSuppressionState = "off";
-      this.#setOutgoingStream(this.#rawStream);
-      this.#noiseSuppression.setPreference(false);
-      // eslint-disable-next-line no-console
-      console.log("[resenha] noise suppression disabled");
-    } else {
-      this.noiseSuppressionState = "starting";
-      try {
-        const suppressed = await this.#noiseSuppression.setup(this.#rawStream, {
-          userGesture: true,
-        });
-        this.noiseSuppressionState = "on";
-        this.#setOutgoingStream(suppressed);
-        this.#noiseSuppression.setPreference(true);
-        // eslint-disable-next-line no-console
-        console.log("[resenha] noise suppression enabled");
-      } catch (error) {
-        if (error instanceof SupersededError) {
-          // A newer restructure owns the pipeline (and its state) now.
-          return;
-        }
-        // eslint-disable-next-line no-console
-        console.warn("[resenha] failed to enable noise suppression", error);
-        this.#revertSuppressionPreference();
-        // #setOutgoingStream rebuilds the input gate, so the published stream
-        // may be a brand-new track; peers must be moved onto it or they keep
-        // the torn-down gate's dead track and hear silence.
-        this.#setOutgoingStream(this.#rawStream);
-        await this.#replaceTrackOnPeers();
-        return;
-      }
+    const previousMode = this.noiseSuppressionMode;
+    this.noiseSuppressionMode = mode;
+    setPreferredNoiseSuppressionMode(mode);
+
+    // Without a live mic the stored preference applies on next acquisition.
+    if (!this.#rawStream) {
+      return;
     }
 
-    await this.#replaceTrackOnPeers();
+    let reacquired;
+    try {
+      // Native suppression is part of the getUserMedia constraints, so any
+      // mode change needs a fresh capture, not just a graph restructure.
+      reacquired = await this.#reacquire({ userGesture: true });
+    } catch (error) {
+      if (error instanceof SupersededError) {
+        return;
+      }
+      // Capture failed: the current stream is untouched, so just undo the
+      // preference.
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to apply noise suppression mode", error);
+      this.noiseSuppressionMode = previousMode;
+      setPreferredNoiseSuppressionMode(previousMode);
+      return;
+    }
+
+    if (reacquired) {
+      // eslint-disable-next-line no-console
+      console.log(`[resenha] noise suppression mode: ${mode}`);
+      return;
+    }
+
+    // AI setup failed on an explicit user action: put the preference back
+    // and tell them, mirroring the old toggle's revert behavior.
+    this.noiseSuppressionMode = previousMode;
+    setPreferredNoiseSuppressionMode(previousMode);
+    this.#onSuppressionFailed();
+    try {
+      await this.#reacquire({ userGesture: true });
+    } catch (error) {
+      if (!(error instanceof SupersededError)) {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to restore previous mode", error);
+      }
+    }
+  }
+
+  setEchoCancellation(enabled) {
+    return this.#serialize(() => {
+      this.echoCancellation = enabled;
+      setEchoCancellationPreferred(enabled);
+      return this.#reacquireQuietly();
+    });
+  }
+
+  setAutoGainControl(enabled) {
+    return this.#serialize(() => {
+      this.autoGainControl = enabled;
+      setAutoGainControlPreferred(enabled);
+      return this.#reacquireQuietly();
+    });
   }
 
   setInputDevice(deviceId) {
@@ -176,51 +195,19 @@ export default class LocalAudioPipeline {
       return true;
     }
 
-    let newRawStream;
     try {
-      newRawStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints(deviceId, { exact: true }),
-      });
+      await this.#reacquire({ userGesture: true, exactDevice: true });
+      return true;
     } catch (error) {
+      if (error instanceof SupersededError) {
+        return true;
+      }
       // eslint-disable-next-line no-console
       console.warn("[resenha] failed to switch input device", error);
       this.inputDeviceId = previousDeviceId;
       setPreferredInputDeviceId(previousDeviceId);
       return false;
     }
-
-    const oldRawStream = this.#rawStream;
-    this.#rawStream = newRawStream;
-
-    if (this.noiseSuppressionState !== "off") {
-      this.#noiseSuppression.teardown();
-      this.noiseSuppressionState = "starting";
-      try {
-        const suppressed = await this.#noiseSuppression.setup(newRawStream, {
-          userGesture: true,
-        });
-        this.noiseSuppressionState = "on";
-        this.#setOutgoingStream(suppressed);
-      } catch (error) {
-        if (error instanceof SupersededError) {
-          oldRawStream.getTracks().forEach((track) => track.stop());
-          return true;
-        }
-        // eslint-disable-next-line no-console
-        console.warn(
-          "[resenha] noise suppression setup failed after device switch",
-          error
-        );
-        this.#revertSuppressionPreference();
-        this.#setOutgoingStream(newRawStream);
-      }
-    } else {
-      this.#setOutgoingStream(newRawStream);
-    }
-
-    oldRawStream.getTracks().forEach((track) => track.stop());
-    await this.#replaceTrackOnPeers();
-    return true;
   }
 
   async setGateThreshold(value) {
@@ -252,9 +239,7 @@ export default class LocalAudioPipeline {
   // in-flight setup unwinds as superseded instead of publishing a stream.
   stop() {
     this.#noiseSuppression.teardown();
-    this.noiseSuppressionState = this.#noiseSuppression.isPreferred()
-      ? "on"
-      : "off";
+    this.noiseSuppressionState = "off";
     this.#inputGate.teardown();
     this.#upstream = null;
 
@@ -271,25 +256,117 @@ export default class LocalAudioPipeline {
     this.#onStreamChanged();
   }
 
-  // The worklet reported a mid-call breakdown (repeated DTLN failures or a
-  // late init error): fall all the way back to the raw track so peers don't
-  // keep listening through a dead passthrough graph.
-  #handleSuppressionRuntimeFailure() {
-    this.#serialize(async () => {
-      if (this.noiseSuppressionState === "off" || !this.#rawStream) {
-        return;
-      }
-      this.#noiseSuppression.teardown();
-      this.#revertSuppressionPreference();
-      this.#setOutgoingStream(this.#rawStream);
-      await this.#replaceTrackOnPeers();
+  // Captures a fresh raw stream under the current constraints and rebuilds
+  // the processed pipeline on it. Returns false when the DTLN setup failed
+  // (the raw stream is published instead); throws SupersededError or
+  // getUserMedia errors.
+  async #reacquire({ userGesture = false, exactDevice = false } = {}) {
+    const newRawStream = await navigator.mediaDevices.getUserMedia({
+      audio: audioConstraints(this.inputDeviceId, { exact: exactDevice }),
     });
+
+    const oldRawStream = this.#rawStream;
+    this.#rawStream = newRawStream;
+
+    let suppressionOk;
+    try {
+      suppressionOk = await this.#buildProcessedStream(newRawStream, {
+        userGesture,
+      });
+    } catch (error) {
+      if (error instanceof SupersededError) {
+        // The superseding restructure owns the published stream; this
+        // capture is going nowhere.
+        newRawStream.getTracks().forEach((track) => track.stop());
+      }
+      throw error;
+    }
+
+    oldRawStream?.getTracks().forEach((track) => track.stop());
+    await this.#replaceTrackOnPeers();
+    return suppressionOk;
   }
 
-  #revertSuppressionPreference() {
-    this.noiseSuppressionState = "off";
-    this.#noiseSuppression.setPreference(false);
-    this.#onSuppressionFailed();
+  // For EC/AGC changes: a capture failure just keeps the current stream (the
+  // preference still applies on the next acquisition).
+  async #reacquireQuietly() {
+    if (!this.#rawStream) {
+      return;
+    }
+    try {
+      await this.#reacquire({ userGesture: true });
+    } catch (error) {
+      if (error instanceof SupersededError) {
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] failed to apply audio processing change", error);
+    }
+  }
+
+  // Builds suppression + gate on top of a raw stream and publishes the
+  // result. Returns false when AI mode was requested but the worklet setup
+  // failed (raw stream published as fallback). Throws SupersededError.
+  async #buildProcessedStream(rawStream, { userGesture = false } = {}) {
+    this.#noiseSuppression.teardown();
+
+    if (this.noiseSuppressionMode !== "ai") {
+      this.noiseSuppressionState = "off";
+      this.#setOutgoingStream(rawStream);
+      return true;
+    }
+
+    this.noiseSuppressionState = "starting";
+    try {
+      const suppressed = await this.#noiseSuppression.setup(rawStream, {
+        userGesture,
+      });
+      this.noiseSuppressionState = "on";
+      this.#setOutgoingStream(suppressed);
+      // eslint-disable-next-line no-console
+      console.log("[resenha] AI noise suppression enabled");
+      return true;
+    } catch (error) {
+      if (error instanceof SupersededError) {
+        throw error;
+      }
+      // eslint-disable-next-line no-console
+      console.warn("[resenha] AI noise suppression setup failed", error);
+      this.noiseSuppressionState = "off";
+      this.#setOutgoingStream(rawStream);
+      return false;
+    }
+  }
+
+  // The worklet reported a mid-call breakdown (repeated DTLN failures or a
+  // late init error): drop back to standard suppression so peers don't keep
+  // listening through a dead passthrough graph or an unfiltered mic.
+  #handleSuppressionRuntimeFailure() {
+    this.#serialize(async () => {
+      if (this.noiseSuppressionMode !== "ai" || !this.#rawStream) {
+        return;
+      }
+      this.noiseSuppressionMode = "standard";
+      setPreferredNoiseSuppressionMode("standard");
+      this.#onSuppressionFailed();
+      try {
+        await this.#reacquire();
+      } catch (error) {
+        if (error instanceof SupersededError) {
+          return;
+        }
+        // Capture failed: publish what we still have rather than nothing.
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[resenha] failed to reacquire after suppression breakdown",
+          error
+        );
+        this.#noiseSuppression.teardown();
+        this.noiseSuppressionState = "off";
+        this.#setOutgoingStream(this.#rawStream);
+        await this.#replaceTrackOnPeers();
+      }
+    });
   }
 
   // Final hop of the pipeline: the `upstream` argument is the raw mic or the

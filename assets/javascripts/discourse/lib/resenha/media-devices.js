@@ -1,4 +1,5 @@
 import { i18n } from "discourse-i18n";
+import { processingConstraints } from "./audio-processing";
 
 const INPUT_STORAGE_KEY = "resenha_audio_input_device";
 const OUTPUT_STORAGE_KEY = "resenha_audio_output_device";
@@ -58,10 +59,11 @@ export function audioConstraints(
   deviceId = preferredInputDeviceId(),
   { exact = false } = {}
 ) {
-  if (!deviceId || deviceId === SYSTEM_DEFAULT_DEVICE_ID) {
-    return true;
+  const constraints = processingConstraints();
+  if (deviceId && deviceId !== SYSTEM_DEFAULT_DEVICE_ID) {
+    constraints.deviceId = exact ? { exact: deviceId } : { ideal: deviceId };
   }
-  return { deviceId: exact ? { exact: deviceId } : { ideal: deviceId } };
+  return constraints;
 }
 
 // Capture dimensions per quality tier; the encoder ceilings in
