@@ -122,6 +122,26 @@ bash scripts/build-dfn3-worklet.sh     # Rust + wasm-pack
 node scripts/smoke-ns-worklet.mjs <rnnoise|dtln|dfn3>
 ```
 
+## Live Subtitles
+
+Opt-in, viewer-side captions: the user who enables subtitles transcribes the remote audio they already receive with [parakeet.js](https://github.com/ysdede/parakeet.js) (NVIDIA Parakeet TDT 0.6b v3, multilingual) — no audio leaves the browser and nothing is required from the other participants, on either transport.
+
+```
+remote stream → Silero VAD (per participant) → utterance PCM → Worker (Parakeet, WebGPU) → caption overlay
+```
+
+Each remote mic stream gets a [Silero VAD](https://github.com/ricky0123/vad) finding utterance boundaries; committed utterances are transcribed by one shared model in a Web Worker (fp32 encoder on WebGPU, int8 decoder on single-threaded WASM — fp16 encoders silently produce empty transcriptions on some GPU stacks, and multithreaded WASM would require COOP/COEP headers). Requires WebGPU; gated by the `resenha_subtitles_enabled` site setting.
+
+The runtime bundles (worker, VAD, onnxruntime, ~41 MB) are pinned and committed under `public/javascripts/stt/` by `scripts/build-stt-assets.sh`. The ~2.5 GB model weights are **not** committed: they download from HuggingFace on first use (cached in IndexedDB), or from a mirror configured via `resenha_stt_model_base_url`.
+
+```bash
+bash scripts/build-stt-assets.sh
+
+# End-to-end check (real model, WebGPU, persistent profile caches the download):
+flite -t "the quick brown fox jumps over the lazy dog" /tmp/fix.wav
+node scripts/smoke-stt-worker.mjs /tmp/fix.wav
+```
+
 ## Development
 
 ```bash

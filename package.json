@@ -4,7 +4,9 @@
     "build:dtln-worklet": "./scripts/build-dtln-worklet.sh",
     "build:rnnoise-worklet": "./scripts/build-rnnoise-worklet.sh",
     "build:dfn3-worklet": "./scripts/build-dfn3-worklet.sh",
+    "build:stt-assets": "./scripts/build-stt-assets.sh",
     "smoke:ns-worklet": "node scripts/smoke-ns-worklet.mjs",
+    "smoke:stt-worker": "node scripts/smoke-stt-worker.mjs",
     "build:livekit": "./scripts/build-livekit-bundle.sh",
     "resenha:bots": "node scripts/resenha-fake-participants.mjs",
     "lint": "concurrently \"pnpm:lint:*(!fix)\" --names \"lint:\"",
@@ -18,10 +20,13 @@
   },
   "devDependencies": {
     "@discourse/lint-configs": "3.2.0",
+    "@ricky0123/vad-web": "0.0.30",
     "concurrently": "^9.2.3",
     "esbuild": "^0.28.1",
     "eslint": "10.6.0",
     "livekit-client": "^2.20.1",
+    "onnxruntime-web": "1.24.1",
+    "parakeet.js": "1.4.4",
     "playwright": "^1.59.1",
     "prettier": "3.8.1",
     "stylelint": "17.5.0"

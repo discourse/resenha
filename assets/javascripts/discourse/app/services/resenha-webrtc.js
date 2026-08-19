@@ -53,6 +53,7 @@ import {
   stopCallSounds,
 } from "../../lib/resenha/sound-effects";
 import { participantCanSpeak } from "../../lib/resenha/stage-roles";
+import SubtitlesManager from "../../lib/resenha/subtitles";
 import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
@@ -75,6 +76,10 @@ export default class ResenhaWebrtcService extends Service {
   @tracked autoStatusEnabled = true;
   @tracked callWidgetHidden = false;
   @tracked outputDeviceId;
+  @tracked subtitlesEnabled = false;
+  @tracked subtitlesLoading = false;
+  @tracked subtitlesProgress = null;
+  @tracked captions = [];
   @tracked voiceQuality = preferredVoiceQuality();
   @tracked cameraQuality = preferredCameraQuality();
   @tracked screenQuality = preferredScreenQuality();
@@ -119,6 +124,8 @@ export default class ResenhaWebrtcService extends Service {
   #participantAudio;
   #heartbeat;
   #presencePending;
+  #subtitles;
+  #captionCounter = 0;
 
   constructor() {
     super(...arguments);
@@ -201,8 +208,35 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#remoteStreamRegistry = new RemoteStreamRegistry({
       onChange: () => this.remoteStreamsRevision++,
-      onMicTrack: (roomId, userId, stream) =>
-        this.#audioMonitor.ensure(roomId, userId, stream, false),
+      onMicTrack: (roomId, userId, stream) => {
+        this.#audioMonitor.ensure(roomId, userId, stream, false);
+        this.#subtitles.attach(roomId, userId, stream);
+      },
+    });
+
+    this.#subtitles = new SubtitlesManager({
+      onCaption: (roomId, userId, text) =>
+        this.#addCaption(roomId, userId, text),
+      onLoadingChange: () => {
+        this.subtitlesLoading = this.#subtitles.loading;
+        if (!this.subtitlesLoading) {
+          this.subtitlesProgress = null;
+        }
+      },
+      onProgress: ({ loaded, total }) => {
+        if (total > 0) {
+          this.subtitlesProgress = Math.min(
+            100,
+            Math.round((loaded / total) * 100)
+          );
+        }
+      },
+      onError: (error) => this.#handleSubtitlesError(error),
+    });
+    this.subtitlesEnabled =
+      this.subtitlesAvailable && this.#subtitles.isPreferred();
+    this.#subtitles.setEnabled(this.subtitlesEnabled, {
+      modelBaseUrl: this.#subtitlesModelBaseUrl,
     });
 
     this.#participantAudio = new ParticipantAudio({
@@ -296,6 +330,7 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#localVideo.destroy();
     this.#localAudio.stop();
+    this.#subtitles.destroy();
 
     this.#roomHandlerCallbacks.forEach((callback, roomId) => {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
@@ -372,6 +407,88 @@ export default class ResenhaWebrtcService extends Service {
 
   setGateThreshold(value) {
     return this.#localAudio.setGateThreshold(value);
+  }
+
+  // --- Subtitles ---
+
+  get subtitlesAvailable() {
+    return (
+      !!this.siteSettings.resenha_subtitles_enabled &&
+      SubtitlesManager.isSupported()
+    );
+  }
+
+  get #subtitlesModelBaseUrl() {
+    return this.siteSettings.resenha_stt_model_base_url || null;
+  }
+
+  toggleSubtitles() {
+    const enabled = !this.subtitlesEnabled;
+    this.subtitlesEnabled = enabled;
+    this.#subtitles.setPreference(enabled);
+    this.#subtitles.setEnabled(enabled, {
+      modelBaseUrl: this.#subtitlesModelBaseUrl,
+    });
+
+    if (enabled) {
+      for (const roomId of this.#activeRoomIds) {
+        for (const userId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
+          this.#subtitles.attach(
+            roomId,
+            userId,
+            this.#remoteStreamRegistry.streamFor(roomId, userId)
+          );
+        }
+      }
+    } else {
+      this.captions = [];
+    }
+  }
+
+  captionsFor(roomId) {
+    return this.captions.filter(
+      (caption) => Number(caption.roomId) === Number(roomId)
+    );
+  }
+
+  #addCaption(roomId, userId, text) {
+    const participant = (
+      this.resenhaRooms?.roomById(roomId)?.active_participants || []
+    ).find((p) => Number(p?.id) === Number(userId));
+
+    // Captions carry a display-name snapshot so a line outlives its speaker
+    // leaving the roster.
+    this.captions = [
+      ...this.captions.slice(-19),
+      {
+        id: ++this.#captionCounter,
+        roomId,
+        userId,
+        username: participant?.username,
+        text,
+        at: Date.now(),
+      },
+    ];
+  }
+
+  // Model or runtime failures turn the toggle back off (mirroring the noise
+  // suppression contract) so the modal never shows an enabled-but-dead state.
+  #handleSubtitlesError(error) {
+    // eslint-disable-next-line no-console
+    console.warn("[resenha] subtitles failed", error);
+
+    if (!this.subtitlesEnabled) {
+      return;
+    }
+
+    this.subtitlesEnabled = false;
+    this.#subtitles.setPreference(false);
+    this.#subtitles.setEnabled(false);
+    this.captions = [];
+    this.toasts.error({
+      duration: 5000,
+      data: { message: i18n("resenha.voice_settings.subtitles_failed") },
+    });
   }
 
   get remoteStreams() {
@@ -1463,6 +1580,12 @@ export default class ResenhaWebrtcService extends Service {
     this.#signaling.clearForRoom(roomId);
     this.#signaling.clearHttpQueue(roomId);
     this.#roomMessageQueue.clear(roomId);
+
+    if (this.captions.length) {
+      this.captions = this.captions.filter(
+        (caption) => Number(caption.roomId) !== Number(roomId)
+      );
+    }
   }
 
   #handleRoomMessage(roomId, payload) {
@@ -1937,6 +2060,7 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #removeAllRemoteStreams(roomId) {
+    this.#subtitles.detachRoom(roomId);
     this.#remoteStreamRegistry
       .clearRoom(roomId)
       .forEach((userId) => this.#audioMonitor.teardown(roomId, userId));
@@ -1947,6 +2071,7 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
+    this.#subtitles.detach(roomId, remoteUserId);
     this.#audioMonitor.teardown(roomId, remoteUserId);
     this.#participantAudio.untrackElement(roomId, remoteUserId);
   }

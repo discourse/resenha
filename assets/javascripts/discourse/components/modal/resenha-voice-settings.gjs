@@ -221,6 +221,15 @@ export default class ResenhaVoiceSettingsModal extends Component {
     await this.startPreview();
   }
 
+  get subtitlesAvailable() {
+    return this.resenhaWebrtc.subtitlesAvailable;
+  }
+
+  @action
+  toggleSubtitles() {
+    this.resenhaWebrtc.toggleSubtitles();
+  }
+
   @action
   async toggleAutoGainControl() {
     await this.resenhaWebrtc.setAutoGainControl(
@@ -434,6 +443,20 @@ export default class ResenhaVoiceSettingsModal extends Component {
               {{i18n "resenha.voice_settings.auto_gain_control_hint"}}
             </p>
           </div>
+
+          {{#if this.subtitlesAvailable}}
+            <div class="resenha-voice-settings__field">
+              <DToggleSwitch
+                @state={{this.resenhaWebrtc.subtitlesEnabled}}
+                @label="resenha.voice_settings.subtitles"
+                class="resenha-voice-settings__subtitles-toggle"
+                {{on "click" this.toggleSubtitles}}
+              />
+              <p class="resenha-voice-settings__hint">
+                {{i18n "resenha.voice_settings.subtitles_hint"}}
+              </p>
+            </div>
+          {{/if}}
 
           {{#if this.showQuality}}
             <div class="resenha-voice-settings__field">

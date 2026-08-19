@@ -33,6 +33,7 @@ import ResenhaInviteUsersModal from "../modal/resenha-invite-users";
 import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
 import ResenhaCallSubmenu from "./call-submenu";
+import ResenhaCaptionOverlay from "./caption-overlay";
 import ResenhaChatPanel from "./chat-panel";
 import ResenhaRecordingBadge from "./recording-badge";
 import ResenhaRingingTile from "./ringing-tile";
@@ -621,6 +622,10 @@ export default class ResenhaRoomPage extends Component {
                 {{i18n "resenha.room_page.empty"}}
               </div>
             {{/if}}
+            {{#if this.joined}}
+              <ResenhaCaptionOverlay @room={{this.room}} />
+            {{/if}}
+
             <footer class="resenha-room-page__controls">
               {{#if this.joined}}
                 <ResenhaCallControls @room={{this.room}} />
