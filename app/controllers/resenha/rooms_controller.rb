@@ -171,6 +171,12 @@ module Resenha
         Resenha::BadgeGranterHooks.on_invite_redeemed(invite) if invite
       end
 
+      # A join settles this room's pending invitation/call notifications: the
+      # incoming-call modal, push notifications, and cached-room transitions
+      # never pass through the user-menu click marking, so without this the
+      # notification stays unread forever.
+      mark_invitation_notifications_read!
+
       if params[:skip_status].blank?
         Resenha::UserStatusManager.set_voice_status(current_user, @room)
       end
@@ -555,6 +561,19 @@ module Resenha
     end
 
     private
+
+    def mark_invitation_notifications_read!
+      notification_ids =
+        current_user
+          .notifications
+          .where(notification_type: Notification.types[:resenha_invitation], read: false)
+          .select { |notification| notification.data_hash[:room_id] == @room.id }
+          .map(&:id)
+      return if notification_ids.empty?
+
+      Notification.read(current_user, notification_ids)
+      current_user.publish_notifications_state
+    end
 
     # Broad rescue is deliberate: a LiveKit problem must surface as the 503
     # handled by the callers, never as an opaque 500.

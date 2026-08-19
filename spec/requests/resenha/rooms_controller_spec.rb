@@ -262,6 +262,26 @@ RSpec.describe Resenha::RoomsController do
       expect(invite.reload.redeemed_at).to be_present
     end
 
+    it "marks the room's unread invitation notifications read on join, leaving other rooms' alone" do
+      Resenha::RoomInviter.invite!(room: room, inviter: other_participant, users: [user])
+      Resenha::RoomInviter.invite!(room: private_room, inviter: room_owner, users: [user])
+      invitation_notifications =
+        user.notifications.where(notification_type: Notification.types[:resenha_invitation])
+      room_notification =
+        invitation_notifications.find { |notification| notification.data_hash[:room_id] == room.id }
+      other_room_notification =
+        invitation_notifications.find do |notification|
+          notification.data_hash[:room_id] == private_room.id
+        end
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(200)
+      expect(room_notification.reload.read).to eq(true)
+      expect(other_room_notification.reload.read).to eq(false)
+    end
+
     it "records a link invite when joining through a shared invite URL, only once" do
       sign_in(user)
 
