@@ -1,15 +1,13 @@
 # Self-hosting the subtitles model (mirror)
 
 By default, live subtitles download the speech-to-text model on first use
-from Discourse's HuggingFace storage bucket
-([buckets/Discourse/parakeet-tdt-0.6b-v3-onnx-bucket](https://huggingface.co/buckets/Discourse/parakeet-tdt-0.6b-v3-onnx-bucket)),
-via the `resenha_stt_model_base_url` site setting's default value. Sites
+from Discourse's HuggingFace repository
+([Discourse/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/Discourse/parakeet-tdt-0.6b-v3-onnx),
+a clone of the upstream `ysdede/parakeet-tdt-0.6b-v3-onnx` export). Sites
 that can't (or don't want to) let browsers reach `huggingface.co` —
 airgapped deployments, enterprise networks, or anyone who prefers to
-control the bytes — can serve the model themselves and point that setting
-at their own mirror. Clearing the setting entirely falls back to the
-upstream `ysdede/parakeet-tdt-0.6b-v3-onnx` model repository via the
-library's own downloader.
+control the bytes — can serve the model themselves and point the
+`resenha_stt_model_base_url` site setting at their own mirror.
 
 Only the **model weights** are affected. The runtime bundles (worker, VAD,
 onnxruntime) are always served from the plugin's own `public/` directory and
@@ -74,7 +72,7 @@ resenha_stt_model_base_url = https://cdn.example.com/models/parakeet-tdt-0.6b-v3
 
 (Trailing slash optional.)
 
-A custom mirror behaves exactly like the default bucket: streamed download
+A custom mirror behaves exactly like the default source: streamed download
 progress in the caption overlay and a durable Cache API copy on the user's
 device.
 

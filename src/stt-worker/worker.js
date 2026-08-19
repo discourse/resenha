@@ -1,4 +1,4 @@
-import { fromHub, fromUrls } from "parakeet.js";
+import { fromUrls } from "parakeet.js";
 
 // Dedicated Worker owning the Parakeet ASR model for live subtitles. The
 // main thread's SubtitlesManager sends one init message, then VAD-committed
@@ -13,7 +13,10 @@ import { fromHub, fromUrls } from "parakeet.js";
 // ort-wasm needs SharedArrayBuffer and therefore COOP/COEP headers
 // Discourse doesn't set.
 
-const MODEL_KEY = "parakeet-tdt-0.6b-v3";
+// Discourse's clone of ysdede/parakeet-tdt-0.6b-v3-onnx (models CC-BY-4.0);
+// overridable per site via the resenha_stt_model_base_url setting.
+const DEFAULT_MODEL_BASE =
+  "https://huggingface.co/Discourse/parakeet-tdt-0.6b-v3-onnx/resolve/main";
 const SAMPLE_RATE = 16000;
 const MODEL_CACHE = "resenha-stt-model";
 
@@ -105,26 +108,20 @@ async function initialize(config) {
         self.postMessage({ type: "progress", loaded, total, file }),
     };
 
-    if (config.modelBaseUrl) {
-      const base = config.modelBaseUrl.replace(/\/$/, "");
-      const file = (name) => fetchModelFile(`${base}/${name}`, name);
-      model = await fromUrls({
-        ...options,
-        encoderUrl: await file("encoder-model.onnx"),
-        encoderDataUrl: await file("encoder-model.onnx.data"),
-        decoderUrl: await file("decoder_joint-model.int8.onnx"),
-        tokenizerUrl: await file("vocab.txt"),
-        // Required for encoderDataUrl to take effect: ort maps the external
-        // data to "<filenames.encoder>.data", which must match the path the
-        // onnx file references internally.
-        filenames: { encoder: "encoder-model.onnx" },
-        preprocessorBackend: "js",
-      });
-    } else {
-      // Legacy fallback when the site cleared the model base URL: the
-      // upstream HuggingFace repo via the library's own downloader.
-      model = await fromHub(MODEL_KEY, options);
-    }
+    const base = (config.modelBaseUrl || DEFAULT_MODEL_BASE).replace(/\/$/, "");
+    const file = (name) => fetchModelFile(`${base}/${name}`, name);
+    model = await fromUrls({
+      ...options,
+      encoderUrl: await file("encoder-model.onnx"),
+      encoderDataUrl: await file("encoder-model.onnx.data"),
+      decoderUrl: await file("decoder_joint-model.int8.onnx"),
+      tokenizerUrl: await file("vocab.txt"),
+      // Required for encoderDataUrl to take effect: ort maps the external
+      // data to "<filenames.encoder>.data", which must match the path the
+      // onnx file references internally.
+      filenames: { encoder: "encoder-model.onnx" },
+      preprocessorBackend: "js",
+    });
 
     // Warm-up: catches broken backends now and primes the WebGPU pipelines
     // so the first real caption isn't slow.
