@@ -96,18 +96,30 @@ See [docs/livekit.md](docs/livekit.md) for the full deployment runbook (provisio
 
 ## Noise Suppression
 
-Optional DTLN-based noise suppression powered by [dtln-rs](https://github.com/DataDog/dtln-rs), compiled to WebAssembly. Users can toggle it from the voice settings modal or the mic button's dropdown; a badge on the mic button shows when it is active. The preference persists per device via `localStorage`.
+Selectable AI noise-suppression engines running as WebAssembly AudioWorklets. Users pick a mode (None / Standard / an AI engine) from the voice settings modal or the mic button's dropdown; a badge on the mic button shows while an AI engine is confirmed active. The preference persists per device via `localStorage`. In AI modes the browser's native `noiseSuppression` constraint is turned off so filters never stack.
+
+| Engine | Source | Assets | Profile |
+|---|---|---|---|
+| RNNoise | [xiph/rnnoise](https://github.com/xiph/rnnoise) @ v0.1.1 (classic model) | ~130KB wasm | lightweight, lowest CPU |
+| DTLN | [dtln-rs](https://github.com/DataDog/dtln-rs) | ~6MB wasm | balanced |
+| DeepFilterNet3 | [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) via tract | ~9.5MB wasm + 8MB model | best quality, highest CPU |
 
 ```
-Microphone → AudioContext → AudioWorkletNode (dtln) → MediaStreamDestination → WebRTC peers
+Microphone → AudioContext → AudioWorkletNode (engine) → MediaStreamDestination → WebRTC peers
 ```
 
-The main thread fetches the model (`dtln_rs.<hash>.wasm`) and posts the bytes to the worklet, which instantiates it and answers a `ready` handshake once a warm-up denoise succeeds — only then is the suppressed track published, so an enabled toggle always means the filter is really running.
+All engines share one worklet runtime (`src/ns-worklet/runtime.js`) and protocol: the main thread fetches the engine's assets and posts the bytes to the worklet, which instantiates them and answers a `ready` handshake once a warm-up denoise succeeds — only then is the suppressed track published, so an enabled mode always means the filter is really running.
 
-Pre-built, content-hashed assets are committed under `public/javascripts/dtln/`, with their URLs in the generated `assets/javascripts/discourse/lib/resenha/dtln-assets.js`. The build clones dtln-rs at a pinned commit and applies the patches in `src/dtln-worklet/patches/`. To rebuild (requires Rust + Emscripten + pnpm):
+Pre-built, content-hashed assets are committed under `public/javascripts/<engine>/`, with their URLs in the generated manifests under `assets/javascripts/discourse/lib/resenha/ns-assets/`. Each build script clones its upstream at a pinned commit (applying patches from `src/<engine>-worklet/patches/` where needed):
 
 ```bash
-cd plugins/resenha && bash scripts/build-dtln-worklet.sh
+cd plugins/resenha
+bash scripts/build-rnnoise-worklet.sh  # emcc (standalone wasm)
+bash scripts/build-dtln-worklet.sh     # Rust + Emscripten
+bash scripts/build-dfn3-worklet.sh     # Rust + wasm-pack
+
+# Verify a built engine end-to-end in headless Chromium:
+node scripts/smoke-ns-worklet.mjs <rnnoise|dtln|dfn3>
 ```
 
 ## Development

@@ -13,12 +13,20 @@ import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 import {
+  isAiMode,
+  NOISE_SUPPRESSION_MODES,
+} from "../../lib/resenha/audio-processing";
+import {
   enumerateAudioDevices,
   enumerateVideoDevices,
   outputSelectionSupported,
   SYSTEM_DEFAULT_DEVICE_ID,
 } from "../../lib/resenha/media-devices";
-import { prefetchDtlnWasm } from "../../lib/resenha/noise-suppression";
+import { prefetchEngineAssets } from "../../lib/resenha/noise-suppression";
+import {
+  engineForMode,
+  noiseSuppressionModeLabel,
+} from "../../lib/resenha/ns-engines";
 import { queuePosition } from "../../lib/resenha/speak-queue";
 import ResenhaVideoSettingsModal from "../modal/resenha-video-settings";
 import ResenhaVoiceSettingsModal from "../modal/resenha-voice-settings";
@@ -123,15 +131,13 @@ export default class ResenhaCallControls extends Component {
   get showNoiseSuppressionBadge() {
     return (
       this.resenhaWebrtc.audioEnabled &&
-      this.resenhaWebrtc.noiseSuppressionMode === "ai" &&
+      isAiMode(this.resenhaWebrtc.noiseSuppressionMode) &&
       this.resenhaWebrtc.noiseSuppressionState !== "off"
     );
   }
 
   get currentNoiseSuppressionModeName() {
-    return i18n(
-      `resenha.voice_settings.noise_suppression_modes.${this.resenhaWebrtc.noiseSuppressionMode}`
-    );
+    return noiseSuppressionModeLabel(this.resenhaWebrtc.noiseSuppressionMode);
   }
 
   get micTitle() {
@@ -285,9 +291,9 @@ export default class ResenhaCallControls extends Component {
     this.#openSubmenu(
       event,
       AUDIO_MENU,
-      ["none", "standard", "ai"].map((mode) => ({
+      NOISE_SUPPRESSION_MODES.map((mode) => ({
         id: mode,
-        label: i18n(`resenha.voice_settings.noise_suppression_modes.${mode}`),
+        label: noiseSuppressionModeLabel(mode),
         selected: mode === this.resenhaWebrtc.noiseSuppressionMode,
       })),
       (mode) => this.resenhaWebrtc.setNoiseSuppressionMode(mode)
@@ -296,9 +302,12 @@ export default class ResenhaCallControls extends Component {
 
   @action
   async loadAudioDevices() {
-    // The menu opening is a strong hint an AI suppression switch may follow;
-    // warming the model bytes makes that switch near-instant.
-    prefetchDtlnWasm().catch(() => {});
+    // If the persisted mode is an AI engine, warming its assets makes the
+    // next enable (rejoin, unmute) near-instant.
+    const engine = engineForMode(this.resenhaWebrtc.noiseSuppressionMode);
+    if (engine) {
+      prefetchEngineAssets(engine).catch(() => {});
+    }
     const { inputs, outputs } = await enumerateAudioDevices();
     if (this.isDestroying || this.isDestroyed) {
       return;

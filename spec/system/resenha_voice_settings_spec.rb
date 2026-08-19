@@ -60,8 +60,9 @@ describe "Resenha voice settings", type: :system do
     expect(agc_toggle.checked?).to eq(true)
   end
 
-  # These run the real DTLN pipeline (wasm fetch, worklet ready handshake),
-  # so the "AI" assertions only pass once the filter is genuinely running.
+  # These run the real engine pipelines (wasm fetch, worklet ready
+  # handshake), so the "AI" assertions only pass once the filter is genuinely
+  # running — the modal spec covers DTLN, the submenu spec covers RNNoise.
   it "enables AI noise cancellation from the voice settings modal and shows the mic badge" do
     join_room
     open_voice_settings
@@ -69,7 +70,7 @@ describe "Resenha voice settings", type: :system do
     mode_select =
       PageObjects::Components::SelectKit.new(".resenha-voice-settings__noise-suppression-select")
     mode_select.expand
-    mode_select.select_row_by_value("ai")
+    mode_select.select_row_by_value("ai:dtln")
 
     expect(page).to have_css(".resenha-call-controls__ns-badge", wait: 15)
   end
@@ -82,7 +83,7 @@ describe "Resenha voice settings", type: :system do
       click_button(I18n.t("js.resenha.voice_settings.noise_suppression"))
     end
     within(".fk-d-menu[data-identifier='resenha-call-submenu']") do
-      click_button(I18n.t("js.resenha.voice_settings.noise_suppression_modes.ai"))
+      click_button(I18n.t("js.resenha.voice_settings.noise_suppression_modes.ai_rnnoise"))
     end
 
     expect(page).to have_css(".resenha-call-controls__ns-badge", wait: 15)

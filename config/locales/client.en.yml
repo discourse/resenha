@@ -153,7 +153,9 @@ en:
         noise_suppression_modes:
           none: "None"
           standard: "Standard"
-          ai: "AI noise cancellation"
+          ai_rnnoise: "AI — RNNoise (lightweight)"
+          ai_dtln: "AI — DTLN (balanced)"
+          ai_dfn3: "AI — DeepFilterNet (best quality)"
         noise_suppression_failed: "AI noise cancellation couldn't run, so it was switched off."
         echo_cancellation: "Echo cancellation"
         echo_cancellation_hint: "Prevents others from hearing their own audio through your microphone."
