@@ -1,10 +1,10 @@
 import getURL from "discourse/lib/get-url";
 import {
-  ORT_WASM_BASE,
+  ORT_WASM_BINARY,
+  ORT_WASM_JS,
   STT_WORKER_PATH,
   VAD_ASSET_BASE,
   VAD_BUNDLE_PATH,
-  VAD_ORT_BASE,
 } from "./stt-assets";
 
 // Live subtitles for room participants.
@@ -171,7 +171,13 @@ export default class SubtitlesManager {
       vad = await vadModule.MicVAD.new({
         model: "v5",
         baseAssetPath: absoluteUrl(VAD_ASSET_BASE),
-        onnxWASMBasePath: absoluteUrl(VAD_ORT_BASE),
+        // Assigned verbatim to ort's env, which accepts explicit {mjs, wasm}
+        // URLs — needed because the module glue ships under a .js name (the
+        // .mjs extension gets a non-JavaScript MIME type from nginx).
+        onnxWASMBasePath: {
+          mjs: absoluteUrl(ORT_WASM_JS),
+          wasm: absoluteUrl(ORT_WASM_BINARY),
+        },
         // The "mic" is a remote WebRTC stream the registry owns; the VAD
         // must never stop its tracks when pausing.
         getStream: async () => stream,
@@ -285,7 +291,8 @@ export default class SubtitlesManager {
       type: "init",
       config: {
         modelBaseUrl: modelBaseUrl || null,
-        ortWasmBase: absoluteUrl(ORT_WASM_BASE),
+        ortWasmJsUrl: absoluteUrl(ORT_WASM_JS),
+        ortWasmBinaryUrl: absoluteUrl(ORT_WASM_BINARY),
       },
     });
   }
