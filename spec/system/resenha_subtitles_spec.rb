@@ -57,10 +57,11 @@ describe "Resenha subtitles", type: :system do
     join_room
     open_voice_settings
 
-    toggle =
-      PageObjects::Components::DToggleSwitch.new(
-        ".resenha-voice-settings__subtitles-toggle .d-toggle-switch__checkbox",
-      )
+    within(".resenha-voice-settings") do
+      expect(page).to have_content(I18n.t("js.resenha.voice_settings.subtitles"))
+    end
+
+    toggle = PageObjects::Components::DToggleSwitch.new(".resenha-voice-settings__subtitles-toggle")
     toggle.toggle
     expect(toggle.checked?).to eq(true)
 
