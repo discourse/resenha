@@ -330,6 +330,10 @@ export default class ResenhaWebrtcService extends Service {
     return this.#localAudio.noiseSuppressionEnabled;
   }
 
+  get noiseSuppressionState() {
+    return this.#localAudio.noiseSuppressionState;
+  }
+
   get gateThreshold() {
     return this.#localAudio.gateThreshold;
   }

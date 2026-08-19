@@ -390,7 +390,20 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
     }
   }
 
+  // Mirrors the DTLN worklet protocol: the manager posts the wasm bytes and
+  // waits for "ready" before publishing the suppressed stream.
   class FakeAudioWorkletNode {
+    port = {
+      onmessage: null,
+      postMessage: (data) => {
+        if (data?.type === "wasm") {
+          Promise.resolve().then(() =>
+            this.port.onmessage?.({ data: { type: "ready" } })
+          );
+        }
+      },
+    };
+
     connect(target) {
       return target;
     }
@@ -398,8 +411,20 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
     disconnect() {}
   }
 
+  const originalFetch = globalThis.fetch;
+  const fakeFetch = (url, options) => {
+    if (String(url).includes("/plugins/resenha/javascripts/dtln/")) {
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      });
+    }
+    return originalFetch(url, options);
+  };
+
   globalThis.AudioContext = FakeAudioContext;
   globalThis.AudioWorkletNode = FakeAudioWorkletNode;
+  globalThis.fetch = fakeFetch;
   window.AudioContext = FakeAudioContext;
   window.webkitAudioContext = FakeAudioContext;
   window.requestAnimationFrame = () => 1;
@@ -413,6 +438,7 @@ function installFakeAudioEnvironment({ rawStream, processedStream }) {
     restore() {
       globalThis.AudioContext = originalAudioContext;
       globalThis.AudioWorkletNode = originalAudioWorkletNode;
+      globalThis.fetch = originalFetch;
       window.AudioContext = originalWindowAudioContext;
       window.webkitAudioContext = originalWindowWebkitAudioContext;
       window.requestAnimationFrame = originalRequestAnimationFrame;

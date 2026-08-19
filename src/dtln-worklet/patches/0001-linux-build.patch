@@ -1,0 +1,47 @@
+diff --git a/build.rs b/build.rs
+index 6a3292f..9234a06 100644
+--- a/build.rs
++++ b/build.rs
+@@ -3,6 +3,42 @@ fn main() {
+     // NOP on windows
+ }
+ 
++#[cfg(target_os = "linux")]
++fn main() {
++    use std::{env, process::Command};
++
++    use build_target::Arch;
++
++    let target_arch = build_target::target_arch().unwrap();
++    if matches!(target_arch, Arch::WASM32) {
++        Command::new("tar")
++            .arg("-xjf")
++            .arg("./tflite/tflite-prebuilt.wasm.tar.bz2")
++            .arg("-C")
++            .arg("./tflite/")
++            .status()
++            .unwrap();
++
++        let root_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
++        println!("cargo:rustc-link-search=native={}/tflite/lib/", root_dir);
++
++        std::fs::read_dir(std::format!("{}/tflite/lib", root_dir))
++            .unwrap()
++            .for_each(|entry| {
++                let path = entry.unwrap().path();
++                let extension = path.extension();
++                if let Some(ext) = extension {
++                    if ext == "a" {
++                        let lib_name = path.file_stem().unwrap().to_str().unwrap();
++                        if let Some(lib_name) = lib_name.strip_prefix("lib") {
++                            println!("cargo:rustc-link-lib=dylib={}", lib_name);
++                        }
++                    }
++                }
++            });
++    }
++}
++
+ #[cfg(target_os = "macos")]
+ fn main() {
+     use std::{env, process::Command};

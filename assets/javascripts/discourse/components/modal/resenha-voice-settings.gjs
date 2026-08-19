@@ -18,6 +18,7 @@ import {
   outputSelectionSupported,
   SYSTEM_DEFAULT_DEVICE_ID,
 } from "../../lib/resenha/media-devices";
+import { prefetchDtlnWasm } from "../../lib/resenha/noise-suppression";
 
 const METER_INTERVAL_MS = 50;
 
@@ -29,7 +30,6 @@ export default class ResenhaVoiceSettingsModal extends Component {
   @tracked level = 0;
   @tracked micError = false;
   @tracked testingOutput = false;
-  @tracked busy = false;
 
   #previewStream = null;
   #previewContext = null;
@@ -39,6 +39,9 @@ export default class ResenhaVoiceSettingsModal extends Component {
   constructor() {
     super(...arguments);
     this.startPreview();
+    // Someone opening voice settings may be about to enable suppression;
+    // warming the model bytes makes that toggle near-instant.
+    prefetchDtlnWasm().catch(() => {});
     navigator.mediaDevices?.addEventListener?.(
       "devicechange",
       this.#onDeviceChange
@@ -72,6 +75,10 @@ export default class ResenhaVoiceSettingsModal extends Component {
 
   get noiseSuppressionEnabled() {
     return this.resenhaWebrtc.noiseSuppressionEnabled;
+  }
+
+  get busy() {
+    return this.resenhaWebrtc.noiseSuppressionState === "starting";
   }
 
   get qualityOptions() {
@@ -185,19 +192,13 @@ export default class ResenhaVoiceSettingsModal extends Component {
   }
 
   @action
-  async toggleNoiseSuppression() {
+  toggleNoiseSuppression() {
     if (this.busy) {
       return;
     }
-
-    this.busy = true;
-    try {
-      await this.resenhaWebrtc.toggleNoiseSuppression();
-    } finally {
-      if (!this.isDestroying && !this.isDestroyed) {
-        this.busy = false;
-      }
-    }
+    // Serialization and state live in the audio pipeline; "starting" flows
+    // back through noiseSuppressionState.
+    this.resenhaWebrtc.toggleNoiseSuppression();
   }
 
   @action

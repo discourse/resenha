@@ -465,9 +465,34 @@ html.discourse-touch .resenha-call-widget {
   align-items: stretch;
 
   .resenha-call-controls__combo-main {
+    position: relative;
     border-top-right-radius: 0;
     border-bottom-right-radius: 0;
     border-inline-end: none !important; // ensure core hover/active/focus rules don't restore the border
+  }
+
+  .resenha-call-controls__ns-badge {
+    position: absolute;
+    top: -0.45em;
+    right: -0.45em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5em;
+    height: 1.5em;
+    border-radius: 50%;
+    background: var(--tertiary);
+    color: var(--secondary);
+
+    .d-icon {
+      width: 0.85em;
+      height: 0.85em;
+      color: inherit;
+    }
+
+    &.--starting {
+      animation: resenha-ns-badge-pulse 1s ease-in-out infinite;
+    }
   }
 
   .resenha-call-controls__combo-caret {
@@ -476,6 +501,12 @@ html.discourse-touch .resenha-call-widget {
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
     border-inline-start: 1px solid var(--primary-low-mid);
+  }
+}
+
+@keyframes resenha-ns-badge-pulse {
+  50% {
+    opacity: 0.4;
   }
 }
 

@@ -21,9 +21,7 @@
     "livekit-client": "^2.20.1",
     "playwright": "^1.59.1",
     "prettier": "3.8.1",
-    "stylelint": "17.5.0",
-    "webpack": "^5.105.1",
-    "webpack-cli": "^6.0.1"
+    "stylelint": "17.5.0"
   },
   "engines": {
     "node": ">= 22",

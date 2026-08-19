@@ -1,4 +1,11 @@
-import dtln from "./dtln.js";
+import Resampler from "../../assets/javascripts/discourse/lib/resenha/resampler";
+import createDtln from "./dtln.js";
+
+// AudioWorkletGlobalScope has no `self`; the Emscripten glue reads
+// self.location.href for script-directory detection (unused here — the wasm
+// bytes are always injected — but evaluated unconditionally).
+globalThis.self ??= globalThis;
+globalThis.self.location ??= { href: "" };
 
 const DTLN_RATE = 16000;
 const DTLN_FRAME_SIZE = 512;
@@ -7,67 +14,17 @@ const DTLN_FRAME_SIZE = 512;
 // passes audio through untouched; a broken filter must never mute the mic.
 const MAX_CONSECUTIVE_ERRORS = 50;
 
-// The Emscripten runtime initializes asynchronously while this bundle is
-// evaluated, and its postRun hook fires exactly once. Registering the
-// forwarding hook at module scope — before the first microtask can run —
-// guarantees a processor constructed after initialization completes still
-// learns the module is ready.
-let wasmReady = false;
-const wasmReadyCallbacks = [];
-dtln.postRun = [
-  () => {
-    wasmReady = true;
-    wasmReadyCallbacks.splice(0).forEach((callback) => callback());
-  },
-];
-
-// Linear resampler that carries its fractional read position and the last
-// input sample across blocks, so the produced sample count stays exact on
-// average for any rate ratio. Rounding each 128-frame block independently
-// drifts: at 48kHz it fabricates ~0.8% extra audio, growing the output
-// queue (and the speaker's latency) by ~8ms every second.
-class Resampler {
-  constructor(fromRate, toRate) {
-    this.ratio = fromRate / toRate;
-    this.pos = 0;
-    this.last = 0;
-  }
-
-  // The returned array is safe to retain; it never aliases `input`.
-  process(input) {
-    if (this.ratio === 1) {
-      return input.slice();
-    }
-
-    const maxIndex = input.length - 1;
-    const count = Math.max(
-      0,
-      Math.floor((maxIndex - this.pos) / this.ratio) + 1
-    );
-    const output = new Float32Array(count);
-
-    let pos = this.pos;
-    for (let i = 0; i < count; i++) {
-      const index = Math.min(Math.floor(pos), maxIndex);
-      const frac = pos - index;
-      const a = index < 0 ? this.last : input[index];
-      const b = index < maxIndex ? input[index + 1] : a;
-      output[i] = a + frac * (b - a);
-      pos += this.ratio;
-    }
-
-    this.pos = pos - input.length;
-    this.last = input[maxIndex];
-    return output;
-  }
-}
-
+// The main thread fetches the .wasm and posts its bytes here; the Emscripten
+// factory instantiates it without ever touching the network (worklet scopes
+// have no fetch). "ready" is only reported after a successful warm-up
+// denoise, so the manager can trust that a resolved handshake means frames
+// are actually being filtered.
 class NoiseSuppressionProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
+    this.dtln = null;
     this.dtlnHandle = undefined;
-    this.isModuleReady = false;
     this.bypass = false;
     this.consecutiveErrors = 0;
 
@@ -81,24 +38,51 @@ class NoiseSuppressionProcessor extends AudioWorkletProcessor {
     this.downsampler = new Resampler(sampleRate, DTLN_RATE);
     this.upsampler = new Resampler(DTLN_RATE, sampleRate);
 
-    if (wasmReady) {
-      this.#markReady();
-    } else {
-      // Belt and suspenders for a runtime that initialized synchronously,
-      // before the module-scope hook above was registered: a callable
-      // export means the wasm is up.
-      try {
-        this.dtlnHandle = dtln.dtln_create();
-        this.#markReady();
-      } catch {
-        wasmReadyCallbacks.push(() => this.#markReady());
+    this.port.onmessage = (event) => {
+      if (event.data?.type === "wasm") {
+        this.#initialize(event.data.bytes);
       }
+    };
+  }
+
+  async #initialize(wasmBinary) {
+    try {
+      // Emscripten 6 dropped the wasmBinary module input; the
+      // instantiateWasm hook is the supported way to hand it precompiled
+      // bytes. A rejected instantiation must be reported here — the factory
+      // promise would otherwise never settle.
+      const module = await createDtln({
+        instantiateWasm: (imports, onSuccess) => {
+          WebAssembly.instantiate(wasmBinary, imports)
+            .then((result) => onSuccess(result.instance, result.module))
+            .catch((error) => this.#reportInitError(error));
+          return {};
+        },
+      });
+      const handle = module.dtln.dtln_create();
+      module.dtln.dtln_denoise(
+        handle,
+        new Float32Array(DTLN_FRAME_SIZE),
+        this.outputBuffer
+      );
+
+      this.dtln = module.dtln;
+      this.dtlnHandle = handle;
+      this.port.postMessage({ type: "ready" });
+    } catch (error) {
+      this.#reportInitError(error);
     }
   }
 
-  #markReady() {
-    this.isModuleReady = true;
-    this.port.postMessage("ready");
+  #reportInitError(error) {
+    if (this.initErrorReported) {
+      return;
+    }
+    this.initErrorReported = true;
+    this.port.postMessage({
+      type: "error",
+      message: String(error?.message || error),
+    });
   }
 
   process(inputs, outputs) {
@@ -114,25 +98,22 @@ class NoiseSuppressionProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    // Fail open: raw audio while the model loads or after it broke beats
-    // silently muting the speaker.
-    if (!this.isModuleReady || this.bypass) {
+    // Fail open: raw audio beats silently muting the speaker. The manager
+    // never routes live audio through this node before "ready", so this
+    // branch only matters after a mid-call bypass.
+    if (!this.dtln || this.bypass) {
       output.set(input);
       return true;
     }
 
     try {
-      if (this.dtlnHandle === undefined) {
-        this.dtlnHandle = dtln.dtln_create();
-      }
-
       const downsampled = this.downsampler.process(input);
 
       for (let i = 0; i < downsampled.length; i++) {
         this.inputBuffer[this.inputIndex++] = downsampled[i];
 
         if (this.inputIndex >= DTLN_FRAME_SIZE) {
-          dtln.dtln_denoise(
+          this.dtln.dtln_denoise(
             this.dtlnHandle,
             this.inputBuffer,
             this.outputBuffer
@@ -181,7 +162,7 @@ class NoiseSuppressionProcessor extends AudioWorkletProcessor {
       }
       if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         this.bypass = true;
-        this.port.postMessage("bypass");
+        this.port.postMessage({ type: "bypass" });
         // eslint-disable-next-line no-console
         console.error(
           "[resenha] DTLN keeps failing, noise suppression bypassed"
