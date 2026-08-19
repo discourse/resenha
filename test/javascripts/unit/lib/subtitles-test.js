@@ -225,7 +225,10 @@ module("Resenha | Unit | Lib | subtitles", function (hooks) {
 
     const interims = worker.jobs.filter((job) => job.interim);
     assert.true(interims.length >= 1, "provisional snapshots were sent");
-    assert.false(this.captions.at(-1).final, "the caption is marked provisional");
+    assert.false(
+      this.captions.at(-1).final,
+      "the caption is marked provisional"
+    );
 
     vad.options.onSpeechEnd(new Float32Array(4 * 16000));
     await new Promise((resolve) => setTimeout(resolve, 10));
