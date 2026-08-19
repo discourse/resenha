@@ -53,6 +53,8 @@ emit_ns_assets() {
     fi
   } > "${manifest}"
 
+  pnpm exec prettier --write --log-level silent "${manifest}"
+
   echo "==> Build complete!"
   ls -la "${output_dir}"
   echo "    ${manifest}"

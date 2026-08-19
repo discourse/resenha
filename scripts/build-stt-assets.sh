@@ -99,6 +99,8 @@ export const VAD_ASSET_BASE = "${PUBLIC_BASE}/${VAD_DIR}/";
 export const VAD_ORT_BASE = "${PUBLIC_BASE}/${VAD_ORT_DIR}/";
 EOF
 
+pnpm exec prettier --write --log-level silent "${MANIFEST}"
+
 echo "==> Build complete!"
 ls -la "${OUTPUT_DIR}"
 echo "    ${MANIFEST}"
