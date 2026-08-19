@@ -1,11 +1,15 @@
 # Self-hosting the subtitles model (mirror)
 
-By default, live subtitles download the speech-to-text model from
-HuggingFace the first time a user enables them. Sites that can't (or don't
-want to) let browsers reach `huggingface.co` — airgapped deployments,
-enterprise networks, or anyone who prefers to control the bytes — can serve
-the model themselves and point the plugin at it with the
-`resenha_stt_model_base_url` site setting.
+By default, live subtitles download the speech-to-text model on first use
+from Discourse's HuggingFace storage bucket
+([buckets/Discourse/parakeet-tdt-0.6b-v3-onnx-bucket](https://huggingface.co/buckets/Discourse/parakeet-tdt-0.6b-v3-onnx-bucket)),
+via the `resenha_stt_model_base_url` site setting's default value. Sites
+that can't (or don't want to) let browsers reach `huggingface.co` —
+airgapped deployments, enterprise networks, or anyone who prefers to
+control the bytes — can serve the model themselves and point that setting
+at their own mirror. Clearing the setting entirely falls back to the
+upstream `ysdede/parakeet-tdt-0.6b-v3-onnx` model repository via the
+library's own downloader.
 
 Only the **model weights** are affected. The runtime bundles (worker, VAD,
 onnxruntime) are always served from the plugin's own `public/` directory and
@@ -45,12 +49,12 @@ users and must speak CORS if it lives on a different origin:
 
 - `Access-Control-Allow-Origin: <forum origin>` (or `*`) on all four files.
 - HTTPS, if the forum is served over HTTPS (mixed content is blocked).
-- Correct `Content-Length` (any static file server does this) — the ~2.4 GB
-  file arrives as one plain GET; resumable/range support is not needed.
-- Long-lived caching is strongly recommended: the files are immutable, and
-  unlike the HuggingFace path (which caches in IndexedDB) the mirror path
-  relies on the browser's HTTP cache. Without cache headers, users re-download
-  ~2.5 GB whenever the browser evicts them.
+- Correct `Content-Length` (any static file server does this) — it drives
+  the download progress shown in the caption overlay, and the ~2.4 GB file
+  arrives as one plain GET; resumable/range support is not needed.
+- Long-lived cache headers are still recommended (the files are immutable),
+  though the browser keeps a durable Cache API copy after the first
+  download, so mirrors are only re-hit when that storage is evicted.
 
 Example nginx location:
 
@@ -70,12 +74,9 @@ resenha_stt_model_base_url = https://cdn.example.com/models/parakeet-tdt-0.6b-v3
 
 (Trailing slash optional.)
 
-## Behavioral differences vs the HuggingFace default
-
-- The caption overlay shows a generic "Preparing subtitles…" line instead of
-  a download percentage — the library only reports byte progress on the
-  HuggingFace path.
-- No IndexedDB caching; repeat visits rely on the HTTP cache headers above.
+A custom mirror behaves exactly like the default bucket: streamed download
+progress in the caption overlay and a durable Cache API copy on the user's
+device.
 
 ## Verifying a mirror
 

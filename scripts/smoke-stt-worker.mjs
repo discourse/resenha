@@ -15,6 +15,7 @@
 //
 // Env knobs: STT_MODEL_DIR=/path/to/mirror serves the model from a local
 // directory (validates the resenha_stt_model_base_url mirror path);
+// STT_MODEL_BASE_URL=https://... tests a remote mirror/bucket directly;
 // STT_BACKEND / STT_ENCODER_QUANT override the worker defaults.
 import http from "node:http";
 import { createReadStream } from "node:fs";
@@ -59,7 +60,7 @@ window.runTest = async (paths) => {
   });
   worker.postMessage({
     type: "init",
-    config: { modelBaseUrl: paths.modelBase ? new URL(paths.modelBase, location).href : null, ortWasmBase: new URL(paths.ortBase, location).href, backend: paths.backend, encoderQuant: paths.encoderQuant },
+    config: { modelBaseUrl: paths.modelBaseAbsolute || (paths.modelBase ? new URL(paths.modelBase, location).href : null), ortWasmBase: new URL(paths.ortBase, location).href, backend: paths.backend, encoderQuant: paths.encoderQuant },
   });
   await ready;
   window.log("worker ready");
@@ -152,7 +153,9 @@ const server = http.createServer(async (req, res) => {
     res.end(String(e));
   }
 });
-await new Promise((r) => server.listen(0, r));
+// Fixed port: the model cache (Cache API/IndexedDB) is origin-scoped, so a
+// random port would defeat cross-run caching in the persistent profile.
+await new Promise((r) => server.listen(Number(process.env.STT_SMOKE_PORT || 8873), r));
 
 const toLocal = (publicPath) =>
   publicPath.replace("/plugins/resenha/javascripts/stt/", "/stt/");
@@ -188,6 +191,7 @@ try {
     vadAssets: toLocal(manifest.VAD_ASSET_BASE),
     vadOrt: toLocal(manifest.VAD_ORT_BASE),
     modelBase: process.env.STT_MODEL_DIR ? "/model/" : undefined,
+    modelBaseAbsolute: process.env.STT_MODEL_BASE_URL || undefined,
     backend: process.env.STT_BACKEND || undefined,
     encoderQuant: process.env.STT_ENCODER_QUANT || undefined,
   });

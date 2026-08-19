@@ -86,7 +86,7 @@ plugins:
     default: false
     client: true
   resenha_stt_model_base_url:
-    default: ""
+    default: "https://huggingface.co/buckets/Discourse/parakeet-tdt-0.6b-v3-onnx-bucket/resolve"
     client: true
   resenha_max_voice_quality:
     default: "maximum"

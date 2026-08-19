@@ -18,8 +18,8 @@ import {
 //
 // The runtime bundles are served from the plugin's public dir and only
 // fetched the first time subtitles are enabled; the ~2.5GB model weights
-// come from HuggingFace (IndexedDB-cached by the library) or from the
-// `resenha_stt_model_base_url` mirror.
+// come from the `resenha_stt_model_base_url` source (Discourse's
+// HuggingFace bucket by default), kept in a durable Cache API store.
 
 const PREFERENCE_KEY = "resenha:subtitles";
 
