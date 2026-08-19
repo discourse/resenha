@@ -1,10 +1,11 @@
 import getURL from "discourse/lib/get-url";
+import Site from "discourse/models/site";
 import {
-  ORT_WASM_BASE,
-  STT_WORKER_PATH,
-  VAD_ASSET_BASE,
-  VAD_BUNDLE_PATH,
-  VAD_ORT_BASE,
+  ORT_WASM_BINARY_FILE,
+  ORT_WASM_JS_FILE,
+  STT_WORKER_FILE,
+  VAD_ASSET_DIR,
+  VAD_BUNDLE_FILE,
 } from "./stt-assets";
 
 // Live subtitles for room participants.
@@ -32,14 +33,26 @@ const READY_TIMEOUT_MS = 30 * 60 * 1000;
 // The bundle stays resident after first use so re-enabling is instant.
 let vadModulePromise = null;
 
-// Same serving constraint as the worker itself: same-origin, anchored to
-// the page URL because this compiled chunk may be served from a CDN origin.
-function absoluteUrl(path) {
-  return new URL(getURL(path), window.location).href;
+const STT_PATH = "/plugins/resenha/javascripts/stt";
+
+// Runtime assets ride the app-proxying CDN when one is configured (the
+// mediapipe pattern: the files live in the app's public dir, never on a
+// static asset CDN). Everything is absolutized against the page URL because
+// this compiled chunk may itself be served from a CDN origin.
+function sttUrl(file) {
+  const base = Site.current()?.resenha_stt_base_url || getURL(STT_PATH);
+  return new URL(`${base.replace(/\/$/, "")}/${file}`, window.location).href;
+}
+
+// The one exception: workers must be same-origin, so the (small) worker
+// script always loads from the app. Everything it fetches uses sttUrl.
+function workerUrl() {
+  return new URL(`${getURL(STT_PATH)}/${STT_WORKER_FILE}`, window.location)
+    .href;
 }
 
 async function loadVadModule() {
-  vadModulePromise ||= import(/* @vite-ignore */ absoluteUrl(VAD_BUNDLE_PATH));
+  vadModulePromise ||= import(/* @vite-ignore */ sttUrl(VAD_BUNDLE_FILE));
   try {
     return await vadModulePromise;
   } catch (error) {
@@ -83,7 +96,7 @@ export default class SubtitlesManager {
     onError,
     // Injectable for tests; production always uses the shipped assets.
     loadVad = loadVadModule,
-    createWorker = () => new Worker(getURL(STT_WORKER_PATH)),
+    createWorker = () => new Worker(workerUrl()),
   }) {
     this.#onCaption = onCaption;
     this.#onLoadingChange = onLoadingChange;
@@ -170,8 +183,14 @@ export default class SubtitlesManager {
     try {
       vad = await vadModule.MicVAD.new({
         model: "v5",
-        baseAssetPath: absoluteUrl(VAD_ASSET_BASE),
-        onnxWASMBasePath: absoluteUrl(VAD_ORT_BASE),
+        baseAssetPath: sttUrl(VAD_ASSET_DIR),
+        // Assigned verbatim to ort's env, which accepts explicit {mjs, wasm}
+        // URLs — needed because the module glue ships under a .js name (the
+        // .mjs extension gets a non-JavaScript MIME type from nginx).
+        onnxWASMBasePath: {
+          mjs: sttUrl(ORT_WASM_JS_FILE),
+          wasm: sttUrl(ORT_WASM_BINARY_FILE),
+        },
         // The "mic" is a remote WebRTC stream the registry owns; the VAD
         // must never stop its tracks when pausing.
         getStream: async () => stream,
@@ -285,7 +304,8 @@ export default class SubtitlesManager {
       type: "init",
       config: {
         modelBaseUrl: modelBaseUrl || null,
-        ortWasmBase: absoluteUrl(ORT_WASM_BASE),
+        ortWasmJsUrl: sttUrl(ORT_WASM_JS_FILE),
+        ortWasmBinaryUrl: sttUrl(ORT_WASM_BINARY_FILE),
       },
     });
   }

@@ -60,7 +60,7 @@ window.runTest = async (paths) => {
   });
   worker.postMessage({
     type: "init",
-    config: { modelBaseUrl: paths.modelBaseAbsolute || (paths.modelBase ? new URL(paths.modelBase, location).href : null), ortWasmBase: new URL(paths.ortBase, location).href, backend: paths.backend, encoderQuant: paths.encoderQuant },
+    config: { modelBaseUrl: paths.modelBaseAbsolute || (paths.modelBase ? new URL(paths.modelBase, location).href : null), ortWasmJsUrl: new URL(paths.ortJs, location).href, ortWasmBinaryUrl: new URL(paths.ortBinary, location).href, backend: paths.backend, encoderQuant: paths.encoderQuant },
   });
   await ready;
   window.log("worker ready");
@@ -106,7 +106,10 @@ window.runTest = async (paths) => {
   const mic = await vad.MicVAD.new({
     model: "v5",
     baseAssetPath: new URL(paths.vadAssets, location).href,
-    onnxWASMBasePath: new URL(paths.vadOrt, location).href,
+    onnxWASMBasePath: {
+      mjs: new URL(paths.ortJs, location).href,
+      wasm: new URL(paths.ortBinary, location).href,
+    },
     getStream: async () => dest.stream,
     pauseStream: async () => {},
     resumeStream: async () => dest.stream,
@@ -157,8 +160,7 @@ const server = http.createServer(async (req, res) => {
 // random port would defeat cross-run caching in the persistent profile.
 await new Promise((r) => server.listen(Number(process.env.STT_SMOKE_PORT || 8873), r));
 
-const toLocal = (publicPath) =>
-  publicPath.replace("/plugins/resenha/javascripts/stt/", "/stt/");
+const toLocal = (file) => `/stt/${file}`;
 
 const context = await chromium.launchPersistentContext(
   path.join(pluginDir, ".local/stt-smoke-profile"),
@@ -174,6 +176,12 @@ const context = await chromium.launchPersistentContext(
   }
 );
 const page = await context.newPage();
+// The ort runtime must come from our vendored files, never a CDN — the
+// library silently falls back to jsdelivr when env.wasm.wasmPaths is unset.
+await page.route("**cdn.jsdelivr.net**", (route) => {
+  console.log("FAIL: attempted CDN fetch", route.request().url());
+  route.abort();
+});
 page.on("console", (m) => {
   const text = m.text();
   if (text.startsWith("[smoke]") || text.startsWith("[resenha]")) {
@@ -185,11 +193,11 @@ await page.goto(`http://127.0.0.1:${server.address().port}/`);
 
 try {
   const result = await page.evaluate((paths) => window.runTest(paths), {
-    worker: toLocal(manifest.STT_WORKER_PATH),
-    vadBundle: toLocal(manifest.VAD_BUNDLE_PATH),
-    ortBase: toLocal(manifest.ORT_WASM_BASE),
-    vadAssets: toLocal(manifest.VAD_ASSET_BASE),
-    vadOrt: toLocal(manifest.VAD_ORT_BASE),
+    worker: toLocal(manifest.STT_WORKER_FILE),
+    vadBundle: toLocal(manifest.VAD_BUNDLE_FILE),
+    ortJs: toLocal(manifest.ORT_WASM_JS_FILE),
+    ortBinary: toLocal(manifest.ORT_WASM_BINARY_FILE),
+    vadAssets: toLocal(manifest.VAD_ASSET_DIR),
     modelBase: process.env.STT_MODEL_DIR ? "/model/" : undefined,
     modelBaseAbsolute: process.env.STT_MODEL_BASE_URL || undefined,
     backend: process.env.STT_BACKEND || undefined,

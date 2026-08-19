@@ -1,3 +1,4 @@
+import { env as ortEnv } from "onnxruntime-web";
 import { fromUrls } from "parakeet.js";
 
 // Dedicated Worker owning the Parakeet ASR model for live subtitles. The
@@ -98,12 +99,21 @@ async function initialize(config) {
       throw new Error("WebGPU is not available in this browser");
     }
 
+    // Explicit URLs (not a directory prefix) for the ort runtime, set on
+    // the bundled ort instance directly: the library's wasmPaths option is
+    // never applied, and it falls back to a jsdelivr CDN when env is unset.
+    // The glue ships under a .js name — nginx serves .mjs as
+    // application/octet-stream, which module imports hard-reject.
+    ortEnv.wasm.wasmPaths = {
+      mjs: config.ortWasmJsUrl,
+      wasm: config.ortWasmBinaryUrl,
+    };
+
     const options = {
       backend: config.backend || "webgpu",
       encoderQuant: config.encoderQuant || "fp32",
       decoderQuant: config.decoderQuant || "int8",
       cpuThreads: 1,
-      wasmPaths: config.ortWasmBase,
       progress: ({ loaded, total, file }) =>
         self.postMessage({ type: "progress", loaded, total, file }),
     };
