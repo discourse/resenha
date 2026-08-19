@@ -160,8 +160,7 @@ const server = http.createServer(async (req, res) => {
 // random port would defeat cross-run caching in the persistent profile.
 await new Promise((r) => server.listen(Number(process.env.STT_SMOKE_PORT || 8873), r));
 
-const toLocal = (publicPath) =>
-  publicPath.replace("/plugins/resenha/javascripts/stt/", "/stt/");
+const toLocal = (file) => `/stt/${file}`;
 
 const context = await chromium.launchPersistentContext(
   path.join(pluginDir, ".local/stt-smoke-profile"),
@@ -194,11 +193,11 @@ await page.goto(`http://127.0.0.1:${server.address().port}/`);
 
 try {
   const result = await page.evaluate((paths) => window.runTest(paths), {
-    worker: toLocal(manifest.STT_WORKER_PATH),
-    vadBundle: toLocal(manifest.VAD_BUNDLE_PATH),
-    ortJs: toLocal(manifest.ORT_WASM_JS),
-    ortBinary: toLocal(manifest.ORT_WASM_BINARY),
-    vadAssets: toLocal(manifest.VAD_ASSET_BASE),
+    worker: toLocal(manifest.STT_WORKER_FILE),
+    vadBundle: toLocal(manifest.VAD_BUNDLE_FILE),
+    ortJs: toLocal(manifest.ORT_WASM_JS_FILE),
+    ortBinary: toLocal(manifest.ORT_WASM_BINARY_FILE),
+    vadAssets: toLocal(manifest.VAD_ASSET_DIR),
     modelBase: process.env.STT_MODEL_DIR ? "/model/" : undefined,
     modelBaseAbsolute: process.env.STT_MODEL_BASE_URL || undefined,
     backend: process.env.STT_BACKEND || undefined,

@@ -132,6 +132,14 @@ after_initialize do
     GlobalSetting.cdn_url.present? ? "#{GlobalSetting.cdn_url}#{path}" : path
   end
 
+  # Same serving constraints for the speech-to-text assets behind live
+  # subtitles. The Worker script itself is excluded client-side: workers
+  # must be same-origin.
+  add_to_serializer(:site, :resenha_stt_base_url) do
+    path = GlobalPath.path("/plugins/resenha/javascripts/stt")
+    GlobalSetting.cdn_url.present? ? "#{GlobalSetting.cdn_url}#{path}" : path
+  end
+
   Resenha::DefaultRoomSeeder.ensure! if SiteSetting.resenha_enabled?
 
   # This can't live in the on(:site_setting_changed) handler below: plugin
