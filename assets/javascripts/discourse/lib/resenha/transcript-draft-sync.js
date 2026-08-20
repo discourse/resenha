@@ -6,25 +6,23 @@ const SAVE_INTERVAL_MS = 10_000;
 // changed; the draft key is new_topic-prefixed so core's drafts list and
 // resume flow treat it as a normal new-topic draft.
 //
-// The composer owns the draft the moment the user opens it: from then on
-// (or after a sequence conflict, which means some other client wrote it)
-// background saves stop for good, so user edits are never clobbered by a
-// regenerated transcript.
+// The sync only ever runs while recording — opening the draft stops the
+// recording first, so the composer never competes with it. A sequence
+// conflict therefore means another client wrote the draft; that copy wins
+// and this sync goes quiet for good.
 export default class TranscriptDraftSync {
   #save;
   #buildData;
-  #isHeldByComposer;
   #timer = null;
   #saving = false;
   #dirty = false;
   #sequence = 0;
-  #handedOff = false;
+  #conflicted = false;
   #key = null;
 
-  constructor({ save, buildData, isHeldByComposer }) {
+  constructor({ save, buildData }) {
     this.#save = save;
     this.#buildData = buildData;
-    this.#isHeldByComposer = isHeldByComposer;
   }
 
   get key() {
@@ -40,7 +38,7 @@ export default class TranscriptDraftSync {
     this.#key = `new_topic_resenha_${roomId}_${startedAt}`;
     this.#sequence = 0;
     this.#dirty = false;
-    this.#handedOff = false;
+    this.#conflicted = false;
     this.#timer = setInterval(() => this.flush(), SAVE_INTERVAL_MS);
   }
 
@@ -63,11 +61,7 @@ export default class TranscriptDraftSync {
   }
 
   async flush() {
-    if (!this.#key || this.#handedOff || this.#saving || !this.#dirty) {
-      return;
-    }
-    if (this.#isHeldByComposer(this.#key)) {
-      this.#handedOff = true;
+    if (!this.#key || this.#conflicted || this.#saving || !this.#dirty) {
       return;
     }
 
@@ -83,7 +77,7 @@ export default class TranscriptDraftSync {
       this.#sequence = result?.draft_sequence ?? this.#sequence;
     } catch (error) {
       if (error?.jqXHR?.status === 409) {
-        this.#handedOff = true;
+        this.#conflicted = true;
       } else {
         // Transient failure (network, logout race): retry next tick.
         this.#dirty = true;

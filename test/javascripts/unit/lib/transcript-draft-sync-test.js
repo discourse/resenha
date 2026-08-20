@@ -8,7 +8,6 @@ module("Resenha | Unit | Lib | transcript-draft-sync", function (hooks) {
   hooks.beforeEach(function () {
     this.saves = [];
     this.data = { reply: "transcript", action: "createTopic" };
-    this.heldKeys = new Set();
     this.saveResult = () => ({ draft_sequence: this.saves.length });
 
     this.sync = new TranscriptDraftSync({
@@ -17,7 +16,6 @@ module("Resenha | Unit | Lib | transcript-draft-sync", function (hooks) {
         return Promise.resolve(this.saveResult());
       },
       buildData: () => this.data,
-      isHeldByComposer: (key) => this.heldKeys.has(key),
     });
   });
 
@@ -59,24 +57,6 @@ module("Resenha | Unit | Lib | transcript-draft-sync", function (hooks) {
     assert.strictEqual(this.saves.length, 0);
   });
 
-  test("hands off for good once the composer holds the draft", async function (assert) {
-    this.sync.start(5, 1000);
-    this.heldKeys.add(this.sync.key);
-    this.sync.markDirty();
-
-    await this.sync.flush();
-    assert.strictEqual(this.saves.length, 0);
-
-    this.heldKeys.clear();
-    this.sync.markDirty();
-    await this.sync.flush();
-    assert.strictEqual(
-      this.saves.length,
-      0,
-      "a handed-off draft is never overwritten again"
-    );
-  });
-
   test("a sequence conflict hands off permanently", async function (assert) {
     let attempts = 0;
     const sync = new TranscriptDraftSync({
@@ -85,7 +65,6 @@ module("Resenha | Unit | Lib | transcript-draft-sync", function (hooks) {
         return Promise.reject({ jqXHR: { status: 409 } });
       },
       buildData: () => this.data,
-      isHeldByComposer: () => false,
     });
     sync.start(7, 3000);
 
@@ -109,7 +88,6 @@ module("Resenha | Unit | Lib | transcript-draft-sync", function (hooks) {
           : Promise.resolve({ draft_sequence: 1 });
       },
       buildData: () => this.data,
-      isHeldByComposer: () => false,
     });
     sync.start(6, 2000);
 

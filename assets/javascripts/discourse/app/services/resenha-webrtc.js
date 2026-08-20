@@ -235,8 +235,6 @@ export default class ResenhaWebrtcService extends Service {
       save: (key, sequence, data) =>
         Draft.save(key, sequence, data, this.messageBus.clientId),
       buildData: () => this.#transcriptDraftData(),
-      isHeldByComposer: (key) =>
-        getOwner(this).lookup("service:composer")?.model?.draftKey === key,
     });
 
     this.#subtitles = new SubtitlesManager({
@@ -521,12 +519,13 @@ export default class ResenhaWebrtcService extends Service {
     // Entries survive the stop so the finished transcript can be consumed.
     this.#transcript.stop();
     // Flushes the last utterances into the draft; the draft itself stays.
-    this.#transcriptDraft.stop();
+    const flushed = this.#transcriptDraft.stop();
     if (this.currentUser?.id) {
       this.#subtitles.detach(roomId, this.currentUser.id);
     }
     this.#syncSttEngine();
     this.#broadcastTranscribingState(roomId, false);
+    return flushed;
   }
 
   // The consent signal: a roster flag every participant's client renders as
@@ -593,17 +592,16 @@ export default class ResenhaWebrtcService extends Service {
     };
   }
 
-  // Opens the auto-saved transcript draft in the composer. The server copy
-  // wins when it exists — the user may have edited the draft in an earlier
-  // session — and opening hands the draft off: background saves stop so the
-  // composer's own autosave takes over.
+  // Hands the transcript over to the composer: recording stops, the last
+  // utterances are flushed into the draft, and the draft opens for editing.
+  // The server copy wins — the user may have edited it in another session.
   async openTranscriptDraft() {
     const draftKey = this.#transcriptDraft.key;
     if (!draftKey) {
       return;
     }
 
-    await this.#transcriptDraft.flush();
+    await this.#stopTranscriptRecording();
 
     let draft = null;
     let draftSequence = this.#transcriptDraft.sequence;

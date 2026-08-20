@@ -497,6 +497,12 @@ export default class ResenhaRoomPage extends Component {
     );
   }
 
+  get transcriptDraftLabel() {
+    return this.transcribing
+      ? i18n("resenha.transcript.stop_and_open")
+      : i18n("resenha.transcript.draft_topic");
+  }
+
   @action
   draftTranscriptTopic(closeMenu) {
     closeMenu?.();
@@ -770,7 +776,7 @@ export default class ResenhaRoomPage extends Component {
                                 roomMenu.close
                               }}
                               @icon="far-file-lines"
-                              @label="resenha.transcript.draft_topic"
+                              @translatedLabel={{this.transcriptDraftLabel}}
                               class="btn-transparent resenha-room-page__transcript-draft"
                             />
                           </dropdown.item>
