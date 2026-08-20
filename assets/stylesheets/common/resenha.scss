@@ -992,6 +992,43 @@
   }
 }
 
+// Same quiet pill as the recording badge, minus the "live" red: the
+// transcript is local to this user, not a room-wide broadcast.
+.resenha-transcript-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 0.4em;
+  padding: 0.15em 0.65em;
+  border: 1px solid var(--primary-low-mid);
+  border-radius: 1em;
+  background: var(--primary-very-low);
+  color: var(--primary-high);
+  font-size: var(--font-down-1);
+  font-weight: normal;
+  line-height: var(--line-height-medium);
+  vertical-align: middle;
+
+  .d-icon {
+    width: 0.85em;
+    height: 0.85em;
+    color: var(--tertiary);
+    animation: resenha-recording-pulse 2s ease-in-out infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
+}
+
+.resenha-room-page__transcript-toggle {
+  &.--recording {
+    .d-icon {
+      color: var(--danger);
+    }
+  }
+}
+
 .resenha-call-controls__record {
   &.--recording {
     .d-icon {

@@ -38,6 +38,7 @@ import ResenhaChatPanel from "./chat-panel";
 import ResenhaRecordingBadge from "./recording-badge";
 import ResenhaRingingTile from "./ringing-tile";
 import ResenhaSpeakQueue from "./speak-queue";
+import ResenhaTranscriptBadge from "./transcript-badge";
 import ResenhaVideoTile from "./video-tile";
 
 const ROOM_MENU = "resenha-room-menu";
@@ -468,6 +469,46 @@ export default class ResenhaRoomPage extends Component {
     this.toggleChat();
   }
 
+  get transcriptAvailable() {
+    return this.resenhaWebrtc.subtitlesAvailable;
+  }
+
+  get transcribing() {
+    return this.resenhaWebrtc.isTranscribingRoom(this.room.id);
+  }
+
+  get transcriptToggleTitle() {
+    return this.transcribing
+      ? i18n("resenha.transcript.stop")
+      : i18n("resenha.transcript.start");
+  }
+
+  @action
+  toggleTranscriptFromMenu(closeMenu) {
+    closeMenu?.();
+    this.resenhaWebrtc.toggleTranscriptRecording(this.room.id);
+  }
+
+  get transcriptDraftable() {
+    return (
+      this.resenhaWebrtc.transcriptEntries.length > 0 &&
+      Number(this.resenhaWebrtc.transcriptEntriesRoomId) ===
+        Number(this.room.id)
+    );
+  }
+
+  get transcriptDraftLabel() {
+    return this.transcribing
+      ? i18n("resenha.transcript.stop_and_open")
+      : i18n("resenha.transcript.draft_topic");
+  }
+
+  @action
+  draftTranscriptTopic(closeMenu) {
+    closeMenu?.();
+    this.resenhaWebrtc.openTranscriptDraft();
+  }
+
   // Opened programmatically (not a nested <DMenu>) so the trigger stays a
   // normal full-width menu item, matching core's channel context menu.
   #openSubmenu(event, parentMenu, items, onSelect) {
@@ -532,6 +573,7 @@ export default class ResenhaRoomPage extends Component {
             <div class="resenha-room-page__title-row">
               <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
               <ResenhaRecordingBadge @room={{this.room}} />
+              <ResenhaTranscriptBadge @room={{this.room}} />
             </div>
             {{#if this.room.description_excerpt}}
               <p class="resenha-room-page__description">
@@ -706,6 +748,39 @@ export default class ResenhaRoomPage extends Component {
                             class="btn-transparent"
                           />
                         </dropdown.item>
+                      {{/if}}
+                      {{#if this.transcriptAvailable}}
+                        <dropdown.item>
+                          <DButton
+                            @action={{fn
+                              this.toggleTranscriptFromMenu
+                              roomMenu.close
+                            }}
+                            @icon={{if
+                              this.transcribing
+                              "stop"
+                              "closed-captioning"
+                            }}
+                            @translatedLabel={{this.transcriptToggleTitle}}
+                            class={{dConcatClass
+                              "btn-transparent resenha-room-page__transcript-toggle"
+                              (if this.transcribing "--recording")
+                            }}
+                          />
+                        </dropdown.item>
+                        {{#if this.transcriptDraftable}}
+                          <dropdown.item>
+                            <DButton
+                              @action={{fn
+                                this.draftTranscriptTopic
+                                roomMenu.close
+                              }}
+                              @icon="far-file-lines"
+                              @translatedLabel={{this.transcriptDraftLabel}}
+                              class="btn-transparent resenha-room-page__transcript-draft"
+                            />
+                          </dropdown.item>
+                        {{/if}}
                       {{/if}}
                       <dropdown.item>
                         <DButton

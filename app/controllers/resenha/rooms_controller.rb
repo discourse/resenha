@@ -344,6 +344,7 @@ module Resenha
       metadata[:is_video_on] = bool.cast(params[:video]) if params.key?(:video)
       metadata[:is_screen_sharing] = bool.cast(params[:screen]) if params.key?(:screen)
       metadata[:watching_video] = bool.cast(params[:watching]) if params.key?(:watching)
+      metadata[:is_transcribing] = bool.cast(params[:transcribing]) if params.key?(:transcribing)
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
 
       Resenha::RoomBroadcaster.publish_participants(@room)

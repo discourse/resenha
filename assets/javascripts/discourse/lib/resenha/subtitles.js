@@ -91,6 +91,10 @@ export default class SubtitlesManager {
   #jobCounter = 0;
   #utteranceCounter = 0;
   #retracted = new Set();
+  // Utterance start wall-clocks, captured at speech start. Kept manager-side
+  // (not round-tripped through the worker) and read back when captions
+  // arrive, since results lag speech by the transcription latency.
+  #utteranceStarts = new Map();
   #modelBaseUrl = null;
   // Set while the worker reports it can't transcribe faster than realtime:
   // interim snapshots are optional work, so they are shed first.
@@ -149,6 +153,7 @@ export default class SubtitlesManager {
         this.#removeTap(key);
       }
       this.#terminateWorker();
+      this.#utteranceStarts.clear();
     } else {
       // Best effort, window-only API: asks the browser to exempt the
       // origin's storage (the multi-GB cached model) from eviction. Modern
@@ -380,12 +385,17 @@ export default class SubtitlesManager {
         if (this.#retracted.delete(message.utteranceId)) {
           break;
         }
+        const startedAt = this.#utteranceStarts.get(message.utteranceId);
+        if (!message.interim) {
+          this.#utteranceStarts.delete(message.utteranceId);
+        }
         const text = message.text?.trim();
         if (text) {
           this.#onCaption(message.roomId, message.userId, {
             id: message.utteranceId,
             text,
             final: !message.interim,
+            startedAt,
           });
         } else if (!message.interim) {
           // An empty final (the model heard nothing intelligible) must clear
@@ -394,6 +404,7 @@ export default class SubtitlesManager {
             id: message.utteranceId,
             text: null,
             final: true,
+            startedAt,
           });
         }
         break;
@@ -416,6 +427,7 @@ export default class SubtitlesManager {
     }
     tap.speaking = true;
     tap.utteranceId = ++this.#utteranceCounter;
+    this.#noteUtteranceStart(tap.utteranceId);
     tap.frames = [];
     tap.bufferedSamples = 0;
     tap.samplesSinceInterim = 0;
@@ -477,6 +489,7 @@ export default class SubtitlesManager {
     tap.bufferedSamples = 0;
     if (!tap.utteranceId) {
       tap.utteranceId = ++this.#utteranceCounter;
+      this.#noteUtteranceStart(tap.utteranceId);
     }
     this.#postTranscribe(tap, audio, false);
   }
@@ -487,6 +500,7 @@ export default class SubtitlesManager {
     tap.speaking = false;
     tap.frames = [];
     tap.bufferedSamples = 0;
+    this.#utteranceStarts.delete(tap.utteranceId);
 
     if (!this.#live(tap, epoch) || !tap.interimSent) {
       return;
@@ -546,6 +560,15 @@ export default class SubtitlesManager {
     }
     this.#workerReady = false;
     this.#interimsSuspended = false;
+  }
+
+  // Entries are removed when the final caption (or a misfire) lands; the cap
+  // only guards against utterances whose results never arrive at all.
+  #noteUtteranceStart(utteranceId) {
+    if (this.#utteranceStarts.size > 200) {
+      this.#utteranceStarts.clear();
+    }
+    this.#utteranceStarts.set(utteranceId, Date.now());
   }
 
   #key(roomId, userId) {

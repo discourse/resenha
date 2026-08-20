@@ -23,6 +23,7 @@ import ResenhaRoomInfoModal from "../modal/resenha-room-info";
 import ResenhaCallControls from "./call-controls";
 import ResenhaRecordingBadge from "./recording-badge";
 import ResenhaRingingTile from "./ringing-tile";
+import ResenhaTranscriptBadge from "./transcript-badge";
 import ResenhaVideoTile from "./video-tile";
 
 const WIDGET_VIDEO_TILE_BUDGET = 4;
@@ -710,6 +711,7 @@ export default class ResenhaCallWidget extends Component {
                 class="resenha-call-widget__room-name"
               >{{this.room.name}}</span>
               <ResenhaRecordingBadge @room={{this.room}} />
+              <ResenhaTranscriptBadge @room={{this.room}} />
             </div>
           </header>
 

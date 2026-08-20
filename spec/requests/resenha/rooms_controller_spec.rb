@@ -713,6 +713,19 @@ RSpec.describe Resenha::RoomsController do
       expect(metadata[:watching_video]).to eq(true)
     end
 
+    it "sets and clears the transcribing flag" do
+      post "/resenha/rooms/#{room.id}/state.json", params: { transcribing: true }
+
+      expect(response.status).to eq(204)
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_transcribing]).to eq(true)
+
+      post "/resenha/rooms/#{room.id}/state.json", params: { transcribing: false }
+
+      metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
+      expect(metadata[:is_transcribing]).to eq(false)
+    end
+
     it "rejects video when the site setting is disabled" do
       SiteSetting.resenha_video_enabled = false
 

@@ -1,7 +1,10 @@
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
+import { getOwner } from "@ember/owner";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
+import Composer from "discourse/models/composer";
+import Draft from "discourse/models/draft";
 import { i18n } from "discourse-i18n";
 import { confirmMeshPrivacy } from "../../components/modal/resenha-mesh-privacy-warning";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
@@ -54,10 +57,14 @@ import {
 } from "../../lib/resenha/sound-effects";
 import { participantCanSpeak } from "../../lib/resenha/stage-roles";
 import SubtitlesManager from "../../lib/resenha/subtitles";
+import TranscriptDraftSync from "../../lib/resenha/transcript-draft-sync";
+import { transcriptToMarkdown } from "../../lib/resenha/transcript-markdown";
+import TranscriptRecorder from "../../lib/resenha/transcript-recorder";
 import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
+  @service messageBus;
   @service modal;
   @service siteSettings;
   @service("resenha-rooms") resenhaRooms;
@@ -80,6 +87,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked subtitlesLoading = false;
   @tracked subtitlesProgress = null;
   @tracked captions = [];
+  @tracked transcriptRevision = 0;
   @tracked voiceQuality = preferredVoiceQuality();
   @tracked cameraQuality = preferredCameraQuality();
   @tracked screenQuality = preferredScreenQuality();
@@ -125,6 +133,8 @@ export default class ResenhaWebrtcService extends Service {
   #heartbeat;
   #presencePending;
   #subtitles;
+  #transcript;
+  #transcriptDraft;
   #captionCounter = 0;
 
   constructor() {
@@ -214,9 +224,29 @@ export default class ResenhaWebrtcService extends Service {
       },
     });
 
+    this.#transcript = new TranscriptRecorder({
+      onChange: () => {
+        this.transcriptRevision++;
+        this.#transcriptDraft?.markDirty();
+      },
+    });
+
+    this.#transcriptDraft = new TranscriptDraftSync({
+      save: (key, sequence, data) =>
+        Draft.save(key, sequence, data, this.messageBus.clientId),
+      buildData: () => this.#transcriptDraftData(),
+    });
+
     this.#subtitles = new SubtitlesManager({
-      onCaption: (roomId, userId, utterance) =>
-        this.#upsertCaption(roomId, userId, utterance),
+      onCaption: (roomId, userId, utterance) => {
+        this.#upsertCaption(roomId, userId, utterance);
+        this.#transcript.record(
+          roomId,
+          userId,
+          this.#participantUsername(roomId, userId),
+          utterance
+        );
+      },
       onLoadingChange: () => {
         this.subtitlesLoading = this.#subtitles.loading;
         if (!this.subtitlesLoading) {
@@ -331,6 +361,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#localVideo.destroy();
     this.#localAudio.stop();
     this.#subtitles.destroy();
+    this.#transcriptDraft.dispose();
 
     this.#roomHandlerCallbacks.forEach((callback, roomId) => {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
@@ -426,22 +457,184 @@ export default class ResenhaWebrtcService extends Service {
     const enabled = !this.subtitlesEnabled;
     this.subtitlesEnabled = enabled;
     this.#subtitles.setPreference(enabled);
+    this.#syncSttEngine();
+  }
+
+  // --- Transcript recording ---
+
+  get transcriptRecording() {
+    this.transcriptRevision;
+    return this.#transcript.recording;
+  }
+
+  get transcriptRoomId() {
+    this.transcriptRevision;
+    return this.#transcript.roomId;
+  }
+
+  get transcriptEntries() {
+    this.transcriptRevision;
+    return this.#transcript.entries;
+  }
+
+  get transcriptEntriesRoomId() {
+    this.transcriptRevision;
+    return this.#transcript.entriesRoomId;
+  }
+
+  get transcriptStartedAt() {
+    this.transcriptRevision;
+    return this.#transcript.startedAt;
+  }
+
+  isTranscribingRoom(roomId) {
+    return (
+      this.transcriptRecording &&
+      Number(this.transcriptRoomId) === Number(roomId)
+    );
+  }
+
+  toggleTranscriptRecording(roomId) {
+    if (this.transcriptRecording) {
+      this.#stopTranscriptRecording();
+      return;
+    }
+
+    if (!this.subtitlesAvailable || !this.#activeRoomIds.has(roomId)) {
+      return;
+    }
+
+    this.#transcript.start(roomId);
+    this.#transcriptDraft.start(roomId, this.#transcript.startedAt);
+    this.#syncSttEngine();
+    this.#broadcastTranscribingState(roomId, true);
+  }
+
+  #stopTranscriptRecording() {
+    if (!this.#transcript.recording) {
+      return;
+    }
+
+    const roomId = this.#transcript.roomId;
+    // Entries survive the stop so the finished transcript can be consumed.
+    this.#transcript.stop();
+    // Flushes the last utterances into the draft; the draft itself stays.
+    const flushed = this.#transcriptDraft.stop();
+    if (this.currentUser?.id) {
+      this.#subtitles.detach(roomId, this.currentUser.id);
+    }
+    this.#syncSttEngine();
+    this.#broadcastTranscribingState(roomId, false);
+    return flushed;
+  }
+
+  // The consent signal: a roster flag every participant's client renders as
+  // a quiet badge. Best effort — the transcript itself never leaves this
+  // browser. Skipped when the room is already gone (leave teardown), since
+  // the roster dies with the membership.
+  #broadcastTranscribingState(roomId, transcribing) {
+    if (!this.#activeRoomIds.has(roomId)) {
+      return;
+    }
+
+    this.resenhaRooms?.setParticipantVideoState(roomId, this.currentUser?.id, {
+      is_transcribing: transcribing,
+    });
+    ajax(`/resenha/rooms/${roomId}/state`, {
+      type: "POST",
+      data: { transcribing },
+    }).catch(() => {});
+  }
+
+  // The speech-to-text pipeline serves two consumers: the caption overlay
+  // (subtitlesEnabled) and the transcript recorder. It runs while either
+  // wants it, tapping every remote stream plus — only while recording — the
+  // local mic, so the transcript includes the current user.
+  #syncSttEngine() {
+    const enabled = this.subtitlesEnabled || this.transcriptRecording;
     this.#subtitles.setEnabled(enabled, {
       modelBaseUrl: this.#subtitlesModelBaseUrl,
     });
 
-    if (enabled) {
-      for (const roomId of this.#activeRoomIds) {
-        for (const userId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
-          this.#subtitles.attach(
-            roomId,
-            userId,
-            this.#remoteStreamRegistry.streamFor(roomId, userId)
-          );
-        }
-      }
-    } else {
+    if (!enabled) {
       this.captions = [];
+      return;
+    }
+
+    for (const roomId of this.#activeRoomIds) {
+      for (const userId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
+        this.#subtitles.attach(
+          roomId,
+          userId,
+          this.#remoteStreamRegistry.streamFor(roomId, userId)
+        );
+      }
+    }
+    this.#syncLocalTranscriptTap();
+  }
+
+  #transcriptDraftData() {
+    const entries = this.#transcript.entries;
+    if (!entries.length) {
+      return null;
+    }
+
+    const room = this.resenhaRooms?.roomById(this.#transcript.entriesRoomId);
+    return {
+      reply: transcriptToMarkdown(entries, {
+        chatMarkup: !!this.siteSettings.chat_enabled,
+      }),
+      title: i18n("resenha.transcript.draft_title", {
+        room: room?.name ?? "",
+      }),
+      action: Composer.CREATE_TOPIC,
+      archetypeId: "regular",
+    };
+  }
+
+  // Hands the transcript over to the composer: recording stops, the last
+  // utterances are flushed into the draft, and the draft opens for editing.
+  // The server copy wins — the user may have edited it in another session.
+  async openTranscriptDraft() {
+    const draftKey = this.#transcriptDraft.key;
+    if (!draftKey) {
+      return;
+    }
+
+    await this.#stopTranscriptRecording();
+
+    let draft = null;
+    let draftSequence = this.#transcriptDraft.sequence;
+    try {
+      const result = await Draft.get(draftKey);
+      draft = result.draft;
+      draftSequence = result.draft_sequence ?? draftSequence;
+    } catch {
+      // fall through to the locally built copy
+    }
+    draft ||= this.#transcriptDraftData();
+    if (!draft) {
+      return;
+    }
+
+    getOwner(this)
+      .lookup("service:composer")
+      .open({ draft, draftKey, draftSequence });
+  }
+
+  // Mirrors the local pipeline into the transcriber while recording. Safe to
+  // call repeatedly: attach is a no-op for an unchanged track and rebuilds
+  // the tap when a device switch or suppression change replaced it.
+  #syncLocalTranscriptTap() {
+    if (!this.transcriptRecording || !this.currentUser?.id) {
+      return;
+    }
+
+    const roomId = this.transcriptRoomId;
+    if (this.localStream) {
+      this.#subtitles.attach(roomId, this.currentUser.id, this.localStream);
+    } else {
+      this.#subtitles.detach(roomId, this.currentUser.id);
     }
   }
 
@@ -480,10 +673,6 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    const participant = (
-      this.resenhaRooms?.roomById(roomId)?.active_participants || []
-    ).find((p) => Number(p?.id) === Number(userId));
-
     // Captions carry a display-name snapshot so a line outlives its speaker
     // leaving the roster.
     this.captions = [
@@ -493,7 +682,7 @@ export default class ResenhaWebrtcService extends Service {
         utteranceId,
         roomId,
         userId,
-        username: participant?.username,
+        username: this.#participantUsername(roomId, userId),
         text,
         interim: !final,
         at: Date.now(),
@@ -501,18 +690,27 @@ export default class ResenhaWebrtcService extends Service {
     ];
   }
 
-  // Model or runtime failures turn the toggle back off (mirroring the noise
-  // suppression contract) so the modal never shows an enabled-but-dead state.
+  #participantUsername(roomId, userId) {
+    return (
+      this.resenhaRooms?.roomById(roomId)?.active_participants || []
+    ).find((p) => Number(p?.id) === Number(userId))?.username;
+  }
+
+  // Model or runtime failures turn the toggles back off (mirroring the noise
+  // suppression contract) so the UI never shows an enabled-but-dead state.
   #handleSubtitlesError(error) {
     // eslint-disable-next-line no-console
     console.warn("[resenha] subtitles failed", error);
 
-    if (!this.subtitlesEnabled) {
+    if (!this.subtitlesEnabled && !this.transcriptRecording) {
       return;
     }
 
     this.subtitlesEnabled = false;
     this.#subtitles.setPreference(false);
+    if (this.#transcript.recording) {
+      this.#transcript.stop();
+    }
     this.#subtitles.setEnabled(false);
     this.captions = [];
     this.toasts.error({
@@ -1610,6 +1808,12 @@ export default class ResenhaWebrtcService extends Service {
     this.#signaling.clearForRoom(roomId);
     this.#signaling.clearHttpQueue(roomId);
     this.#roomMessageQueue.clear(roomId);
+
+    // Leaving the recorded room ends the recording; the transcript gathered
+    // so far is kept for consumption.
+    if (this.isTranscribingRoom(roomId)) {
+      this.#stopTranscriptRecording();
+    }
   }
 
   #handleRoomMessage(roomId, payload) {
@@ -2152,6 +2356,8 @@ export default class ResenhaWebrtcService extends Service {
         this.#audioMonitor.teardown(roomId, this.currentUser.id);
       }
     }
+
+    this.#syncLocalTranscriptTap();
   }
 
   #applyLocalTrackState(stream) {
