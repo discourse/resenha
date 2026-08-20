@@ -6,8 +6,7 @@
 // Mirrors the NoiseSuppressionManager contract: setup(raw stream) returns
 // the processed stream; the caller keeps ownership of the raw stream.
 
-import getURL from "discourse/lib/get-url";
-import Site from "discourse/models/site";
+import { getURLWithCDN } from "discourse/lib/get-url";
 
 const ENABLED_KEY = "resenha_video_blur_enabled";
 const AMOUNT_KEY = "resenha_video_blur_amount";
@@ -33,16 +32,16 @@ let segmenterPromise = null;
 // all users of the shared segmenter.
 let lastTimestamp = 0;
 
-// The mediapipe files sit in the plugin's public dir, which static asset
-// CDNs (getURLWithCDN) never receive; the serialized base rides the
-// app-proxying CDN instead. Anchor to the page URL because this compiled
-// chunk may itself be served from a CDN origin, and a dynamic import() of
-// a bare path would resolve against the chunk's origin, not the site's.
+// The mediapipe files ride the app-proxying CDN (getURLWithCDN's cdn), which
+// serves the plugin's public dir. Anchor to the page URL because this
+// compiled chunk may itself be served from a CDN origin, and a dynamic
+// import() of a bare path would resolve against the chunk's origin, not the
+// site's.
 function mediapipeBase() {
-  const base =
-    Site.current()?.resenha_mediapipe_base_url ||
-    getURL("/plugins/resenha/javascripts/mediapipe");
-  return new URL(base, window.location).href;
+  return new URL(
+    getURLWithCDN("/plugins/resenha/javascripts/mediapipe"),
+    window.location
+  ).href;
 }
 
 async function loadSegmenter() {

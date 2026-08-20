@@ -1,5 +1,4 @@
-import getURL from "discourse/lib/get-url";
-import Site from "discourse/models/site";
+import getURL, { getURLWithCDN } from "discourse/lib/get-url";
 import {
   ORT_WASM_BINARY_FILE,
   ORT_WASM_JS_FILE,
@@ -47,13 +46,11 @@ let vadModulePromise = null;
 
 const STT_PATH = "/plugins/resenha/javascripts/stt";
 
-// Runtime assets ride the app-proxying CDN when one is configured (the
-// mediapipe pattern: the files live in the app's public dir, never on a
-// static asset CDN). Everything is absolutized against the page URL because
-// this compiled chunk may itself be served from a CDN origin.
+// Runtime assets ride the app-proxying CDN (getURLWithCDN's cdn), which
+// serves the plugin's public dir. Everything is absolutized against the page
+// URL because this compiled chunk may itself be served from a CDN origin.
 function sttUrl(file) {
-  const base = Site.current()?.resenha_stt_base_url || getURL(STT_PATH);
-  return new URL(`${base.replace(/\/$/, "")}/${file}`, window.location).href;
+  return new URL(getURLWithCDN(`${STT_PATH}/${file}`), window.location).href;
 }
 
 // The one exception: workers must be same-origin, so the (small) worker

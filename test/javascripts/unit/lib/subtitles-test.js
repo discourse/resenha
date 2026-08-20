@@ -103,8 +103,6 @@ function fakeVadModule() {
 }
 
 module("Resenha | Unit | Lib | subtitles", function (hooks) {
-  // The manager resolves asset URLs via Site.current(), which needs the
-  // application container even though the tests inject fake loaders.
   setupTest(hooks);
 
   hooks.beforeEach(function () {

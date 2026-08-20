@@ -1,4 +1,4 @@
-import getURL from "discourse/lib/get-url";
+import { nsUrl } from "./ns-engines";
 
 // How long setup() waits for the worklet's "ready" handshake. Instantiating
 // the (already fetched) wasm and warming the model up takes well under a
@@ -21,38 +21,38 @@ export class SupersededError extends Error {
 
 const assetPromises = new Map();
 
-function fetchBytes(path) {
-  if (!assetPromises.has(path)) {
+function fetchBytes(file) {
+  if (!assetPromises.has(file)) {
     assetPromises.set(
-      path,
-      fetch(getURL(path))
+      file,
+      fetch(nsUrl(file))
         .then((response) => {
           if (!response.ok) {
-            throw new Error(`${path} fetch failed: ${response.status}`);
+            throw new Error(`${file} fetch failed: ${response.status}`);
           }
           return response.arrayBuffer();
         })
         .catch((error) => {
           // A failed fetch is not cached, so a flaky connection doesn't
           // brick the feature until reload.
-          assetPromises.delete(path);
+          assetPromises.delete(file);
           throw error;
         })
     );
   }
-  return assetPromises.get(path);
+  return assetPromises.get(file);
 }
 
 // Fetching an engine's model once and keeping the bytes lets re-enables and
 // device switches skip the network entirely.
 export function prefetchEngineAssets(engine) {
-  const assets = { wasm: fetchBytes(engine.wasmPath) };
-  if (engine.modelPath) {
-    assets.model = fetchBytes(engine.modelPath);
+  const assets = { wasm: fetchBytes(engine.wasmFile) };
+  if (engine.modelFile) {
+    assets.model = fetchBytes(engine.modelFile);
   }
   return Promise.all(Object.values(assets)).then(async () => ({
     wasm: await assets.wasm,
-    model: engine.modelPath ? await assets.model : undefined,
+    model: engine.modelFile ? await assets.model : undefined,
   }));
 }
 
@@ -131,7 +131,9 @@ export default class NoiseSuppressionManager {
     }
 
     try {
-      await audioContext.audioWorklet.addModule(getURL(engine.workletPath));
+      // Worklet modules (unlike Workers) may load cross-origin, so the
+      // bundle rides the CDN too.
+      await audioContext.audioWorklet.addModule(nsUrl(engine.workletFile));
     } catch (error) {
       abort();
       throw error;
