@@ -63,6 +63,10 @@ class ResenhaWebrtcStub extends Service {
     return "connected";
   }
 
+  isTranscribingRoom() {
+    return false;
+  }
+
   remoteStreamFor(roomId, userId) {
     return this.videoStreams.get(`${roomId}:${userId}`);
   }

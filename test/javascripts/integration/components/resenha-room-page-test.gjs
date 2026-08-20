@@ -48,6 +48,10 @@ class ResenhaWebrtcStub extends Service {
     return false;
   }
 
+  isTranscribingRoom() {
+    return false;
+  }
+
   setWatching() {}
   join() {}
   leave() {}
