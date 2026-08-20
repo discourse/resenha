@@ -24,6 +24,7 @@ import {
 } from "../../lib/resenha/fullscreen";
 import { activeRingingEntries } from "../../lib/resenha/ringing";
 import { speakQueue } from "../../lib/resenha/speak-queue";
+import { transcriptToMarkdown } from "../../lib/resenha/transcript-markdown";
 import {
   bestRowHeight,
   DEFAULT_TILE_ASPECT,
@@ -38,6 +39,7 @@ import ResenhaChatPanel from "./chat-panel";
 import ResenhaRecordingBadge from "./recording-badge";
 import ResenhaRingingTile from "./ringing-tile";
 import ResenhaSpeakQueue from "./speak-queue";
+import ResenhaTranscriptBadge from "./transcript-badge";
 import ResenhaVideoTile from "./video-tile";
 
 const ROOM_MENU = "resenha-room-menu";
@@ -51,8 +53,10 @@ const LAYOUT_TILED = "tiled";
 
 export default class ResenhaRoomPage extends Component {
   @service capabilities;
+  @service composer;
   @service currentUser;
   @service menu;
+  @service siteSettings;
   @service modal;
   @service routeHistory;
   @service router;
@@ -482,22 +486,29 @@ export default class ResenhaRoomPage extends Component {
       : i18n("resenha.transcript.start");
   }
 
-  // While the model is still loading/downloading there would otherwise be no
-  // feedback at all when captions are off, so the badge doubles as progress.
-  get transcriptBadgeLabel() {
-    if (this.resenhaWebrtc.subtitlesLoading) {
-      const percent = this.resenhaWebrtc.subtitlesProgress;
-      return percent !== null
-        ? i18n("resenha.subtitles.downloading", { percent })
-        : i18n("resenha.subtitles.loading");
-    }
-    return i18n("resenha.transcript.indicator");
-  }
-
   @action
   toggleTranscriptFromMenu(closeMenu) {
     closeMenu?.();
     this.resenhaWebrtc.toggleTranscriptRecording(this.room.id);
+  }
+
+  get transcriptDraftable() {
+    return (
+      this.resenhaWebrtc.transcriptEntries.length > 0 &&
+      Number(this.resenhaWebrtc.transcriptEntriesRoomId) ===
+        Number(this.room.id)
+    );
+  }
+
+  @action
+  draftTranscriptTopic(closeMenu) {
+    closeMenu?.();
+    this.composer.openNewTopic({
+      title: i18n("resenha.transcript.draft_title", { room: this.room.name }),
+      body: transcriptToMarkdown(this.resenhaWebrtc.transcriptEntries, {
+        chatMarkup: !!this.siteSettings.chat_enabled,
+      }),
+    });
   }
 
   // Opened programmatically (not a nested <DMenu>) so the trigger stays a
@@ -564,17 +575,7 @@ export default class ResenhaRoomPage extends Component {
             <div class="resenha-room-page__title-row">
               <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
               <ResenhaRecordingBadge @room={{this.room}} />
-              {{#if this.transcribing}}
-                <span
-                  class="resenha-transcript-badge"
-                  title={{i18n "resenha.transcript.indicator_title"}}
-                >
-                  {{dIcon "closed-captioning"}}
-                  <span class="resenha-transcript-badge__label">
-                    {{this.transcriptBadgeLabel}}
-                  </span>
-                </span>
-              {{/if}}
+              <ResenhaTranscriptBadge @room={{this.room}} />
             </div>
             {{#if this.room.description_excerpt}}
               <p class="resenha-room-page__description">
@@ -769,6 +770,19 @@ export default class ResenhaRoomPage extends Component {
                             }}
                           />
                         </dropdown.item>
+                        {{#if this.transcriptDraftable}}
+                          <dropdown.item>
+                            <DButton
+                              @action={{fn
+                                this.draftTranscriptTopic
+                                roomMenu.close
+                              }}
+                              @icon="far-file-lines"
+                              @label="resenha.transcript.draft_topic"
+                              class="btn-transparent resenha-room-page__transcript-draft"
+                            />
+                          </dropdown.item>
+                        {{/if}}
                       {{/if}}
                       <dropdown.item>
                         <DButton

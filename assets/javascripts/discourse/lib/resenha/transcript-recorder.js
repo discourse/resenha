@@ -10,6 +10,9 @@ export default class TranscriptRecorder {
   #entries = [];
   #onChange;
   #roomId = null;
+  // Which room the kept entries belong to; unlike #roomId it survives stop()
+  // so a consumer can still attribute the finished transcript.
+  #entriesRoomId = null;
   #startedAt = null;
 
   constructor({ onChange }) {
@@ -24,6 +27,10 @@ export default class TranscriptRecorder {
     return this.#roomId;
   }
 
+  get entriesRoomId() {
+    return this.#entriesRoomId;
+  }
+
   get startedAt() {
     return this.#startedAt;
   }
@@ -34,6 +41,7 @@ export default class TranscriptRecorder {
 
   start(roomId) {
     this.#roomId = roomId;
+    this.#entriesRoomId = roomId;
     this.#startedAt = Date.now();
     this.#entries = [];
     this.#onChange();

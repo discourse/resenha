@@ -176,6 +176,10 @@ en:
         stop: "Stop transcript recording"
         indicator: "Transcribing"
         indicator_title: "You are recording a transcript of this call on your device."
+        indicator_title_other: "%{usernames} is recording a transcript of this call."
+        draft_topic: "Draft topic from transcript"
+        draft_title: "Call transcript: %{room}"
+        unknown_speaker: "unknown speaker"
       stage:
         promoted_to_speaker: "You've been made a speaker."
         demoted_to_listener: "You've been moved to listeners."

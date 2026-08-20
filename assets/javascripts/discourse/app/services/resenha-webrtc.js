@@ -460,6 +460,11 @@ export default class ResenhaWebrtcService extends Service {
     return this.#transcript.entries;
   }
 
+  get transcriptEntriesRoomId() {
+    this.transcriptRevision;
+    return this.#transcript.entriesRoomId;
+  }
+
   get transcriptStartedAt() {
     this.transcriptRevision;
     return this.#transcript.startedAt;
@@ -484,6 +489,7 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#transcript.start(roomId);
     this.#syncSttEngine();
+    this.#broadcastTranscribingState(roomId, true);
   }
 
   #stopTranscriptRecording() {
@@ -498,6 +504,25 @@ export default class ResenhaWebrtcService extends Service {
       this.#subtitles.detach(roomId, this.currentUser.id);
     }
     this.#syncSttEngine();
+    this.#broadcastTranscribingState(roomId, false);
+  }
+
+  // The consent signal: a roster flag every participant's client renders as
+  // a quiet badge. Best effort — the transcript itself never leaves this
+  // browser. Skipped when the room is already gone (leave teardown), since
+  // the roster dies with the membership.
+  #broadcastTranscribingState(roomId, transcribing) {
+    if (!this.#activeRoomIds.has(roomId)) {
+      return;
+    }
+
+    this.resenhaRooms?.setParticipantVideoState(roomId, this.currentUser?.id, {
+      is_transcribing: transcribing,
+    });
+    ajax(`/resenha/rooms/${roomId}/state`, {
+      type: "POST",
+      data: { transcribing },
+    }).catch(() => {});
   }
 
   // The speech-to-text pipeline serves two consumers: the caption overlay

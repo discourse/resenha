@@ -105,6 +105,11 @@ module("Resenha | Unit | Lib | transcript-recorder", function (hooks) {
     this.recorder.stop();
     assert.false(this.recorder.recording);
     assert.strictEqual(this.recorder.entries.length, 1, "entries survive stop");
+    assert.strictEqual(
+      this.recorder.entriesRoomId,
+      1,
+      "the entries' room survives stop"
+    );
 
     this.recorder.record(1, 42, "alice", {
       id: 8,
