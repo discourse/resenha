@@ -28,6 +28,14 @@ function sortParticipants(participants) {
   });
 }
 
+// Speaking flips several times per utterance, so it lives outside the room
+// payloads: mutating one tracked flag re-renders only the bindings that read
+// it, instead of invalidating `rooms` and rebuilding every sidebar link and
+// tile on each flip.
+class ParticipantSpeakingState {
+  @tracked speaking = false;
+}
+
 export default class ResenhaRoomsService extends Service {
   @service currentUser;
   @service messageBus;
@@ -41,6 +49,7 @@ export default class ResenhaRoomsService extends Service {
   #roomsBySlug = new Map();
   #roomSubscriptions = new Map();
   #roomHandlers = new Map();
+  #speakingByKey = new Map();
 
   constructor() {
     super(...arguments);
@@ -266,10 +275,7 @@ export default class ResenhaRoomsService extends Service {
       return;
     }
 
-    room.active_participants = sortParticipants([
-      ...existing,
-      { ...participant, is_speaking: participant.is_speaking || false },
-    ]);
+    room.active_participants = sortParticipants([...existing, participant]);
     this.rooms = [...this.rooms];
   }
 
@@ -293,41 +299,29 @@ export default class ResenhaRoomsService extends Service {
     }
 
     room.active_participants = filtered;
+    this.setParticipantSpeaking(roomId, targetId, false);
     this.rooms = [...this.rooms];
   }
 
+  isParticipantSpeaking(roomId, userId) {
+    return this.#speakingState(roomId, userId).speaking;
+  }
+
   setParticipantSpeaking(roomId, userId, speaking) {
-    const targetId = Number(userId);
-    if (!targetId) {
-      return;
+    const state = this.#speakingState(roomId, userId);
+    if (state.speaking !== !!speaking) {
+      state.speaking = !!speaking;
     }
+  }
 
-    const room = this.#roomsById.get(roomId);
-    if (!room || !Array.isArray(room.active_participants)) {
-      return;
+  #speakingState(roomId, userId) {
+    const key = `${roomId}:${Number(userId)}`;
+    let state = this.#speakingByKey.get(key);
+    if (!state) {
+      state = new ParticipantSpeakingState();
+      this.#speakingByKey.set(key, state);
     }
-
-    let changed = false;
-    room.active_participants = room.active_participants.map((participant) => {
-      const participantId = Number(participant?.id);
-      if (!participantId || participantId !== targetId) {
-        return participant;
-      }
-
-      if (!!participant.is_speaking === speaking) {
-        return participant;
-      }
-
-      changed = true;
-      return {
-        ...participant,
-        is_speaking: speaking,
-      };
-    });
-
-    if (changed) {
-      this.rooms = [...this.rooms];
-    }
+    return state;
   }
 
   setParticipantMuted(roomId, userId, muted) {
@@ -553,7 +547,6 @@ export default class ResenhaRoomsService extends Service {
         .map((participant) => [
           Number(participant.id),
           {
-            is_speaking: participant.is_speaking === true,
             is_muted: participant.is_muted === true,
             is_deafened: participant.is_deafened === true,
             is_video_on: participant.is_video_on === true,
@@ -573,7 +566,6 @@ export default class ResenhaRoomsService extends Service {
 
       return {
         ...participant,
-        is_speaking: previousState.is_speaking,
         is_muted: participant.is_muted ?? previousState.is_muted,
         is_deafened: participant.is_deafened ?? previousState.is_deafened,
         is_video_on: participant.is_video_on ?? previousState.is_video_on,
@@ -584,6 +576,14 @@ export default class ResenhaRoomsService extends Service {
         idle_state: participant.idle_state ?? previousState.idle_state,
       };
     });
+    const mergedIds = new Set(merged.map((p) => Number(p?.id)));
+    previous.forEach((participant) => {
+      const participantId = Number(participant?.id);
+      if (participantId && !mergedIds.has(participantId)) {
+        this.setParticipantSpeaking(roomId, participantId, false);
+      }
+    });
+
     room.active_participants = sortParticipants(merged);
     this.rooms = [...this.rooms];
   }

@@ -161,10 +161,8 @@ class ParticipantLink {
       classes.push("resenha-sidebar-participant--listeners-start");
     }
 
-    if (this.participant.is_speaking) {
-      classes.push("resenha-sidebar-participant--speaking");
-    }
-
+    // No speaking state here: it's detected client-side from live media
+    // streams, which anonymous visitors never hold.
     if (this.participant.is_muted) {
       classes.push("resenha-sidebar-participant--muted");
     }

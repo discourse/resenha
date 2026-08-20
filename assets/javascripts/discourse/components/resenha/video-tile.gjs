@@ -26,6 +26,7 @@ import ResenhaParticipantSidebarContextMenu from "../resenha-participant-sidebar
 
 export default class ResenhaVideoTile extends Component {
   @service menu;
+  @service resenhaRooms;
   @service resenhaWebrtc;
 
   @tracked aspect = null;
@@ -36,6 +37,13 @@ export default class ResenhaVideoTile extends Component {
 
   get participant() {
     return this.args.participant;
+  }
+
+  get isSpeaking() {
+    return this.resenhaRooms.isParticipantSpeaking(
+      this.args.room?.id,
+      this.participant.id
+    );
   }
 
   get tileStyle() {
@@ -154,7 +162,7 @@ export default class ResenhaVideoTile extends Component {
         (if this.showVideo "--video" "--avatar")
         (if (eq this.publishingKind "screen") "--screen")
         (if @isSelf "--self")
-        (if this.participant.is_speaking "--speaking")
+        (if this.isSpeaking "--speaking")
       }}
       data-user-id={{this.participant.id}}
       style={{this.tileStyle}}

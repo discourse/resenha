@@ -283,7 +283,10 @@ export default {
 
             get #isAudiblySpeaking() {
               return (
-                this.participant.is_speaking &&
+                roomsService.isParticipantSpeaking(
+                  this.room.id,
+                  this.participant.id
+                ) &&
                 !this.participant.is_muted &&
                 !this.participant.is_deafened
               );

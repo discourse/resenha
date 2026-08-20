@@ -2,11 +2,11 @@ const SAMPLE_INTERVAL_MS = 50;
 const RELEASE_HOLD_MS = 400;
 const THRESHOLD_STORAGE_KEY = "resenha_gate_threshold";
 
-// Full scale for the sensitivity slider and the settings meter, in the same
-// byte time-domain RMS units the audio monitor uses (speech peaks land
-// mid-range, its speaking threshold is 8). Because both the meter and the
-// slider map linearly onto this value, a slider value of N sits at N% of the
-// meter — the threshold marker lines up with no extra conversion.
+// Full scale for the sensitivity slider and the settings meter, in byte
+// time-domain RMS units (speech peaks land mid-range). Because both the
+// meter and the slider map linearly onto this value, a slider value of N
+// sits at N% of the meter — the threshold marker lines up with no extra
+// conversion.
 export const METER_MAX_RMS = 50;
 
 export function sliderToRms(value) {
