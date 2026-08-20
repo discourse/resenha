@@ -62,6 +62,83 @@ module("Resenha | Unit | Lib | audio-monitor", function (hooks) {
     window.cancelAnimationFrame = this.originalCancelAnimationFrame;
   });
 
+  test("detects quiet speech and holds through short pauses", async function (assert) {
+    assert.timeout(5000);
+
+    const testContext = this;
+    this.amplitude = 0.0005;
+
+    class FloatFakeAudioContext {
+      createMediaStreamSource() {
+        return {
+          connect(target) {
+            return target;
+          },
+          disconnect() {},
+        };
+      }
+
+      createAnalyser() {
+        return {
+          fftSize: 0,
+          frequencyBinCount: 32,
+          getFloatTimeDomainData(array) {
+            array.fill(testContext.amplitude);
+          },
+        };
+      }
+
+      close() {
+        return Promise.resolve();
+      }
+    }
+
+    window.AudioContext = FloatFakeAudioContext;
+    window.webkitAudioContext = FloatFakeAudioContext;
+
+    const speakingChanges = [];
+    const monitor = new AudioMonitor({
+      onSpeakingChange: (roomId, userId, speaking) => {
+        speakingChanges.push(speaking);
+      },
+      onVoiceActivity: () => {},
+    });
+
+    const stream = {
+      getAudioTracks() {
+        return [{ kind: "audio" }];
+      },
+    };
+
+    monitor.ensure(1, 1, stream, true);
+
+    // Let the noise floor adapt down to near-silence.
+    await wait(800);
+    assert.deepEqual(speakingChanges, [], "silence never reads as speech");
+
+    // Well below the old fixed threshold (byte RMS 8 ≈ 0.06), but far above
+    // the adapted noise floor.
+    this.amplitude = 0.02;
+    await wait(300);
+    assert.deepEqual(speakingChanges, [true], "quiet speech starts speaking");
+
+    // A between-words pause shorter than the hangover keeps the state on.
+    this.amplitude = 0.0005;
+    await wait(300);
+    assert.deepEqual(
+      speakingChanges,
+      [true],
+      "short pauses don't flap the indicator"
+    );
+
+    monitor.teardown(1, 1);
+    assert.deepEqual(
+      speakingChanges,
+      [true, false],
+      "teardown clears the speaking state"
+    );
+  });
+
   test("keeps sampling voice activity when animation frames are stalled", async function (assert) {
     assert.timeout(2000);
 

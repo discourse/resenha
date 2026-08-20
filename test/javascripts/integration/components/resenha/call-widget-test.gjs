@@ -28,6 +28,10 @@ class ResenhaRoomsStub extends Service {
       return { ...room, active_participants: participants };
     });
   }
+
+  isParticipantSpeaking() {
+    return false;
+  }
 }
 
 class ResenhaWebrtcStub extends Service {

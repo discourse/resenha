@@ -13,6 +13,10 @@ class ResenhaRoomsStub extends Service {
   roomById(id) {
     return this.rooms.find((room) => Number(room.id) === Number(id));
   }
+
+  isParticipantSpeaking() {
+    return false;
+  }
 }
 
 class ResenhaWebrtcStub extends Service {
