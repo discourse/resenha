@@ -19,12 +19,14 @@ class FakeWorker {
   onerror = null;
   terminated = false;
   jobs = [];
+  messages = [];
 
   constructor() {
     FakeWorker.instances.push(this);
   }
 
   postMessage(message) {
+    this.messages.push(message);
     if (message.type === "init") {
       Promise.resolve().then(() =>
         this.onmessage?.({ data: { type: "ready" } })
@@ -256,6 +258,55 @@ module("Resenha | Unit | Lib | subtitles", function (hooks) {
     vad.misfire();
 
     assert.propContains(this.captions.at(-1), { text: null, final: true });
+  });
+
+  test("detaching flushes the speaker's queue and drops in-flight captions", async function (assert) {
+    this.manager.setEnabled(true);
+    await this.manager.attach(1, 42, createFakeStream("s1"));
+    const worker = FakeWorker.instances[0];
+
+    // The caption for this utterance is still "in flight" (a microtask away)
+    // when the tap is detached.
+    FakeVad.instances[0].speak();
+    this.manager.detach(1, 42);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.deepEqual(this.captions, [], "stale caption is dropped");
+    assert.propContains(
+      worker.messages.at(-1),
+      { type: "flush", roomId: 1, userId: 42 },
+      "the worker is told to discard the speaker's queued jobs"
+    );
+  });
+
+  test("a slow-throughput signal sheds interim passes until recovery", async function (assert) {
+    this.manager.setEnabled(true);
+    await this.manager.attach(1, 42, createFakeStream("s1"));
+    const vad = FakeVad.instances[0];
+    const worker = FakeWorker.instances[0];
+
+    worker.emit({ type: "throughput", slow: true });
+    vad.speakFrames(4 * 16000);
+    assert.deepEqual(
+      worker.jobs.filter((job) => job.interim),
+      [],
+      "no provisional snapshots while the model is behind"
+    );
+
+    worker.emit({ type: "throughput", slow: false });
+    vad.emitFrames(4 * 16000);
+    assert.true(
+      worker.jobs.filter((job) => job.interim).length >= 1,
+      "provisional snapshots resume once throughput recovers"
+    );
+
+    vad.options.onSpeechEnd(new Float32Array(4 * 16000));
+    assert.strictEqual(
+      worker.jobs.filter((job) => !job.interim).length,
+      1,
+      "the final pass is never shed"
+    );
   });
 
   test("short utterances still reach the worker with identity attached", async function (assert) {
