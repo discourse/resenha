@@ -177,7 +177,7 @@ en:
         indicator: "Transcribing"
         indicator_title: "You are recording a transcript of this call on your device."
         indicator_title_other: "%{usernames} is recording a transcript of this call."
-        draft_topic: "Draft topic from transcript"
+        draft_topic: "Open transcript draft"
         draft_title: "Call transcript: %{room}"
         unknown_speaker: "unknown speaker"
       stage:

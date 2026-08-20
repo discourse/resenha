@@ -24,7 +24,6 @@ import {
 } from "../../lib/resenha/fullscreen";
 import { activeRingingEntries } from "../../lib/resenha/ringing";
 import { speakQueue } from "../../lib/resenha/speak-queue";
-import { transcriptToMarkdown } from "../../lib/resenha/transcript-markdown";
 import {
   bestRowHeight,
   DEFAULT_TILE_ASPECT,
@@ -53,10 +52,8 @@ const LAYOUT_TILED = "tiled";
 
 export default class ResenhaRoomPage extends Component {
   @service capabilities;
-  @service composer;
   @service currentUser;
   @service menu;
-  @service siteSettings;
   @service modal;
   @service routeHistory;
   @service router;
@@ -503,12 +500,7 @@ export default class ResenhaRoomPage extends Component {
   @action
   draftTranscriptTopic(closeMenu) {
     closeMenu?.();
-    this.composer.openNewTopic({
-      title: i18n("resenha.transcript.draft_title", { room: this.room.name }),
-      body: transcriptToMarkdown(this.resenhaWebrtc.transcriptEntries, {
-        chatMarkup: !!this.siteSettings.chat_enabled,
-      }),
-    });
+    this.resenhaWebrtc.openTranscriptDraft();
   }
 
   // Opened programmatically (not a nested <DMenu>) so the trigger stays a

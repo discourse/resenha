@@ -1,7 +1,10 @@
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
+import { getOwner } from "@ember/owner";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
+import Composer from "discourse/models/composer";
+import Draft from "discourse/models/draft";
 import { i18n } from "discourse-i18n";
 import { confirmMeshPrivacy } from "../../components/modal/resenha-mesh-privacy-warning";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
@@ -54,11 +57,14 @@ import {
 } from "../../lib/resenha/sound-effects";
 import { participantCanSpeak } from "../../lib/resenha/stage-roles";
 import SubtitlesManager from "../../lib/resenha/subtitles";
+import TranscriptDraftSync from "../../lib/resenha/transcript-draft-sync";
+import { transcriptToMarkdown } from "../../lib/resenha/transcript-markdown";
 import TranscriptRecorder from "../../lib/resenha/transcript-recorder";
 import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
   @service currentUser;
+  @service messageBus;
   @service modal;
   @service siteSettings;
   @service("resenha-rooms") resenhaRooms;
@@ -128,6 +134,7 @@ export default class ResenhaWebrtcService extends Service {
   #presencePending;
   #subtitles;
   #transcript;
+  #transcriptDraft;
   #captionCounter = 0;
 
   constructor() {
@@ -218,7 +225,18 @@ export default class ResenhaWebrtcService extends Service {
     });
 
     this.#transcript = new TranscriptRecorder({
-      onChange: () => this.transcriptRevision++,
+      onChange: () => {
+        this.transcriptRevision++;
+        this.#transcriptDraft?.markDirty();
+      },
+    });
+
+    this.#transcriptDraft = new TranscriptDraftSync({
+      save: (key, sequence, data) =>
+        Draft.save(key, sequence, data, this.messageBus.clientId),
+      buildData: () => this.#transcriptDraftData(),
+      isHeldByComposer: (key) =>
+        getOwner(this).lookup("service:composer")?.model?.draftKey === key,
     });
 
     this.#subtitles = new SubtitlesManager({
@@ -345,6 +363,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#localVideo.destroy();
     this.#localAudio.stop();
     this.#subtitles.destroy();
+    this.#transcriptDraft.dispose();
 
     this.#roomHandlerCallbacks.forEach((callback, roomId) => {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
@@ -488,6 +507,7 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     this.#transcript.start(roomId);
+    this.#transcriptDraft.start(roomId, this.#transcript.startedAt);
     this.#syncSttEngine();
     this.#broadcastTranscribingState(roomId, true);
   }
@@ -500,6 +520,8 @@ export default class ResenhaWebrtcService extends Service {
     const roomId = this.#transcript.roomId;
     // Entries survive the stop so the finished transcript can be consumed.
     this.#transcript.stop();
+    // Flushes the last utterances into the draft; the draft itself stays.
+    this.#transcriptDraft.stop();
     if (this.currentUser?.id) {
       this.#subtitles.detach(roomId, this.currentUser.id);
     }
@@ -550,6 +572,56 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
     this.#syncLocalTranscriptTap();
+  }
+
+  #transcriptDraftData() {
+    const entries = this.#transcript.entries;
+    if (!entries.length) {
+      return null;
+    }
+
+    const room = this.resenhaRooms?.roomById(this.#transcript.entriesRoomId);
+    return {
+      reply: transcriptToMarkdown(entries, {
+        chatMarkup: !!this.siteSettings.chat_enabled,
+      }),
+      title: i18n("resenha.transcript.draft_title", {
+        room: room?.name ?? "",
+      }),
+      action: Composer.CREATE_TOPIC,
+      archetypeId: "regular",
+    };
+  }
+
+  // Opens the auto-saved transcript draft in the composer. The server copy
+  // wins when it exists — the user may have edited the draft in an earlier
+  // session — and opening hands the draft off: background saves stop so the
+  // composer's own autosave takes over.
+  async openTranscriptDraft() {
+    const draftKey = this.#transcriptDraft.key;
+    if (!draftKey) {
+      return;
+    }
+
+    await this.#transcriptDraft.flush();
+
+    let draft = null;
+    let draftSequence = this.#transcriptDraft.sequence;
+    try {
+      const result = await Draft.get(draftKey);
+      draft = result.draft;
+      draftSequence = result.draft_sequence ?? draftSequence;
+    } catch {
+      // fall through to the locally built copy
+    }
+    draft ||= this.#transcriptDraftData();
+    if (!draft) {
+      return;
+    }
+
+    getOwner(this)
+      .lookup("service:composer")
+      .open({ draft, draftKey, draftSequence });
   }
 
   // Mirrors the local pipeline into the transcriber while recording. Safe to
