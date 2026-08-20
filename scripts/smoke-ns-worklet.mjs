@@ -11,13 +11,16 @@
 // in assets/javascripts/discourse/lib/resenha/ns-assets/<engine>.js.
 // maxRatio is the maximum allowed output/input RMS ratio (a bit-exact
 // passthrough scores 1.0; engines differ in how hard they cut white noise).
-import http from "node:http";
 import { readFile } from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 
-const pluginDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const pluginDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
 const [engine, maxRatioArg] = process.argv.slice(2);
 if (!engine) {
   console.error("usage: node scripts/smoke-ns-worklet.mjs <engine> [maxRatio]");
@@ -30,8 +33,7 @@ const manifestPath = path.join(
   `assets/javascripts/discourse/lib/resenha/ns-assets/${engine}.js`
 );
 const manifest = await import(pathToFileURL(manifestPath));
-const localPath = (publicPath) =>
-  path.join(pluginDir, "public", publicPath.replace("/plugins/resenha/", ""));
+const localPath = (file) => path.join(pluginDir, "public/javascripts", file);
 
 const NOISE_AMPLITUDE = 0.5;
 
@@ -78,11 +80,11 @@ window.runTest = async (hasModel) => {
 </script>`;
 
 const files = {
-  "/worklet.js": localPath(manifest.WORKLET_PATH),
-  "/engine.wasm": localPath(manifest.WASM_PATH),
+  "/worklet.js": localPath(manifest.WORKLET_FILE),
+  "/engine.wasm": localPath(manifest.WASM_FILE),
 };
-if (manifest.MODEL_PATH) {
-  files["/model.bin"] = localPath(manifest.MODEL_PATH);
+if (manifest.MODEL_FILE) {
+  files["/model.bin"] = localPath(manifest.MODEL_FILE);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -116,7 +118,7 @@ await page.goto(`http://127.0.0.1:${server.address().port}/`);
 try {
   const result = await page.evaluate(
     (m) => window.runTest(m),
-    !!manifest.MODEL_PATH
+    !!manifest.MODEL_FILE
   );
   console.log(`${engine}: output/input RMS ratio ${result.ratio.toFixed(3)}`);
   // Zero output is legitimate: a strong model gates speechless noise to
@@ -124,7 +126,9 @@ try {
   // broken engine never reaches this point (the ready handshake includes a
   // real warm-up denoise and failures surface as "error" messages).
   if (!(result.ratio < maxRatio)) {
-    console.log(`FAIL: ratio not < ${maxRatio} — engine is passing audio through`);
+    console.log(
+      `FAIL: ratio not < ${maxRatio} — engine is passing audio through`
+    );
     process.exitCode = 1;
   } else {
     console.log("PASS");

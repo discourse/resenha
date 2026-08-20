@@ -124,22 +124,6 @@ after_initialize do
     SiteSetting.resenha_livekit_room_policy == "per_room" && Resenha::Livekit.configured?
   end
 
-  # Mediapipe assets live in the plugin's public dir, which is served by the
-  # app (and any CDN proxying it) but never uploaded to a static asset CDN,
-  # so the client cannot build a working URL with getURLWithCDN.
-  add_to_serializer(:site, :resenha_mediapipe_base_url) do
-    path = GlobalPath.path("/plugins/resenha/javascripts/mediapipe")
-    GlobalSetting.cdn_url.present? ? "#{GlobalSetting.cdn_url}#{path}" : path
-  end
-
-  # Same serving constraints for the speech-to-text assets behind live
-  # subtitles. The Worker script itself is excluded client-side: workers
-  # must be same-origin.
-  add_to_serializer(:site, :resenha_stt_base_url) do
-    path = GlobalPath.path("/plugins/resenha/javascripts/stt")
-    GlobalSetting.cdn_url.present? ? "#{GlobalSetting.cdn_url}#{path}" : path
-  end
-
   Resenha::DefaultRoomSeeder.ensure! if SiteSetting.resenha_enabled?
 
   # This can't live in the on(:site_setting_changed) handler below: plugin
