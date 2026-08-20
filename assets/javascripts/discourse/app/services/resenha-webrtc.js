@@ -54,6 +54,7 @@ import {
 } from "../../lib/resenha/sound-effects";
 import { participantCanSpeak } from "../../lib/resenha/stage-roles";
 import SubtitlesManager from "../../lib/resenha/subtitles";
+import TranscriptRecorder from "../../lib/resenha/transcript-recorder";
 import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
@@ -80,6 +81,7 @@ export default class ResenhaWebrtcService extends Service {
   @tracked subtitlesLoading = false;
   @tracked subtitlesProgress = null;
   @tracked captions = [];
+  @tracked transcriptRevision = 0;
   @tracked voiceQuality = preferredVoiceQuality();
   @tracked cameraQuality = preferredCameraQuality();
   @tracked screenQuality = preferredScreenQuality();
@@ -125,6 +127,7 @@ export default class ResenhaWebrtcService extends Service {
   #heartbeat;
   #presencePending;
   #subtitles;
+  #transcript;
   #captionCounter = 0;
 
   constructor() {
@@ -214,9 +217,20 @@ export default class ResenhaWebrtcService extends Service {
       },
     });
 
+    this.#transcript = new TranscriptRecorder({
+      onChange: () => this.transcriptRevision++,
+    });
+
     this.#subtitles = new SubtitlesManager({
-      onCaption: (roomId, userId, utterance) =>
-        this.#upsertCaption(roomId, userId, utterance),
+      onCaption: (roomId, userId, utterance) => {
+        this.#upsertCaption(roomId, userId, utterance);
+        this.#transcript.record(
+          roomId,
+          userId,
+          this.#participantUsername(roomId, userId),
+          utterance
+        );
+      },
       onLoadingChange: () => {
         this.subtitlesLoading = this.#subtitles.loading;
         if (!this.subtitlesLoading) {
@@ -426,22 +440,106 @@ export default class ResenhaWebrtcService extends Service {
     const enabled = !this.subtitlesEnabled;
     this.subtitlesEnabled = enabled;
     this.#subtitles.setPreference(enabled);
+    this.#syncSttEngine();
+  }
+
+  // --- Transcript recording ---
+
+  get transcriptRecording() {
+    this.transcriptRevision;
+    return this.#transcript.recording;
+  }
+
+  get transcriptRoomId() {
+    this.transcriptRevision;
+    return this.#transcript.roomId;
+  }
+
+  get transcriptEntries() {
+    this.transcriptRevision;
+    return this.#transcript.entries;
+  }
+
+  get transcriptStartedAt() {
+    this.transcriptRevision;
+    return this.#transcript.startedAt;
+  }
+
+  isTranscribingRoom(roomId) {
+    return (
+      this.transcriptRecording &&
+      Number(this.transcriptRoomId) === Number(roomId)
+    );
+  }
+
+  toggleTranscriptRecording(roomId) {
+    if (this.transcriptRecording) {
+      this.#stopTranscriptRecording();
+      return;
+    }
+
+    if (!this.subtitlesAvailable || !this.#activeRoomIds.has(roomId)) {
+      return;
+    }
+
+    this.#transcript.start(roomId);
+    this.#syncSttEngine();
+  }
+
+  #stopTranscriptRecording() {
+    if (!this.#transcript.recording) {
+      return;
+    }
+
+    const roomId = this.#transcript.roomId;
+    // Entries survive the stop so the finished transcript can be consumed.
+    this.#transcript.stop();
+    if (this.currentUser?.id) {
+      this.#subtitles.detach(roomId, this.currentUser.id);
+    }
+    this.#syncSttEngine();
+  }
+
+  // The speech-to-text pipeline serves two consumers: the caption overlay
+  // (subtitlesEnabled) and the transcript recorder. It runs while either
+  // wants it, tapping every remote stream plus — only while recording — the
+  // local mic, so the transcript includes the current user.
+  #syncSttEngine() {
+    const enabled = this.subtitlesEnabled || this.transcriptRecording;
     this.#subtitles.setEnabled(enabled, {
       modelBaseUrl: this.#subtitlesModelBaseUrl,
     });
 
-    if (enabled) {
-      for (const roomId of this.#activeRoomIds) {
-        for (const userId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
-          this.#subtitles.attach(
-            roomId,
-            userId,
-            this.#remoteStreamRegistry.streamFor(roomId, userId)
-          );
-        }
-      }
-    } else {
+    if (!enabled) {
       this.captions = [];
+      return;
+    }
+
+    for (const roomId of this.#activeRoomIds) {
+      for (const userId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
+        this.#subtitles.attach(
+          roomId,
+          userId,
+          this.#remoteStreamRegistry.streamFor(roomId, userId)
+        );
+      }
+    }
+    this.#syncLocalTranscriptTap();
+  }
+
+  // Mirrors the local pipeline into the transcriber while recording. Safe to
+  // call repeatedly: attach is a no-op for an unchanged track and rebuilds
+  // the tap when a device switch or suppression change replaced it.
+  #syncLocalTranscriptTap() {
+    if (!this.transcriptRecording || !this.currentUser?.id) {
+      return;
+    }
+
+    const roomId = this.transcriptRoomId;
+    if (this.localStream) {
+      this.#subtitles.attach(roomId, this.currentUser.id, this.localStream);
+    } else {
+      this.#subtitles.detach(roomId, this.currentUser.id);
     }
   }
 
@@ -480,10 +578,6 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    const participant = (
-      this.resenhaRooms?.roomById(roomId)?.active_participants || []
-    ).find((p) => Number(p?.id) === Number(userId));
-
     // Captions carry a display-name snapshot so a line outlives its speaker
     // leaving the roster.
     this.captions = [
@@ -493,7 +587,7 @@ export default class ResenhaWebrtcService extends Service {
         utteranceId,
         roomId,
         userId,
-        username: participant?.username,
+        username: this.#participantUsername(roomId, userId),
         text,
         interim: !final,
         at: Date.now(),
@@ -501,18 +595,27 @@ export default class ResenhaWebrtcService extends Service {
     ];
   }
 
-  // Model or runtime failures turn the toggle back off (mirroring the noise
-  // suppression contract) so the modal never shows an enabled-but-dead state.
+  #participantUsername(roomId, userId) {
+    return (
+      this.resenhaRooms?.roomById(roomId)?.active_participants || []
+    ).find((p) => Number(p?.id) === Number(userId))?.username;
+  }
+
+  // Model or runtime failures turn the toggles back off (mirroring the noise
+  // suppression contract) so the UI never shows an enabled-but-dead state.
   #handleSubtitlesError(error) {
     // eslint-disable-next-line no-console
     console.warn("[resenha] subtitles failed", error);
 
-    if (!this.subtitlesEnabled) {
+    if (!this.subtitlesEnabled && !this.transcriptRecording) {
       return;
     }
 
     this.subtitlesEnabled = false;
     this.#subtitles.setPreference(false);
+    if (this.#transcript.recording) {
+      this.#transcript.stop();
+    }
     this.#subtitles.setEnabled(false);
     this.captions = [];
     this.toasts.error({
@@ -1610,6 +1713,12 @@ export default class ResenhaWebrtcService extends Service {
     this.#signaling.clearForRoom(roomId);
     this.#signaling.clearHttpQueue(roomId);
     this.#roomMessageQueue.clear(roomId);
+
+    // Leaving the recorded room ends the recording; the transcript gathered
+    // so far is kept for consumption.
+    if (this.isTranscribingRoom(roomId)) {
+      this.#stopTranscriptRecording();
+    }
   }
 
   #handleRoomMessage(roomId, payload) {
@@ -2152,6 +2261,8 @@ export default class ResenhaWebrtcService extends Service {
         this.#audioMonitor.teardown(roomId, this.currentUser.id);
       }
     }
+
+    this.#syncLocalTranscriptTap();
   }
 
   #applyLocalTrackState(stream) {

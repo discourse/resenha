@@ -171,6 +171,11 @@ en:
       subtitles:
         loading: "Preparing subtitles…"
         downloading: "Downloading subtitles model… %{percent}%"
+      transcript:
+        start: "Record transcript"
+        stop: "Stop transcript recording"
+        indicator: "Transcribing"
+        indicator_title: "You are recording a transcript of this call on your device."
       stage:
         promoted_to_speaker: "You've been made a speaker."
         demoted_to_listener: "You've been moved to listeners."

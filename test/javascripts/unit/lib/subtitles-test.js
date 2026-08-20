@@ -155,6 +155,37 @@ module("Resenha | Unit | Lib | subtitles", function (hooks) {
     );
   });
 
+  test("captions carry the utterance's start wall-clock", async function (assert) {
+    this.manager.setEnabled(true);
+    await this.manager.attach(1, 42, createFakeStream("s1"));
+    const vad = FakeVad.instances[0];
+
+    const before = Date.now();
+    vad.speakFrames(3 * 16000);
+    const after = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const interim = this.captions.at(-1);
+    assert.false(interim.final);
+    assert.true(
+      interim.startedAt >= before,
+      "the interim's start time is not earlier than the speech start"
+    );
+    assert.true(
+      interim.startedAt <= after,
+      "the interim's start time is not later than the speech start"
+    );
+
+    vad.options.onSpeechEnd(new Float32Array(4 * 16000));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.strictEqual(
+      this.captions.at(-1).startedAt,
+      interim.startedAt,
+      "the final shares the interim's start time"
+    );
+  });
+
   test("no worker or taps are created while disabled", async function (assert) {
     await this.manager.attach(1, 42, createFakeStream("s1"));
 

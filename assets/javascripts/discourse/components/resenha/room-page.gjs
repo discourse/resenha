@@ -468,6 +468,38 @@ export default class ResenhaRoomPage extends Component {
     this.toggleChat();
   }
 
+  get transcriptAvailable() {
+    return this.resenhaWebrtc.subtitlesAvailable;
+  }
+
+  get transcribing() {
+    return this.resenhaWebrtc.isTranscribingRoom(this.room.id);
+  }
+
+  get transcriptToggleTitle() {
+    return this.transcribing
+      ? i18n("resenha.transcript.stop")
+      : i18n("resenha.transcript.start");
+  }
+
+  // While the model is still loading/downloading there would otherwise be no
+  // feedback at all when captions are off, so the badge doubles as progress.
+  get transcriptBadgeLabel() {
+    if (this.resenhaWebrtc.subtitlesLoading) {
+      const percent = this.resenhaWebrtc.subtitlesProgress;
+      return percent !== null
+        ? i18n("resenha.subtitles.downloading", { percent })
+        : i18n("resenha.subtitles.loading");
+    }
+    return i18n("resenha.transcript.indicator");
+  }
+
+  @action
+  toggleTranscriptFromMenu(closeMenu) {
+    closeMenu?.();
+    this.resenhaWebrtc.toggleTranscriptRecording(this.room.id);
+  }
+
   // Opened programmatically (not a nested <DMenu>) so the trigger stays a
   // normal full-width menu item, matching core's channel context menu.
   #openSubmenu(event, parentMenu, items, onSelect) {
@@ -532,6 +564,17 @@ export default class ResenhaRoomPage extends Component {
             <div class="resenha-room-page__title-row">
               <h1 class="resenha-room-page__title">{{this.room.name}}</h1>
               <ResenhaRecordingBadge @room={{this.room}} />
+              {{#if this.transcribing}}
+                <span
+                  class="resenha-transcript-badge"
+                  title={{i18n "resenha.transcript.indicator_title"}}
+                >
+                  {{dIcon "closed-captioning"}}
+                  <span class="resenha-transcript-badge__label">
+                    {{this.transcriptBadgeLabel}}
+                  </span>
+                </span>
+              {{/if}}
             </div>
             {{#if this.room.description_excerpt}}
               <p class="resenha-room-page__description">
@@ -704,6 +747,26 @@ export default class ResenhaRoomPage extends Component {
                             @icon="user-plus"
                             @label="resenha.invite.menu"
                             class="btn-transparent"
+                          />
+                        </dropdown.item>
+                      {{/if}}
+                      {{#if this.transcriptAvailable}}
+                        <dropdown.item>
+                          <DButton
+                            @action={{fn
+                              this.toggleTranscriptFromMenu
+                              roomMenu.close
+                            }}
+                            @icon={{if
+                              this.transcribing
+                              "stop"
+                              "closed-captioning"
+                            }}
+                            @translatedLabel={{this.transcriptToggleTitle}}
+                            class={{dConcatClass
+                              "btn-transparent resenha-room-page__transcript-toggle"
+                              (if this.transcribing "--recording")
+                            }}
                           />
                         </dropdown.item>
                       {{/if}}
