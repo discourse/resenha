@@ -92,6 +92,9 @@ export default class SubtitlesManager {
   #utteranceCounter = 0;
   #retracted = new Set();
   #modelBaseUrl = null;
+  // Set while the worker reports it can't transcribe faster than realtime:
+  // interim snapshots are optional work, so they are shed first.
+  #interimsSuspended = false;
 
   #onCaption;
   #onLoadingChange;
@@ -146,6 +149,11 @@ export default class SubtitlesManager {
         this.#removeTap(key);
       }
       this.#terminateWorker();
+    } else {
+      // Best effort, window-only API: asks the browser to exempt the
+      // origin's storage (the multi-GB cached model) from eviction. Modern
+      // engines decide silently, no prompt.
+      navigator.storage?.persist?.().catch(() => {});
     }
   }
 
@@ -355,8 +363,16 @@ export default class SubtitlesManager {
       case "error":
         this.#failWorker(new Error(message.message));
         break;
+      case "throughput":
+        this.#interimsSuspended = !!message.slow;
+        break;
       case "caption": {
         if (!this.#enabled) {
+          break;
+        }
+        // The speaker's tap is gone (they left, or their room was left);
+        // captions from jobs still in flight at that point are stale.
+        if (!this.#taps.has(this.#key(message.roomId, message.userId))) {
           break;
         }
         // The utterance was retracted (VAD misfire) while this job was in
@@ -411,6 +427,15 @@ export default class SubtitlesManager {
   // a provisional caption.
   #handleFrame(tap, epoch, frame) {
     if (!this.#live(tap, epoch) || !tap.speaking) {
+      return;
+    }
+
+    // Under sustained transcription backlog the provisional passes are shed
+    // entirely; the final (speech-end) pass still covers the utterance.
+    if (this.#interimsSuspended) {
+      tap.frames = [];
+      tap.bufferedSamples = 0;
+      tap.samplesSinceInterim = 0;
       return;
     }
 
@@ -498,6 +523,9 @@ export default class SubtitlesManager {
         utteranceId: tap.utteranceId,
         interim,
         pcm,
+        // Stamped here (not in the worker) because heavy jobs block the
+        // worker's event loop, delaying its onmessage arbitrarily.
+        sentAt: Date.now(),
       },
       [pcm]
     );
@@ -517,6 +545,7 @@ export default class SubtitlesManager {
       this.#worker = null;
     }
     this.#workerReady = false;
+    this.#interimsSuspended = false;
   }
 
   #key(roomId, userId) {
@@ -533,6 +562,14 @@ export default class SubtitlesManager {
     if (tap.vad) {
       this.#teardownVad(tap.vad);
     }
+    // Discard whatever this speaker still has waiting in the transcription
+    // queue; a detached tap's captions would be dropped on arrival anyway,
+    // so transcribing them is pure backlog.
+    this.#worker?.postMessage({
+      type: "flush",
+      roomId: tap.roomId,
+      userId: tap.userId,
+    });
     this.#onLoadingChange();
   }
 

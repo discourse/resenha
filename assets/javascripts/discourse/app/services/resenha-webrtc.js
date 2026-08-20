@@ -1610,12 +1610,6 @@ export default class ResenhaWebrtcService extends Service {
     this.#signaling.clearForRoom(roomId);
     this.#signaling.clearHttpQueue(roomId);
     this.#roomMessageQueue.clear(roomId);
-
-    if (this.captions.length) {
-      this.captions = this.captions.filter(
-        (caption) => Number(caption.roomId) !== Number(roomId)
-      );
-    }
   }
 
   #handleRoomMessage(roomId, payload) {
@@ -2091,6 +2085,13 @@ export default class ResenhaWebrtcService extends Service {
 
   #removeAllRemoteStreams(roomId) {
     this.#subtitles.detachRoom(roomId);
+    // Rejoining should start with a clean overlay, not replay whatever was
+    // on screen (or still in the transcription queue) when we left.
+    if (this.captions.length) {
+      this.captions = this.captions.filter(
+        (caption) => Number(caption.roomId) !== Number(roomId)
+      );
+    }
     this.#remoteStreamRegistry
       .clearRoom(roomId)
       .forEach((userId) => this.#audioMonitor.teardown(roomId, userId));
