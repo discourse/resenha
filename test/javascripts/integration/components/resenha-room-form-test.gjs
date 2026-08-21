@@ -107,6 +107,26 @@ module("Integration | Component | resenha-room-form", function (hooks) {
     assert.dom('[data-name="livekit_enabled"]').doesNotExist();
   });
 
+  test("previews the room name in place of the {room} placeholder", async function (assert) {
+    this.room = {
+      name: "Town hall",
+      description: "",
+      public: true,
+      room_type: "open",
+      max_participants: null,
+      video_enabled: true,
+      chat_channel_id: 6,
+      chat_idle_minutes: 15,
+      chat_thread_title_template: "Huddle in {room}",
+    };
+
+    await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
+
+    assert
+      .dom(".resenha-room-form__chat-preview strong")
+      .hasText("Huddle in Town hall");
+  });
+
   test("hides the thread starter fields when no chat channel is linked", async function (assert) {
     this.room = {
       name: "Chill",

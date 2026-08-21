@@ -139,6 +139,21 @@ RSpec.describe Resenha::ChatSession do
       expect(reply.user_id).to eq(user.id)
     end
 
+    it "interpolates the room name into a templated thread and its starter" do
+      room.update!(chat_thread_title_template: "Huddle in {room}")
+
+      thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
+      expect(thread.title).to eq("Huddle in #{room.name}")
+      expect(thread.original_message.message).to eq("Huddle in #{room.name}")
+    end
+
+    it "inserts a room name containing replacement escapes literally" do
+      room.update!(name: "Studio \\& \\1")
+
+      thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
+      expect(thread.title).to eq("Voice chat in Studio \\& \\1")
+    end
+
     # A panel reacting to the broadcast anchors its message load on the
     # sender's thread membership; if the broadcast goes out before the
     # templated reply exists, chat serves only messages AFTER that membership's
