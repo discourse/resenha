@@ -9,6 +9,7 @@ import ResenhaCreateRoomModal from "discourse/plugins/resenha/discourse/componen
 import ResenhaParticipantSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-context-menu";
 import ResenhaParticipantSidebarSuffix from "discourse/plugins/resenha/discourse/components/resenha-participant-sidebar-suffix";
 import ResenhaRoomSidebarContextMenu from "discourse/plugins/resenha/discourse/components/resenha-room-sidebar-context-menu";
+import buildAnonRoomsSection from "../lib/resenha/anon-rooms-section";
 import { humanKeyName } from "../lib/resenha/ptt-utils";
 import roomIcon, { roomBadge } from "../lib/resenha/room-icon";
 import virtualElementFromEvent from "../lib/resenha/virtual-element-from-event";
@@ -39,6 +40,10 @@ export default {
       const roomsService = owner.lookup("service:resenha-rooms");
 
       if (!currentUser) {
+        // API sections render after Discourse's normal navigation sections,
+        // matching the location of the logged-in rooms section.
+        api.addSidebarSection(buildAnonRoomsSection(roomsService));
+
         if (sidebarClickHandler) {
           document.removeEventListener("click", sidebarClickHandler);
         }

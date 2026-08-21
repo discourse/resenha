@@ -43,5 +43,21 @@ acceptance("Resenha anon sidebar", function (needs) {
     assert
       .dom("[data-link-name='resenha-participant-1-2']")
       .hasText("jane", "public room participants are rendered");
+
+    const sectionNames = [
+      ...document.querySelectorAll(
+        ".sidebar-sections-anonymous > .sidebar-section"
+      ),
+    ].map((section) => section.dataset.sectionName);
+
+    assert.true(
+      sectionNames.includes("categories"),
+      "the standard navigation sections are rendered"
+    );
+    assert.true(
+      sectionNames.indexOf("resenha-rooms") >
+        sectionNames.indexOf("categories"),
+      "rooms render after the standard navigation sections, as they do for logged-in users"
+    );
   });
 });
