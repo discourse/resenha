@@ -154,11 +154,6 @@ export default class SubtitlesManager {
       }
       this.#terminateWorker();
       this.#utteranceStarts.clear();
-    } else {
-      // Best effort, window-only API: asks the browser to exempt the
-      // origin's storage (the multi-GB cached model) from eviction. Modern
-      // engines decide silently, no prompt.
-      navigator.storage?.persist?.().catch(() => {});
     }
   }
 
@@ -314,6 +309,13 @@ export default class SubtitlesManager {
     if (this.#worker) {
       return;
     }
+
+    // Best effort, window-only API: asks the browser to exempt the origin's
+    // storage (the multi-GB cached model) from eviction. Chromium decides
+    // silently, but Firefox shows a permission prompt — so this must only
+    // run here, when transcription is actually starting in a room, never on
+    // plain page load.
+    navigator.storage?.persist?.().catch(() => {});
 
     let worker;
     try {
