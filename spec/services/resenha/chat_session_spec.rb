@@ -119,7 +119,7 @@ RSpec.describe Resenha::ChatSession do
 
       thread = live_thread(state)
       expect(thread.channel_id).to eq(channel.id)
-      expect(thread.title).to start_with("Voice chat at ")
+      expect(thread.title).to eq("Voice chat in #{room.name}")
       expect(thread.original_message.message).to eq("hello everyone")
       expect(thread.original_message.user_id).to eq(user.id)
       expect(thread.custom_fields[Resenha::THREAD_ROOM_ID_FIELD]).to eq(room.id.to_s)

@@ -335,6 +335,7 @@ module Resenha
         template
           .gsub("{time}", now.strftime("%H:%M"))
           .gsub("{date}", now.strftime("%Y-%m-%d"))
+          .gsub("{room}", room.name.to_s)
           .strip
       end
 
