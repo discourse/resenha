@@ -119,7 +119,7 @@ RSpec.describe Resenha::ChatSession do
 
       thread = live_thread(state)
       expect(thread.channel_id).to eq(channel.id)
-      expect(thread.title).to start_with("Voice chat at ")
+      expect(thread.title).to eq("Voice chat in #{room.name}")
       expect(thread.original_message.message).to eq("hello everyone")
       expect(thread.original_message.user_id).to eq(user.id)
       expect(thread.custom_fields[Resenha::THREAD_ROOM_ID_FIELD]).to eq(room.id.to_s)
@@ -137,6 +137,21 @@ RSpec.describe Resenha::ChatSession do
       reply = thread.replies.last
       expect(reply.message).to eq("hello everyone")
       expect(reply.user_id).to eq(user.id)
+    end
+
+    it "interpolates the room name into a templated thread and its starter" do
+      room.update!(chat_thread_title_template: "Huddle in {room}")
+
+      thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
+      expect(thread.title).to eq("Huddle in #{room.name}")
+      expect(thread.original_message.message).to eq("Huddle in #{room.name}")
+    end
+
+    it "inserts a room name containing replacement escapes literally" do
+      room.update!(name: "Studio \\& \\1")
+
+      thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
+      expect(thread.title).to eq("Voice chat in Studio \\& \\1")
     end
 
     # A panel reacting to the broadcast anchors its message load on the

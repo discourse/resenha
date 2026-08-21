@@ -54,14 +54,17 @@ export default class ResenhaRoomForm extends Component {
     );
   }
 
-  threadTitlePreview(template) {
+  threadTitlePreview(template, roomName) {
     const text = (template || "").toString();
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, "0")}:${String(
       now.getMinutes()
     ).padStart(2, "0")}`;
     const date = now.toISOString().slice(0, 10);
-    return text.replaceAll("{time}", time).replaceAll("{date}", date);
+    const preview = text.replaceAll("{time}", time).replaceAll("{date}", date);
+    // An unnamed room leaves the token visible rather than a blank gap, so the
+    // placeholder still reads as one.
+    return roomName ? preview.replaceAll("{room}", roomName) : preview;
   }
 
   @action
@@ -361,6 +364,7 @@ export default class ResenhaRoomForm extends Component {
                   {{i18n "resenha.admin.room.chat_thread_title_preview"}}
                   <strong>{{this.threadTitlePreview
                       data.chat_thread_title_template
+                      data.name
                     }}</strong>
                 {{else}}
                   {{i18n "resenha.admin.room.chat_no_template_hint"}}
