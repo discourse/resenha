@@ -1359,7 +1359,7 @@ RSpec.describe Resenha::RoomsController do
 
         thread = Chat::Thread.find(thread_id)
         expect(thread.channel_id).to eq(channel.id)
-        expect(thread.original_message.message).to eq("hello everyone")
+        expect(thread.original_message.message).to eq("In ##{room.slug}::room - hello everyone")
         expect(thread.original_message.user_id).to eq(user.id)
 
         get "/resenha/rooms/#{room.id}/chat_session.json"
