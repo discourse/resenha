@@ -11,7 +11,6 @@ const USER_GATED_ROOM_FIELDS = [
   "chat_available",
   "chat_channel_id",
   "chat_idle_minutes",
-  "chat_thread_title_template",
 ];
 
 // Participant broadcasts arrive in arbitrary database order, so every list

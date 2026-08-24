@@ -115,11 +115,14 @@ RSpec.describe Resenha::ChatSession do
 
   describe ".post_message!" do
     it "opens a thread rooted on the first message, prefixed with a room hashtag linking back" do
-      state = described_class.post_message!(room, user, "hello everyone")
+      state = nil
+      freeze_time(Time.zone.parse("2026-08-24 14:30")) do
+        state = described_class.post_message!(room, user, "hello everyone")
+      end
 
       thread = live_thread(state)
       expect(thread.channel_id).to eq(channel.id)
-      expect(thread.title).to eq("Voice chat in #{room.name}")
+      expect(thread.title).to eq("Voice chat in #{room.name} - 2026-08-24 14:30")
       expect(thread.original_message.message).to eq("In ##{room.slug}::room - hello everyone")
       expect(thread.original_message.cooked).to include("/resenha/r/#{room.slug}")
       expect(thread.original_message.user_id).to eq(user.id)
@@ -134,52 +137,11 @@ RSpec.describe Resenha::ChatSession do
       )
     end
 
-    it "opens a templated room's thread with a system starter and the message as first reply" do
-      room.update!(chat_thread_title_template: "Team Meeting at {time}")
-
-      thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
-      expect(thread.title).to start_with("Team Meeting at ")
-      expect(thread.original_message.message).to eq(thread.title)
-      expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
-      expect(thread.custom_fields[Resenha::THREAD_ROOM_ID_FIELD]).to eq(room.id.to_s)
-
-      reply = thread.replies.last
-      expect(reply.message).to eq("hello everyone")
-      expect(reply.user_id).to eq(user.id)
-    end
-
-    it "interpolates the room name into a templated thread and its starter" do
-      room.update!(chat_thread_title_template: "Huddle in {room}")
-
-      thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
-      expect(thread.title).to eq("Huddle in #{room.name}")
-      expect(thread.original_message.message).to eq("Huddle in #{room.name}")
-    end
-
-    it "inserts a room name containing replacement escapes literally" do
+    it "inserts a room name containing replacement escapes literally into the title" do
       room.update!(name: "Studio \\& \\1")
 
       thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
-      expect(thread.title).to eq("Voice chat in Studio \\& \\1")
-    end
-
-    # A panel reacting to the broadcast anchors its message load on the
-    # sender's thread membership; if the broadcast goes out before the
-    # templated reply exists, chat serves only messages AFTER that membership's
-    # last-read pointer and the system starter never renders.
-    it "broadcasts a templated session only after the sender's reply exists" do
-      room.update!(chat_thread_title_template: "Team Meeting at {time}")
-
-      reply_existed_at_publish = nil
-      allow(MessageBus).to receive(:publish) do |ch, _data, _opts|
-        if ch == Resenha.room_chat_channel(room.id)
-          reply_existed_at_publish = ::Chat::Message.where(user_id: user.id).exists?
-        end
-      end
-
-      described_class.post_message!(room, user, "hello everyone")
-
-      expect(reply_existed_at_publish).to eq(true)
+      expect(thread.title).to start_with("Voice chat in Studio \\& \\1")
     end
 
     it "delivers to the live thread instead of spawning a competing one" do
@@ -312,22 +274,6 @@ RSpec.describe Resenha::ChatSession do
       )
 
       # The message must not be left behind as a loose channel message.
-      expect(channel.chat_messages.count).to eq(0)
-      expect(described_class.state(room)[:thread_id]).to be_nil
-    end
-
-    it "raises without orphaning a templated starter when threading is off" do
-      room.update!(chat_thread_title_template: "Team Meeting at {time}")
-      channel.update!(threading_enabled: false)
-      # The room memoizes its channel per instance (a fresh load in production
-      # requests); pick the flip up here explicitly.
-      room.reload
-
-      expect { described_class.post_message!(room, user, "hello") }.to raise_error(
-        Resenha::ChatSession::Error,
-        /threading/i,
-      )
-
       expect(channel.chat_messages.count).to eq(0)
       expect(described_class.state(room)[:thread_id]).to be_nil
     end

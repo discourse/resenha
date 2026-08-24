@@ -1202,19 +1202,13 @@ RSpec.describe Resenha::RoomsController do
           "chat_available",
           "chat_channel_id",
           "chat_idle_minutes",
-          "chat_thread_title_template",
         )
       end
 
       it "hides all chat fields from the anonymously-scoped directory broadcast" do
         json = Resenha::RoomSerializer.new(room, scope: Guardian.new(nil), root: false).as_json
 
-        expect(json.keys).not_to include(
-          :chat_available,
-          :chat_channel_id,
-          :chat_idle_minutes,
-          :chat_thread_title_template,
-        )
+        expect(json.keys).not_to include(:chat_available, :chat_channel_id, :chat_idle_minutes)
       end
 
       it "exposes availability — but not the settings — to a present participant" do
@@ -1225,15 +1219,10 @@ RSpec.describe Resenha::RoomsController do
 
         room_json = response.parsed_body["room"]
         expect(room_json["chat_available"]).to eq(true)
-        expect(room_json.keys).not_to include(
-          "chat_channel_id",
-          "chat_idle_minutes",
-          "chat_thread_title_template",
-        )
+        expect(room_json.keys).not_to include("chat_channel_id", "chat_idle_minutes")
       end
 
       it "exposes the chat settings to a manager" do
-        room.update!(chat_thread_title_template: "Team meeting at {time}")
         sign_in(staff)
 
         get "/resenha/rooms/#{room.id}.json"
@@ -1242,7 +1231,6 @@ RSpec.describe Resenha::RoomsController do
         expect(room_json["chat_available"]).to eq(true)
         expect(room_json["chat_channel_id"]).to eq(channel.id)
         expect(room_json["chat_idle_minutes"]).to eq(15)
-        expect(room_json["chat_thread_title_template"]).to eq("Team meeting at {time}")
       end
     end
 
@@ -1364,21 +1352,6 @@ RSpec.describe Resenha::RoomsController do
 
         get "/resenha/rooms/#{room.id}/chat_session.json"
         expect(response.parsed_body["thread_id"]).to eq(thread_id)
-      end
-
-      it "opens a templated room's thread with a system starter and the message as a reply" do
-        room.update!(chat_thread_title_template: "Team meeting at {time}")
-        sign_in(user)
-        join_room!(user)
-
-        post "/resenha/rooms/#{room.id}/chat_message.json", params: { message: "hello" }
-
-        thread = Chat::Thread.find(response.parsed_body["thread_id"])
-        expect(thread.title).to start_with("Team meeting at ")
-        expect(thread.original_message.message).to eq(thread.title)
-        expect(thread.original_message.user_id).to eq(Discourse.system_user.id)
-        expect(thread.replies.last.message).to eq("hello")
-        expect(thread.replies.last.user_id).to eq(user.id)
       end
 
       it "delivers a racing message to the live thread instead of a new one" do

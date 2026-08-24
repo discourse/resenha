@@ -26,7 +26,7 @@ module("Integration | Component | resenha-room-form", function (hooks) {
     this.owner.register("service:chat-api", ChatApiStub);
   });
 
-  test("shows the thread starter fields for a room that already has a chat channel linked", async function (assert) {
+  test("shows the chat settings for a room that already has a chat channel linked", async function (assert) {
     this.room = {
       name: "Team Meeting",
       description: "",
@@ -36,7 +36,6 @@ module("Integration | Component | resenha-room-form", function (hooks) {
       video_enabled: true,
       chat_channel_id: 6,
       chat_idle_minutes: 2,
-      chat_thread_title_template: "Team meeting at {time} on {date}",
     };
 
     await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
@@ -45,12 +44,6 @@ module("Integration | Component | resenha-room-form", function (hooks) {
     assert
       .dom('input[name="chat_idle_minutes"]')
       .exists("the idle-minutes field is shown once a channel is linked");
-    assert
-      .dom('input[name="chat_thread_title_template"]')
-      .exists("the thread-starter template field is shown");
-    assert
-      .dom('input[name="chat_thread_title_template"]')
-      .hasValue("Team meeting at {time} on {date}");
   });
 
   test("can clear a linked chat channel back to none", async function (assert) {
@@ -63,7 +56,6 @@ module("Integration | Component | resenha-room-form", function (hooks) {
       video_enabled: true,
       chat_channel_id: 6,
       chat_idle_minutes: 2,
-      chat_thread_title_template: "Team meeting at {time} on {date}",
     };
 
     await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
@@ -75,9 +67,6 @@ module("Integration | Component | resenha-room-form", function (hooks) {
     assert
       .dom('input[name="chat_idle_minutes"]')
       .doesNotExist("idle-minutes field hides once the channel is cleared");
-    assert
-      .dom('input[name="chat_thread_title_template"]')
-      .doesNotExist("thread-starter field hides once the channel is cleared");
   });
 
   test("shows the media server toggle only when per-room LiveKit is available", async function (assert) {
@@ -91,7 +80,6 @@ module("Integration | Component | resenha-room-form", function (hooks) {
       livekit_enabled: false,
       chat_channel_id: null,
       chat_idle_minutes: 15,
-      chat_thread_title_template: "",
     };
 
     this.owner
@@ -107,27 +95,7 @@ module("Integration | Component | resenha-room-form", function (hooks) {
     assert.dom('[data-name="livekit_enabled"]').doesNotExist();
   });
 
-  test("previews the room name in place of the {room} placeholder", async function (assert) {
-    this.room = {
-      name: "Town hall",
-      description: "",
-      public: true,
-      room_type: "open",
-      max_participants: null,
-      video_enabled: true,
-      chat_channel_id: 6,
-      chat_idle_minutes: 15,
-      chat_thread_title_template: "Huddle in {room}",
-    };
-
-    await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
-
-    assert
-      .dom(".resenha-room-form__chat-preview strong")
-      .hasText("Huddle in Town hall");
-  });
-
-  test("hides the thread starter fields when no chat channel is linked", async function (assert) {
+  test("hides the chat settings when no chat channel is linked", async function (assert) {
     this.room = {
       name: "Chill",
       description: "",
@@ -137,12 +105,10 @@ module("Integration | Component | resenha-room-form", function (hooks) {
       video_enabled: true,
       chat_channel_id: null,
       chat_idle_minutes: 15,
-      chat_thread_title_template: "",
     };
 
     await render(<template><ResenhaRoomForm @room={{this.room}} /></template>);
 
     assert.dom('input[name="chat_idle_minutes"]').doesNotExist();
-    assert.dom('input[name="chat_thread_title_template"]').doesNotExist();
   });
 });

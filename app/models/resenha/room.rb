@@ -4,6 +4,9 @@ module Resenha
   class Room < ActiveRecord::Base
     self.table_name = "#{Resenha.table_name_prefix}rooms"
 
+    # TODO(02-2027): Remove this line
+    self.ignored_columns += %i[chat_thread_title_template]
+
     ROOM_TYPE_OPEN = 0
     ROOM_TYPE_STAGE = 1
     ROOM_TYPES = { "open" => ROOM_TYPE_OPEN, "stage" => ROOM_TYPE_STAGE }.freeze
@@ -165,7 +168,6 @@ end
 #
 #  id                         :bigint           not null, primary key
 #  chat_idle_minutes          :integer          default(15), not null
-#  chat_thread_title_template :string
 #  cooked_description         :text
 #  description                :text
 #  ephemeral                  :boolean          default(FALSE), not null

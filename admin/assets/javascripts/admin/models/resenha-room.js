@@ -9,7 +9,6 @@ const SAVED_PROPERTIES = [
   "livekit_enabled",
   "chat_channel_id",
   "chat_idle_minutes",
-  "chat_thread_title_template",
 ];
 
 // A cleared FormKit <field.Control @type="select"> reports `undefined`

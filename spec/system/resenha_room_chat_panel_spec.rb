@@ -53,29 +53,6 @@ describe "Resenha room chat panel", type: :system do
     end
   end
 
-  it "shows the system starter right away on a templated room's first send" do
-    room.update!(chat_thread_title_template: "Huddle at {time}")
-
-    visit("/resenha/r/#{room.slug}?chat=true")
-    click_button(I18n.t("js.resenha.room.join"))
-    # The panel slides in; typing into it mid-animation can miss the composer.
-    wait_for_animation(find(".resenha-room-page__sidebar"))
-
-    find(".resenha-chat__input").fill_in(with: "kicking things off")
-    # The first send on a templated room fans out into creating the thread,
-    # fetching its messages, and mounting/focusing the native composer, all
-    # before our custom "client settled" check (run automatically after
-    # send_keys) is satisfied. That chain can outlast the default wait under
-    # CI load, so give it more room here rather than raising the global
-    # timeout for every interaction in the suite.
-    using_wait_time(20) { find(".resenha-chat__input").send_keys(:enter) }
-
-    # Both the system-posted starter and the reply must render on the first
-    # mount — not only after closing and reopening the panel.
-    expect(page).to have_css(".resenha-chat .chat-message-text", text: /Huddle at /)
-    expect(page).to have_css(".resenha-chat .chat-message-text", text: "kicking things off")
-  end
-
   it "opens the chat panel by default after joining a stage room" do
     stage_room =
       Fabricate(
