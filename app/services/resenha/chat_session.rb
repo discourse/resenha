@@ -13,7 +13,8 @@ module Resenha
   #   message becomes the first reply.
   #
   # * Plain (e.g. a "Chill" room): the first message itself roots the thread,
-  #   titled with a default.
+  #   prefixed with the room's hashtag so the opener links back to the room,
+  #   and titled with a default.
   #
   # From then on participants read and post through chat's own UI and API;
   # Resenha only tracks WHICH thread is the room's live session.
@@ -146,9 +147,9 @@ module Resenha
       # Opens the session's thread from its first message. In a templated room
       # (e.g. "Team meeting at {time}") the system posts the interpolated
       # template as the thread's starter message and +message+ becomes the
-      # first reply; in a plain room +message+ itself roots the thread. Either
-      # way the thread is titled with the same text, and the change is
-      # published so every open panel picks the new thread up.
+      # first reply; in a plain room +message+ itself roots the thread,
+      # prefixed with the room's hashtag so the opener links back to the room.
+      # The change is published so every open panel picks the new thread up.
       def open_session_thread!(room, channel, user, message)
         # Bail before posting: if the channel can't hold a thread, thread
         # creation would be rejected and leave the starter (or the message)
@@ -157,7 +158,7 @@ module Resenha
 
         title = title_for(room)
         root_guardian = templated?(room) ? Discourse.system_user.guardian : user.guardian
-        root_text = templated?(room) ? title : message
+        root_text = templated?(room) ? title : plain_opener_for(room, message)
 
         root = create_message!(guardian: root_guardian, channel_id: channel.id, message: root_text)
         thread = open_thread!(channel, root, title: title)
@@ -326,6 +327,16 @@ module Resenha
         thread_id = redis.get(thread_key(room.id)).to_i
         return nil if thread_id <= 0
         ::Chat::Message.where(thread_id: thread_id).maximum(:created_at)
+      end
+
+      # I18n interpolation inserts the message verbatim (no re-interpolation),
+      # so user text containing tokens like %{room} or gsub escapes is safe.
+      def plain_opener_for(room, message)
+        I18n.t(
+          "resenha.chat.default_thread_opener",
+          room: "##{room.slug}::#{Resenha::RoomHashtagDataSource.type}",
+          message: message,
+        )
       end
 
       def title_for(room)

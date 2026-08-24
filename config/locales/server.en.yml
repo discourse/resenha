@@ -47,6 +47,7 @@ en:
       watercooler_description: "Join for casual drop-in voice chats with other community members."
     chat:
       default_thread_title: "Voice chat in {room}"
+      default_thread_opener: "In %{room} - %{message}"
     user_status:
       in_room: "In %{room_name}"
       in_private_room: "In a voice room"

@@ -122,7 +122,7 @@ describe "Resenha room chat panel", type: :system do
     expect(page).to have_css(".resenha-chat .chat-message-text", text: "kicking things off")
 
     thread = Chat::Thread.find_by(channel_id: channel.id)
-    expect(thread.original_message.message).to eq("kicking things off")
+    expect(thread.original_message.message).to eq("In ##{room.slug}::room - kicking things off")
     expect(thread.original_message.user_id).to eq(user.id)
   end
 end

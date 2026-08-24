@@ -114,15 +114,24 @@ RSpec.describe Resenha::ChatSession do
   end
 
   describe ".post_message!" do
-    it "opens a thread rooted on the first message, titled with the default" do
+    it "opens a thread rooted on the first message, prefixed with a room hashtag linking back" do
       state = described_class.post_message!(room, user, "hello everyone")
 
       thread = live_thread(state)
       expect(thread.channel_id).to eq(channel.id)
       expect(thread.title).to eq("Voice chat in #{room.name}")
-      expect(thread.original_message.message).to eq("hello everyone")
+      expect(thread.original_message.message).to eq("In ##{room.slug}::room - hello everyone")
+      expect(thread.original_message.cooked).to include("/resenha/r/#{room.slug}")
       expect(thread.original_message.user_id).to eq(user.id)
       expect(thread.custom_fields[Resenha::THREAD_ROOM_ID_FIELD]).to eq(room.id.to_s)
+    end
+
+    it "inserts a first message containing interpolation tokens literally" do
+      state = described_class.post_message!(room, user, "see %{room} and \\1")
+
+      expect(live_thread(state).original_message.message).to eq(
+        "In ##{room.slug}::room - see %{room} and \\1",
+      )
     end
 
     it "opens a templated room's thread with a system starter and the message as first reply" do
@@ -278,6 +287,9 @@ RSpec.describe Resenha::ChatSession do
     end
 
     it "surfaces the chat plugin's own error when a message is rejected" do
+      # The opener is prefixed with the room hashtag, so the collision needs
+      # two identical replies rather than an opener and a reply.
+      described_class.post_message!(room, user, "opener")
       described_class.post_message!(room, user, "dup")
 
       # The chat plugin blocks an identical message posted seconds apart; that
