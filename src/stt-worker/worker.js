@@ -245,7 +245,11 @@ async function initialize(config) {
     };
 
     const options = {
-      backend: config.backend || "webgpu",
+      // Must be a mode parakeet.js maps to execution providers
+      // ("webgpu-hybrid"/"webgpu-strict"/"wasm"): the bare "webgpu" alias
+      // falls through its EP selection, leaving executionProviders empty,
+      // and onnxruntime-web then silently runs the encoder on the CPU EP.
+      backend: config.backend || "webgpu-hybrid",
       encoderQuant: config.encoderQuant || "fp32",
       decoderQuant: config.decoderQuant || "int8",
       cpuThreads: 1,
