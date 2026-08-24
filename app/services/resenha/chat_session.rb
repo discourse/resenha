@@ -6,8 +6,8 @@ module Resenha
   # A room is linked to a chat channel; each "chat session" lives in a thread on
   # that channel. A session's thread is only created when someone actually sends
   # a message: that first message roots the thread, prefixed with the room's
-  # hashtag so the opener links back to the room, and the thread is titled with
-  # the room, date and time so sessions stay distinguishable in the thread list.
+  # hashtag so the opener links back to the room, and the thread is titled
+  # after the room.
   #
   # From then on participants read and post through chat's own UI and API;
   # Resenha only tracks WHICH thread is the room's live session.
@@ -304,13 +304,7 @@ module Resenha
       end
 
       def title_for(room)
-        now = Time.zone.now
-        I18n.t(
-          "resenha.chat.default_thread_title",
-          room: room.name.to_s,
-          date: now.strftime("%Y-%m-%d"),
-          time: now.strftime("%H:%M"),
-        ).strip
+        I18n.t("resenha.chat.default_thread_title", room: room.name.to_s).strip
       end
 
       def redis

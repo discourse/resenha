@@ -115,14 +115,11 @@ RSpec.describe Resenha::ChatSession do
 
   describe ".post_message!" do
     it "opens a thread rooted on the first message, prefixed with a room hashtag linking back" do
-      state = nil
-      freeze_time(Time.zone.parse("2026-08-24 14:30")) do
-        state = described_class.post_message!(room, user, "hello everyone")
-      end
+      state = described_class.post_message!(room, user, "hello everyone")
 
       thread = live_thread(state)
       expect(thread.channel_id).to eq(channel.id)
-      expect(thread.title).to eq("Voice chat in #{room.name} - 2026-08-24 14:30")
+      expect(thread.title).to eq("Voice chat in #{room.name}")
       expect(thread.original_message.message).to eq("In ##{room.slug}::room - hello everyone")
       expect(thread.original_message.cooked).to include("/resenha/r/#{room.slug}")
       expect(thread.original_message.user_id).to eq(user.id)
@@ -141,7 +138,7 @@ RSpec.describe Resenha::ChatSession do
       room.update!(name: "Studio \\& \\1")
 
       thread = live_thread(described_class.post_message!(room, user, "hello everyone"))
-      expect(thread.title).to start_with("Voice chat in Studio \\& \\1")
+      expect(thread.title).to eq("Voice chat in Studio \\& \\1")
     end
 
     it "delivers to the live thread instead of spawning a competing one" do

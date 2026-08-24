@@ -379,7 +379,7 @@ en:
           chat_channel_none: "No channels with threading enabled. Turn it on in a channel's settings first."
           chat_idle_minutes: "New thread after idle (minutes)"
           chat_idle_minutes_help: "Minutes of inactivity before the next message starts a fresh thread."
-          chat_thread_hint: "The first message someone sends starts the thread, titled with the room, date and time."
+          chat_thread_hint: "The first message someone sends starts the thread, titled after the room."
           quality_section: "Quality"
           max_quality_profile: "Maximum quality"
           max_quality_profile_help: "Caps the voice, camera and screen share quality participants can pick in this room. Site default applies no room-level cap; site settings always apply."
