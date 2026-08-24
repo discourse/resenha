@@ -57,6 +57,20 @@ export default class PeerManager {
     return screenAudioTransceivers.get(pc) || null;
   }
 
+  // The screen-share audio sender also carries kind "audio"; mic-wide
+  // operations (voice quality, device switches) must only touch this one.
+  static micSenderFor(pc) {
+    const screenAudioSender = PeerManager.screenAudioTransceiverFor(pc)?.sender;
+    return (
+      pc
+        .getSenders()
+        .find(
+          (sender) =>
+            sender.track?.kind === "audio" && sender !== screenAudioSender
+        ) ?? null
+    );
+  }
+
   // Per JSEP, applying a remote offer only reuses transceivers created via
   // addTrack — never the pre-allocated addTransceiver one — so the answerer
   // gets a fresh recvonly transceiver for the offered video m-line and could
@@ -209,6 +223,33 @@ export default class PeerManager {
 
   allPeerConnections() {
     return this.#peerConnections;
+  }
+
+  micSendersFor(roomId) {
+    const senders = [];
+    for (const [, pc] of this.#peerConnections.get(roomId) || []) {
+      const sender = PeerManager.micSenderFor(pc);
+      if (sender?.track) {
+        senders.push(sender);
+      }
+    }
+    return senders;
+  }
+
+  async replaceMicTrack(newTrack) {
+    for (const [, peers] of this.#peerConnections) {
+      for (const [, pc] of peers) {
+        const sender = PeerManager.micSenderFor(pc);
+        if (sender) {
+          try {
+            await sender.replaceTrack(newTrack);
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.warn("[resenha] failed to replace track on peer", error);
+          }
+        }
+      }
+    }
   }
 
   async create(roomId, remoteUserId) {

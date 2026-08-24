@@ -3,7 +3,6 @@ import { action } from "@ember/object";
 import { getOwner } from "@ember/owner";
 import Service, { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
-import Composer from "discourse/models/composer";
 import Draft from "discourse/models/draft";
 import { i18n } from "discourse-i18n";
 import { confirmMeshPrivacy } from "../../components/modal/resenha-mesh-privacy-warning";
@@ -12,7 +11,7 @@ import { RING_SECONDS } from "../../lib/resenha/call-constants";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
 import IdleTracker, { idleThresholds } from "../../lib/resenha/idle-tracker";
 import { consumePendingInviteRef } from "../../lib/resenha/invite-ref";
-import LivekitRoomSession from "../../lib/resenha/livekit-session";
+import LivekitCoordinator from "../../lib/resenha/livekit-coordinator";
 import LocalAudioPipeline from "../../lib/resenha/local-audio-pipeline";
 import LocalVideoManager from "../../lib/resenha/local-video-manager";
 import {
@@ -41,6 +40,7 @@ import {
 import RemoteStreamRegistry from "../../lib/resenha/remote-stream-registry";
 import { activeRingingEntries } from "../../lib/resenha/ringing";
 import RoomMessageQueue from "../../lib/resenha/room-message-queue";
+import RosterHandler from "../../lib/resenha/roster-handler";
 import SignalingManager from "../../lib/resenha/signaling";
 import {
   playConnectedSound,
@@ -49,17 +49,12 @@ import {
   playMuteSound,
   playUndeafenSound,
   playUnmuteSound,
-  playUserJoinedSound,
-  playUserLeftSound,
   schedulePlaybackResume,
   startWaitingSound,
   stopCallSounds,
 } from "../../lib/resenha/sound-effects";
 import { participantCanSpeak } from "../../lib/resenha/stage-roles";
-import SubtitlesManager from "../../lib/resenha/subtitles";
-import TranscriptDraftSync from "../../lib/resenha/transcript-draft-sync";
-import { transcriptToMarkdown } from "../../lib/resenha/transcript-markdown";
-import TranscriptRecorder from "../../lib/resenha/transcript-recorder";
+import TranscriptionCoordinator from "../../lib/resenha/transcription-coordinator";
 import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
 export default class ResenhaWebrtcService extends Service {
@@ -83,18 +78,12 @@ export default class ResenhaWebrtcService extends Service {
   @tracked autoStatusEnabled = true;
   @tracked callWidgetHidden = false;
   @tracked outputDeviceId;
-  @tracked subtitlesEnabled = false;
-  @tracked subtitlesLoading = false;
-  @tracked subtitlesProgress = null;
-  @tracked captions = [];
-  @tracked transcriptRevision = 0;
   @tracked voiceQuality = preferredVoiceQuality();
   @tracked cameraQuality = preferredCameraQuality();
   @tracked screenQuality = preferredScreenQuality();
   @tracked screenContent = preferredScreenContent();
 
   #connectingRoomIds = new Set();
-  #roleChangeInProgress = new Set();
   #activeRoomIds = new Set();
   #joinRevision = 0;
   #connectingParticipantSnapshots = new Map();
@@ -110,11 +99,6 @@ export default class ResenhaWebrtcService extends Service {
   // and a room only becomes active after its join response arrives, so this
   // is always populated before it is read.
   #iceConfig = null;
-  #livekitSessions = new Map();
-  // Last-seen roster ids per livekit room. Mesh derives join/leave sounds and
-  // participant cleanup from peer churn; livekit rooms derive both from this
-  // roster diff instead.
-  #livekitRosterIds = new Map();
   #roomHandlerCallbacks = new Map();
   #deferredTeardownTimers = new Set();
   #pendingPlaybackElements = new WeakSet();
@@ -132,10 +116,9 @@ export default class ResenhaWebrtcService extends Service {
   #participantAudio;
   #heartbeat;
   #presencePending;
-  #subtitles;
-  #transcript;
-  #transcriptDraft;
-  #captionCounter = 0;
+  #livekit;
+  #roster;
+  #transcription;
 
   constructor() {
     super(...arguments);
@@ -175,7 +158,7 @@ export default class ResenhaWebrtcService extends Service {
       onPeerConnected: (roomId, uid, pc) => {
         const tier = this.effectiveVoiceQuality(roomId);
         if (tier !== QUALITY_STANDARD) {
-          const sender = this.#micSenderFor(pc);
+          const sender = PeerManager.micSenderFor(pc);
           if (sender?.track) {
             applyVoiceQuality([sender], tier);
           }
@@ -220,53 +203,36 @@ export default class ResenhaWebrtcService extends Service {
       onChange: () => this.remoteStreamsRevision++,
       onMicTrack: (roomId, userId, stream) => {
         this.#audioMonitor.ensure(roomId, userId, stream, false);
-        this.#subtitles.attach(roomId, userId, stream);
+        this.#transcription.attachRemote(roomId, userId, stream);
       },
     });
 
-    this.#transcript = new TranscriptRecorder({
-      onChange: () => {
-        this.transcriptRevision++;
-        this.#transcriptDraft?.markDirty();
-      },
-    });
-
-    this.#transcriptDraft = new TranscriptDraftSync({
-      save: (key, sequence, data) =>
-        Draft.save(key, sequence, data, this.messageBus.clientId),
-      buildData: () => this.#transcriptDraftData(),
-    });
-
-    this.#subtitles = new SubtitlesManager({
-      onCaption: (roomId, userId, utterance) => {
-        this.#upsertCaption(roomId, userId, utterance);
-        this.#transcript.record(
+    this.#transcription = new TranscriptionCoordinator({
+      siteSettings: this.siteSettings,
+      getCurrentUserId: () => this.currentUser?.id,
+      getRoom: (roomId) => this.resenhaRooms?.roomById(roomId),
+      isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
+      getActiveRoomIds: () => this.#activeRoomIds,
+      getRemoteUserIds: (roomId) =>
+        this.#remoteStreamRegistry.userIdsFor(roomId),
+      getRemoteStream: (roomId, userId) =>
+        this.#remoteStreamRegistry.streamFor(roomId, userId),
+      getLocalStream: () => this.localStream,
+      setParticipantTranscribing: (roomId, transcribing) =>
+        this.resenhaRooms?.setParticipantVideoState(
           roomId,
-          userId,
-          this.#participantUsername(roomId, userId),
-          utterance
-        );
-      },
-      onLoadingChange: () => {
-        this.subtitlesLoading = this.#subtitles.loading;
-        if (!this.subtitlesLoading) {
-          this.subtitlesProgress = null;
-        }
-      },
-      onProgress: ({ loaded, total }) => {
-        if (total > 0) {
-          this.subtitlesProgress = Math.min(
-            100,
-            Math.round((loaded / total) * 100)
-          );
-        }
-      },
-      onError: (error) => this.#handleSubtitlesError(error),
-    });
-    this.subtitlesEnabled =
-      this.subtitlesAvailable && this.#subtitles.isPreferred();
-    this.#subtitles.setEnabled(this.subtitlesEnabled, {
-      modelBaseUrl: this.#subtitlesModelBaseUrl,
+          this.currentUser?.id,
+          { is_transcribing: transcribing }
+        ),
+      saveDraft: (key, sequence, data) =>
+        Draft.save(key, sequence, data, this.messageBus.clientId),
+      openComposer: (opts) =>
+        getOwner(this).lookup("service:composer").open(opts),
+      showError: (messageKey) =>
+        this.toasts.error({
+          duration: 5000,
+          data: { message: i18n(messageKey) },
+        }),
     });
 
     this.#participantAudio = new ParticipantAudio({
@@ -289,7 +255,7 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#localVideo = new LocalVideoManager({
       peerManager: this.#peerManager,
-      getLivekitSession: (roomId) => this.#livekitSessions.get(roomId),
+      getLivekitSession: (roomId) => this.#livekit.sessionFor(roomId),
       isMeshRoom: (roomId) => this.#isMeshRoom(roomId),
       isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
       isConnectingRoom: (roomId) => this.#connectingRoomIds.has(roomId),
@@ -322,12 +288,86 @@ export default class ResenhaWebrtcService extends Service {
       isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
       getRoom: (roomId) => this.resenhaRooms?.roomById(roomId),
       isRoleChangeInProgress: (roomId) =>
-        this.#roleChangeInProgress.has(roomId),
+        this.#roster.isRoleChangeInProgress(roomId),
       onOfferHandled: async (roomId) => {
         if (this.localVideoKind) {
           await this.#localVideo.syncSenders(roomId);
         }
       },
+    });
+
+    this.#livekit = new LivekitCoordinator({
+      getCurrentUserId: () => this.currentUser?.id,
+      getLocalStream: () => this.localStream,
+      getLocalVideoTrack: () => this.localVideoTrack,
+      getLocalScreenAudioTrack: () => this.localScreenAudioTrack,
+      getLocalVideoKind: () => this.localVideoKind,
+      getVideoPublisherCount: (roomId) => this.videoPublisherCount(roomId),
+      getQualityTiers: (roomId) => ({
+        voice: this.effectiveVoiceQuality(roomId),
+        camera: this.effectiveCameraQuality(roomId),
+        screen: this.effectiveScreenQuality(roomId),
+      }),
+      onTrack: (roomId, userId, track, streams) =>
+        this.#remoteStreamRegistry.register(roomId, userId, track, streams),
+      removeRemoteStream: (roomId, userId) =>
+        this.#removeRemoteStream(roomId, userId),
+      getRemoteUserIds: (roomId) =>
+        this.#remoteStreamRegistry.userIdsFor(roomId),
+      bumpConnectionRevision: () => this.#bumpConnectionRevision(),
+      isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
+      isConnectingRoom: (roomId) => this.#connectingRoomIds.has(roomId),
+      isJoinCurrent: (revision) => this.#joinRevision === revision,
+      leave: (roomId, options) => this.leave({ id: roomId }, options),
+      unwindFailedJoin: (roomId) => {
+        this.#handleJoinFailure(roomId);
+        // The failure landed after the active-mark, which #handleJoinFailure
+        // (built for pre-mark failures) doesn't unwind.
+        this.#clearActiveRoomId(roomId);
+      },
+      showError: (messageKey) =>
+        this.toasts.error({
+          duration: 8000,
+          data: { message: i18n(messageKey) },
+        }),
+      showNotice: (messageKey) =>
+        this.toasts.default({
+          duration: 8000,
+          data: { message: i18n(messageKey) },
+        }),
+    });
+
+    this.#roster = new RosterHandler({
+      peerManager: this.#peerManager,
+      signaling: this.#signaling,
+      presencePending: this.#presencePending,
+      livekit: this.#livekit,
+      toasts: this.toasts,
+      getCurrentUserId: () => this.currentUser?.id,
+      getChatSound: () => this.currentUser?.chat_sound,
+      getRoom: (roomId) => this.resenhaRooms?.roomById(roomId),
+      isActiveRoom: (roomId) => this.#activeRoomIds.has(roomId),
+      isConnectingRoom: (roomId) => this.#connectingRoomIds.has(roomId),
+      isMeshRoom: (roomId) => this.#isMeshRoom(roomId),
+      registerTrack: (roomId, userId, track) =>
+        this.#remoteStreamRegistry.register(roomId, userId, track),
+      removeRemoteStream: (roomId, userId) =>
+        this.#removeRemoteStream(roomId, userId),
+      removeAllRemoteStreams: (roomId) => this.#removeAllRemoteStreams(roomId),
+      getLocalVideoKind: () => this.localVideoKind,
+      syncVideoSenders: (roomId) => this.#localVideo.syncSenders(roomId),
+      stopLocalVideo: () => this.#localVideo.stop(),
+      getLocalStream: () => this.localStream,
+      acquireMicrophone: () => this.#localAudio.acquireMicrophone(),
+      setMicEnabled: (enabled) => this.#setMicEnabled(enabled),
+      stopLocalAudio: () => this.#localAudio.stop(),
+      ensureLocalAudioMonitor: (roomId) =>
+        this.#audioMonitor.ensure(
+          roomId,
+          this.currentUser?.id,
+          this.localStream,
+          true
+        ),
     });
 
     try {
@@ -353,15 +393,12 @@ export default class ResenhaWebrtcService extends Service {
     this.#idleTracker.stop();
     this.#audioMonitor.destroyAll();
     this.#peerManager.destroyAll();
-    this.#livekitSessions.forEach((session) => session.disconnect());
-    this.#livekitSessions.clear();
-    this.#livekitRosterIds.clear();
+    this.#livekit.destroy();
     this.#signaling.destroy();
 
     this.#localVideo.destroy();
     this.#localAudio.stop();
-    this.#subtitles.destroy();
-    this.#transcriptDraft.dispose();
+    this.#transcription.destroy();
 
     this.#roomHandlerCallbacks.forEach((callback, roomId) => {
       this.resenhaRooms?.unregisterRoomHandler(roomId, callback);
@@ -440,283 +477,66 @@ export default class ResenhaWebrtcService extends Service {
     return this.#localAudio.setGateThreshold(value);
   }
 
-  // --- Subtitles ---
+  // --- Subtitles & transcript delegates ---
 
   get subtitlesAvailable() {
-    return (
-      !!this.siteSettings.resenha_subtitles_enabled &&
-      SubtitlesManager.isSupported()
-    );
+    return this.#transcription.available;
   }
 
-  get #subtitlesModelBaseUrl() {
-    return this.siteSettings.resenha_stt_model_base_url || null;
+  get subtitlesEnabled() {
+    return this.#transcription.enabled;
+  }
+
+  get subtitlesLoading() {
+    return this.#transcription.loading;
+  }
+
+  get subtitlesProgress() {
+    return this.#transcription.progress;
+  }
+
+  get captions() {
+    return this.#transcription.captions;
   }
 
   toggleSubtitles() {
-    const enabled = !this.subtitlesEnabled;
-    this.subtitlesEnabled = enabled;
-    this.#subtitles.setPreference(enabled);
-    this.#syncSttEngine();
+    this.#transcription.toggle();
   }
 
-  // --- Transcript recording ---
-
   get transcriptRecording() {
-    this.transcriptRevision;
-    return this.#transcript.recording;
+    return this.#transcription.recording;
   }
 
   get transcriptRoomId() {
-    this.transcriptRevision;
-    return this.#transcript.roomId;
+    return this.#transcription.roomId;
   }
 
   get transcriptEntries() {
-    this.transcriptRevision;
-    return this.#transcript.entries;
+    return this.#transcription.entries;
   }
 
   get transcriptEntriesRoomId() {
-    this.transcriptRevision;
-    return this.#transcript.entriesRoomId;
+    return this.#transcription.entriesRoomId;
   }
 
   get transcriptStartedAt() {
-    this.transcriptRevision;
-    return this.#transcript.startedAt;
+    return this.#transcription.startedAt;
   }
 
   isTranscribingRoom(roomId) {
-    return (
-      this.transcriptRecording &&
-      Number(this.transcriptRoomId) === Number(roomId)
-    );
+    return this.#transcription.isTranscribingRoom(roomId);
   }
 
   toggleTranscriptRecording(roomId) {
-    if (this.transcriptRecording) {
-      this.#stopTranscriptRecording();
-      return;
-    }
-
-    if (!this.subtitlesAvailable || !this.#activeRoomIds.has(roomId)) {
-      return;
-    }
-
-    this.#transcript.start(roomId);
-    this.#transcriptDraft.start(roomId, this.#transcript.startedAt);
-    this.#syncSttEngine();
-    this.#broadcastTranscribingState(roomId, true);
+    this.#transcription.toggleRecording(roomId);
   }
 
-  #stopTranscriptRecording() {
-    if (!this.#transcript.recording) {
-      return;
-    }
-
-    const roomId = this.#transcript.roomId;
-    // Entries survive the stop so the finished transcript can be consumed.
-    this.#transcript.stop();
-    // Flushes the last utterances into the draft; the draft itself stays.
-    const flushed = this.#transcriptDraft.stop();
-    if (this.currentUser?.id) {
-      this.#subtitles.detach(roomId, this.currentUser.id);
-    }
-    this.#syncSttEngine();
-    this.#broadcastTranscribingState(roomId, false);
-    return flushed;
-  }
-
-  // The consent signal: a roster flag every participant's client renders as
-  // a quiet badge. Best effort — the transcript itself never leaves this
-  // browser. Skipped when the room is already gone (leave teardown), since
-  // the roster dies with the membership.
-  #broadcastTranscribingState(roomId, transcribing) {
-    if (!this.#activeRoomIds.has(roomId)) {
-      return;
-    }
-
-    this.resenhaRooms?.setParticipantVideoState(roomId, this.currentUser?.id, {
-      is_transcribing: transcribing,
-    });
-    ajax(`/resenha/rooms/${roomId}/state`, {
-      type: "POST",
-      data: { transcribing },
-    }).catch(() => {});
-  }
-
-  // The speech-to-text pipeline serves two consumers: the caption overlay
-  // (subtitlesEnabled) and the transcript recorder. It runs while either
-  // wants it, tapping every remote stream plus — only while recording — the
-  // local mic, so the transcript includes the current user.
-  #syncSttEngine() {
-    const enabled = this.subtitlesEnabled || this.transcriptRecording;
-    this.#subtitles.setEnabled(enabled, {
-      modelBaseUrl: this.#subtitlesModelBaseUrl,
-    });
-
-    if (!enabled) {
-      this.captions = [];
-      return;
-    }
-
-    for (const roomId of this.#activeRoomIds) {
-      for (const userId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
-        this.#subtitles.attach(
-          roomId,
-          userId,
-          this.#remoteStreamRegistry.streamFor(roomId, userId)
-        );
-      }
-    }
-    this.#syncLocalTranscriptTap();
-  }
-
-  #transcriptDraftData() {
-    const entries = this.#transcript.entries;
-    if (!entries.length) {
-      return null;
-    }
-
-    const room = this.resenhaRooms?.roomById(this.#transcript.entriesRoomId);
-    return {
-      reply: transcriptToMarkdown(entries, {
-        chatMarkup: !!this.siteSettings.chat_enabled,
-      }),
-      title: i18n("resenha.transcript.draft_title", {
-        room: room?.name ?? "",
-      }),
-      action: Composer.CREATE_TOPIC,
-      archetypeId: "regular",
-    };
-  }
-
-  // Hands the transcript over to the composer: recording stops, the last
-  // utterances are flushed into the draft, and the draft opens for editing.
-  // The server copy wins — the user may have edited it in another session.
-  async openTranscriptDraft() {
-    const draftKey = this.#transcriptDraft.key;
-    if (!draftKey) {
-      return;
-    }
-
-    await this.#stopTranscriptRecording();
-
-    let draft = null;
-    let draftSequence = this.#transcriptDraft.sequence;
-    try {
-      const result = await Draft.get(draftKey);
-      draft = result.draft;
-      draftSequence = result.draft_sequence ?? draftSequence;
-    } catch {
-      // fall through to the locally built copy
-    }
-    draft ||= this.#transcriptDraftData();
-    if (!draft) {
-      return;
-    }
-
-    getOwner(this)
-      .lookup("service:composer")
-      .open({ draft, draftKey, draftSequence });
-  }
-
-  // Mirrors the local pipeline into the transcriber while recording. Safe to
-  // call repeatedly: attach is a no-op for an unchanged track and rebuilds
-  // the tap when a device switch or suppression change replaced it.
-  #syncLocalTranscriptTap() {
-    if (!this.transcriptRecording || !this.currentUser?.id) {
-      return;
-    }
-
-    const roomId = this.transcriptRoomId;
-    if (this.localStream) {
-      this.#subtitles.attach(roomId, this.currentUser.id, this.localStream);
-    } else {
-      this.#subtitles.detach(roomId, this.currentUser.id);
-    }
+  openTranscriptDraft() {
+    return this.#transcription.openDraft();
   }
 
   captionsFor(roomId) {
-    return this.captions.filter(
-      (caption) => Number(caption.roomId) === Number(roomId)
-    );
-  }
-
-  // One caption line per utterance: interim passes update the line in place
-  // while the speaker is still talking, the final pass replaces it, and a
-  // null text withdraws it (VAD misfire, or a final that heard nothing).
-  #upsertCaption(roomId, userId, { id: utteranceId, text, final }) {
-    const existingIndex = this.captions.findIndex(
-      (caption) =>
-        caption.utteranceId === utteranceId &&
-        Number(caption.userId) === Number(userId) &&
-        Number(caption.roomId) === Number(roomId)
-    );
-
-    if (!text) {
-      if (existingIndex !== -1) {
-        this.captions = this.captions.filter(
-          (_, index) => index !== existingIndex
-        );
-      }
-      return;
-    }
-
-    if (existingIndex !== -1) {
-      this.captions = this.captions.map((caption, index) =>
-        index === existingIndex
-          ? { ...caption, text, interim: !final, at: Date.now() }
-          : caption
-      );
-      return;
-    }
-
-    // Captions carry a display-name snapshot so a line outlives its speaker
-    // leaving the roster.
-    this.captions = [
-      ...this.captions.slice(-19),
-      {
-        id: ++this.#captionCounter,
-        utteranceId,
-        roomId,
-        userId,
-        username: this.#participantUsername(roomId, userId),
-        text,
-        interim: !final,
-        at: Date.now(),
-      },
-    ];
-  }
-
-  #participantUsername(roomId, userId) {
-    return (
-      this.resenhaRooms?.roomById(roomId)?.active_participants || []
-    ).find((p) => Number(p?.id) === Number(userId))?.username;
-  }
-
-  // Model or runtime failures turn the toggles back off (mirroring the noise
-  // suppression contract) so the UI never shows an enabled-but-dead state.
-  #handleSubtitlesError(error) {
-    // eslint-disable-next-line no-console
-    console.warn("[resenha] subtitles failed", error);
-
-    if (!this.subtitlesEnabled && !this.transcriptRecording) {
-      return;
-    }
-
-    this.subtitlesEnabled = false;
-    this.#subtitles.setPreference(false);
-    if (this.#transcript.recording) {
-      this.#transcript.stop();
-    }
-    this.#subtitles.setEnabled(false);
-    this.captions = [];
-    this.toasts.error({
-      duration: 5000,
-      data: { message: i18n("resenha.voice_settings.subtitles_failed") },
-    });
+    return this.#transcription.captionsFor(roomId);
   }
 
   get remoteStreams() {
@@ -786,137 +606,6 @@ export default class ResenhaWebrtcService extends Service {
 
   isLivekitRoom(roomId) {
     return this.#roomTransports.get(roomId) === "livekit";
-  }
-
-  // The server already minted this room's token, so from here a failure is
-  // client-side (firewall blocking the SFU, unsupported browser). Follow the
-  // mic-failure precedent: tell the server we left, then unwind the local
-  // join. Never fall back to mesh client-side — other clients may reach the
-  // SFU fine, and a lone mesh joiner would split future joins.
-  async #connectLivekitRoom(room, livekit, revision) {
-    let failureMessage = null;
-
-    if (!LivekitRoomSession.isBrowserSupported()) {
-      failureMessage = "resenha.livekit.browser_unsupported";
-    } else if (!livekit?.url || !livekit?.token) {
-      failureMessage = "resenha.livekit.connect_failed";
-    } else {
-      const session = this.#buildLivekitSession(room.id);
-      this.#livekitSessions.set(room.id, session);
-
-      try {
-        await session.connect(livekit.url, livekit.token);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha-livekit] failed to connect to the media server for room ${room.id}`,
-          error
-        );
-        failureMessage = error?.unsupportedBrowser
-          ? "resenha.livekit.browser_unsupported"
-          : "resenha.livekit.connect_failed";
-
-        if (this.#livekitSessions.get(room.id) === session) {
-          this.#livekitSessions.delete(room.id);
-        }
-        session.disconnect();
-      }
-    }
-
-    if (failureMessage) {
-      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
-      this.#handleJoinFailure(room.id);
-      // The failure landed after the active-mark, which #handleJoinFailure
-      // (built for pre-mark failures) doesn't unwind.
-      this.#clearActiveRoomId(room.id);
-      this.toasts.error({
-        duration: 8000,
-        data: { message: i18n(failureMessage) },
-      });
-      return false;
-    }
-
-    if (this.#joinRevision !== revision) {
-      // Superseded while connecting; the superseding join already tore this
-      // room down (disconnecting the session), so only the server needs
-      // telling.
-      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
-      return false;
-    }
-
-    return true;
-  }
-
-  #buildLivekitSession(roomId) {
-    return new LivekitRoomSession({
-      roomId,
-      currentUserId: this.currentUser?.id,
-      getLocalStream: () => this.localStream,
-      getLocalVideoTrack: () => this.localVideoTrack,
-      getLocalScreenAudioTrack: () => this.localScreenAudioTrack,
-      getLocalVideoKind: () => this.localVideoKind,
-      getVideoPublisherCount: () => this.videoPublisherCount(roomId),
-      onTrack: (id, userId, track, streams) =>
-        this.#remoteStreamRegistry.register(id, userId, track, streams),
-      onParticipantGone: (id, userId) => this.#removeRemoteStream(id, userId),
-      onDisconnected: (kind, reason) =>
-        this.#handleLivekitDisconnected(roomId, kind, reason),
-      onConnectionChange: () => this.#bumpConnectionRevision(),
-      mintToken: () =>
-        ajax(`/resenha/rooms/${roomId}/livekit_token`, { type: "POST" }),
-      getQualityTiers: () => ({
-        voice: this.effectiveVoiceQuality(roomId),
-        camera: this.effectiveCameraQuality(roomId),
-        screen: this.effectiveScreenQuality(roomId),
-      }),
-    });
-  }
-
-  async #handleLivekitDisconnected(roomId, kind, reason) {
-    const session = this.#livekitSessions.get(roomId);
-    if (!session || !this.#activeRoomIds.has(roomId)) {
-      return;
-    }
-
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[resenha-livekit] disconnected from the media server for room ${roomId} (${reason})`
-    );
-
-    if (kind === "duplicate_identity") {
-      // A newer tab for the same user took over the media session. Its join
-      // overwrote our session id server-side, so a normal leave would close
-      // the new tab's session row and drop the user from the roster —
-      // tear down locally only.
-      this.leave({ id: roomId }, { skipServer: true });
-      this.toasts.default({
-        duration: 8000,
-        data: { message: i18n("resenha.livekit.duplicate_tab") },
-      });
-      return;
-    }
-
-    this.#bumpConnectionRevision();
-    const outcome = await session.reconnectWithToken();
-
-    if (outcome === "reconnected") {
-      this.#bumpConnectionRevision();
-    } else if (outcome === "gone") {
-      // The room instance ended while we were disconnected; leave cleanly
-      // and offer a rejoin.
-      this.leave({ id: roomId });
-      this.toasts.default({
-        duration: 8000,
-        data: { message: i18n("resenha.livekit.room_ended") },
-      });
-    } else if (outcome === "failed") {
-      this.leave({ id: roomId });
-      this.toasts.error({
-        duration: 8000,
-        data: { message: i18n("resenha.livekit.reconnect_failed") },
-      });
-    }
-    // "aborted": the session was torn down (leave, new join) mid-ladder.
   }
 
   async join(room) {
@@ -1040,17 +729,7 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (this.localStream) {
-      if (this.pttEnabled) {
-        this.audioEnabled = false;
-        for (const track of this.localStream.getAudioTracks()) {
-          track.enabled = false;
-        }
-      } else {
-        this.audioEnabled = true;
-        for (const track of this.localStream.getAudioTracks()) {
-          track.enabled = true;
-        }
-      }
+      this.#setMicEnabled(!this.pttEnabled);
     }
 
     // Only mark the room as active after the microphone is ready.
@@ -1061,7 +740,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#setActiveRoomId(room.id);
 
     if (!this.#isMeshRoom(room.id)) {
-      const connected = await this.#connectLivekitRoom(
+      const connected = await this.#livekit.connect(
         room,
         response?.livekit,
         revision
@@ -1091,7 +770,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingParticipantSnapshots.delete(room.id);
 
     if (latestParticipants) {
-      await this.#handleParticipants(room.id, {
+      await this.#roster.handleParticipants(room.id, {
         participants: latestParticipants,
       });
     }
@@ -1274,18 +953,19 @@ export default class ResenhaWebrtcService extends Service {
     return this.#participantAudio.isMuted(roomId, userId);
   }
 
+  #setMicEnabled(enabled) {
+    this.audioEnabled = enabled;
+    for (const track of this.localStream?.getAudioTracks() || []) {
+      track.enabled = enabled;
+    }
+  }
+
   toggleMute() {
     if (this.pttEnabled) {
       return;
     }
 
-    this.audioEnabled = !this.audioEnabled;
-
-    if (this.localStream) {
-      for (const track of this.localStream.getAudioTracks()) {
-        track.enabled = this.audioEnabled;
-      }
-    }
+    this.#setMicEnabled(!this.audioEnabled);
 
     if (this.audioEnabled) {
       playUnmuteSound(this.currentUser?.chat_sound);
@@ -1312,28 +992,9 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (this.deafened) {
-      this.audioEnabled = false;
-      if (this.localStream) {
-        for (const track of this.localStream.getAudioTracks()) {
-          track.enabled = false;
-        }
-      }
+      this.#setMicEnabled(false);
     } else {
-      if (this.pttEnabled) {
-        this.audioEnabled = false;
-        if (this.localStream) {
-          for (const track of this.localStream.getAudioTracks()) {
-            track.enabled = false;
-          }
-        }
-      } else {
-        this.audioEnabled = true;
-        if (this.localStream) {
-          for (const track of this.localStream.getAudioTracks()) {
-            track.enabled = true;
-          }
-        }
-      }
+      this.#setMicEnabled(!this.pttEnabled);
     }
 
     this.#participantAudio.applyAll();
@@ -1423,31 +1084,12 @@ export default class ResenhaWebrtcService extends Service {
     this.#localVideo.refreshQuality({ contentHintChanged: true });
   }
 
-  // The screen-share audio sender also carries kind "audio"; voice quality
-  // must only touch the mic sender.
-  #micSenderFor(pc) {
-    const screenAudioSender = PeerManager.screenAudioTransceiverFor(pc)?.sender;
-    return (
-      pc
-        .getSenders()
-        .find(
-          (sender) =>
-            sender.track?.kind === "audio" && sender !== screenAudioSender
-        ) ?? null
-    );
-  }
-
   async #applyVoiceQualityToPeers() {
-    for (const [roomId, peers] of this.#peerManager.allPeerConnections()) {
-      const tier = this.effectiveVoiceQuality(roomId);
-      const senders = [];
-      for (const [, pc] of peers) {
-        const sender = this.#micSenderFor(pc);
-        if (sender?.track) {
-          senders.push(sender);
-        }
-      }
-      await applyVoiceQuality(senders, tier);
+    for (const [roomId] of this.#peerManager.allPeerConnections()) {
+      await applyVoiceQuality(
+        this.#peerManager.micSendersFor(roomId),
+        this.effectiveVoiceQuality(roomId)
+      );
     }
   }
 
@@ -1595,7 +1237,7 @@ export default class ResenhaWebrtcService extends Service {
     // The roster flag above drives tiles on both transports; on the SFU the
     // watching state additionally gates the actual video subscriptions.
     if (!this.#isMeshRoom(roomId)) {
-      this.#livekitSessions.get(roomId)?.setVideoSubscriptionsEnabled(watching);
+      this.#livekit.sessionFor(roomId)?.setVideoSubscriptionsEnabled(watching);
     }
   }
 
@@ -1682,13 +1324,7 @@ export default class ResenhaWebrtcService extends Service {
     this.pttEnabled = true;
     this.pttActive = false;
 
-    this.audioEnabled = false;
-    if (this.localStream) {
-      for (const track of this.localStream.getAudioTracks()) {
-        track.enabled = false;
-      }
-    }
-
+    this.#setMicEnabled(false);
     this.#broadcastMuteState();
 
     if (this.#activeRoomIds.size > 0) {
@@ -1701,13 +1337,7 @@ export default class ResenhaWebrtcService extends Service {
     this.pttEnabled = false;
     this.pttActive = false;
 
-    this.audioEnabled = true;
-    if (this.localStream) {
-      for (const track of this.localStream.getAudioTracks()) {
-        track.enabled = true;
-      }
-    }
-
+    this.#setMicEnabled(true);
     this.#broadcastMuteState();
   }
 
@@ -1787,14 +1417,8 @@ export default class ResenhaWebrtcService extends Service {
     this.#connectingParticipantSnapshots.delete(roomId);
     this.#connectingSignalQueue.delete(roomId);
     this.#roomTransports.delete(roomId);
-    this.#livekitRosterIds.delete(roomId);
     this.#presencePending.clearAll(roomId);
-
-    const livekitSession = this.#livekitSessions.get(roomId);
-    if (livekitSession) {
-      this.#livekitSessions.delete(roomId);
-      livekitSession.disconnect();
-    }
+    this.#livekit.disconnectRoom(roomId);
 
     const callback = this.#roomHandlerCallbacks.get(roomId);
     if (callback) {
@@ -1808,12 +1432,7 @@ export default class ResenhaWebrtcService extends Service {
     this.#signaling.clearForRoom(roomId);
     this.#signaling.clearHttpQueue(roomId);
     this.#roomMessageQueue.clear(roomId);
-
-    // Leaving the recorded room ends the recording; the transcript gathered
-    // so far is kept for consumption.
-    if (this.isTranscribingRoom(roomId)) {
-      this.#stopTranscriptRecording();
-    }
+    this.#transcription.stopIfTranscribing(roomId);
   }
 
   #handleRoomMessage(roomId, payload) {
@@ -1874,11 +1493,11 @@ export default class ResenhaWebrtcService extends Service {
         await this.#meshSignals.handle(roomId, payload);
       }
     } else if (payload.type === "participants") {
-      await this.#handleParticipants(roomId, payload);
+      await this.#roster.handleParticipants(roomId, payload);
     } else if (payload.type === "role_change") {
-      await this.#handleRoleChange(roomId, payload);
+      await this.#roster.handleRoleChange(roomId, payload);
     } else if (payload.type === "hand_raise") {
-      this.#handleHandRaise(roomId, payload);
+      this.#roster.handleHandRaise(roomId, payload);
     } else if (payload.type === "kicked") {
       this.#handleKicked(roomId);
     } else if (payload.type === "room_updated") {
@@ -1888,362 +1507,10 @@ export default class ResenhaWebrtcService extends Service {
     }
   }
 
-  async #handleParticipants(roomId, payload) {
-    const participants = payload.participants || [];
-    const participantIds = new Set(
-      participants.map((participant) => Number(participant.id))
-    );
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[resenha] handleParticipants room=${roomId}, participants=[${Array.from(participantIds)}], currentUser=${this.currentUser?.id}`
-    );
-
-    if (this.#roleChangeInProgress.has(roomId)) {
-      return;
-    }
-
-    const room = this.resenhaRooms?.roomById(roomId);
-    const isStage = room?.room_type === "stage";
-    const iCanSpeak = room ? this.#canSpeakInRoom(room) : true;
-
-    let hasPeerLeft = false;
-    let hasNewPeer = false;
-
-    // Peer create/destroy and the presence-pending machinery are mesh-only;
-    // other transports carry media outside the roster diff.
-    if (this.#isMeshRoom(roomId)) {
-      const peers = this.#peerManager.getRoomPeers(roomId);
-      const existingPeerIds = new Set(peers?.keys() || []);
-
-      peers?.forEach((pc, remoteUserId) => {
-        if (!participantIds.has(remoteUserId)) {
-          if (this.#presencePending.has(roomId, remoteUserId)) {
-            return;
-          }
-          hasPeerLeft = true;
-          this.#peerManager.destroy(roomId, remoteUserId);
-        }
-      });
-
-      for (const participant of participants) {
-        const participantId = Number(participant.id);
-        if (!participantId || participantId <= 0) {
-          continue;
-        }
-        if (participantId === this.currentUser?.id) {
-          continue;
-        }
-
-        if (isStage) {
-          const theyCanSpeak =
-            participant.role === "moderator" || participant.role === "speaker";
-          const shouldConnect = iCanSpeak || theyCanSpeak;
-
-          if (!shouldConnect) {
-            if (this.#peerManager.has(roomId, participantId)) {
-              this.#peerManager.destroy(roomId, participantId);
-            }
-            continue;
-          }
-        }
-
-        if (!this.#peerManager.has(roomId, participantId)) {
-          if (
-            existingPeerIds.size > 0 ||
-            !this.#connectingRoomIds.has(roomId)
-          ) {
-            hasNewPeer = true;
-          }
-          // eslint-disable-next-line no-console
-          console.log(
-            `[resenha] creating peer connection to user ${participantId}`
-          );
-
-          await this.#createAndOfferPeer(roomId, participantId);
-        } else {
-          this.#presencePending.clear(roomId, participantId);
-        }
-      }
-    } else {
-      ({ hasNewPeer, hasPeerLeft } = this.#syncLivekitRoster(
-        roomId,
-        participants
-      ));
-    }
-
-    if (this.#activeRoomIds.has(roomId)) {
-      if (hasNewPeer) {
-        // If this client was ringing (caller waiting alone in a call room),
-        // someone arriving means the call was answered.
-        stopCallSounds();
-        playUserJoinedSound(this.currentUser?.chat_sound);
-      } else if (hasPeerLeft) {
-        playUserLeftSound(this.currentUser?.chat_sound);
-      }
-    }
-
-    this.#syncRemoteVideoTracks(roomId, participants);
-
-    if (!this.#isMeshRoom(roomId)) {
-      // Publisher-count changes move camera subscriptions between simulcast
-      // layers.
-      this.#livekitSessions.get(roomId)?.updateSubscriberQuality();
-    }
-
-    if (this.localVideoKind) {
-      await this.#localVideo.syncSenders(roomId);
-    }
-  }
-
-  // Mesh gets participant cleanup for free by destroying peers on the roster
-  // diff. The SFU doesn't consult our roster, so a participant expelled from
-  // it (heartbeat TTL expiry, kick with a failed server-side eviction) would
-  // stay audible forever — voice-canvas plays every stream in
-  // `remoteStreams`. Drop registry entries and subscriptions for identities
-  // absent from the roster, and derive the join/leave sounds mesh derives
-  // from peer churn.
-  #syncLivekitRoster(roomId, participants) {
-    const known = this.#livekitRosterIds.get(roomId) || new Set();
-    const next = new Set();
-    let hasNewPeer = false;
-    let hasPeerLeft = false;
-
-    for (const participant of participants) {
-      const participantId = Number(participant?.id);
-      if (
-        !participantId ||
-        participantId <= 0 ||
-        participantId === this.currentUser?.id
-      ) {
-        continue;
-      }
-
-      next.add(participantId);
-
-      // Mirror the mesh rule: the initial roster processed while the join is
-      // still connecting represents people already there, not arrivals.
-      if (
-        !known.has(participantId) &&
-        (known.size > 0 || !this.#connectingRoomIds.has(roomId))
-      ) {
-        hasNewPeer = true;
-      }
-    }
-
-    for (const knownId of known) {
-      if (!next.has(knownId)) {
-        hasPeerLeft = true;
-      }
-    }
-
-    this.#livekitRosterIds.set(roomId, next);
-
-    const session = this.#livekitSessions.get(roomId);
-    for (const entryUserId of this.#remoteStreamRegistry.userIdsFor(roomId)) {
-      if (
-        entryUserId &&
-        entryUserId !== this.currentUser?.id &&
-        !next.has(entryUserId)
-      ) {
-        session?.dropParticipant(entryUserId);
-        this.#removeRemoteStream(roomId, entryUserId);
-      }
-    }
-
-    return { hasNewPeer, hasPeerLeft };
-  }
-
-  #syncRemoteVideoTracks(roomId, participants) {
-    for (const participant of participants || []) {
-      const participantId = Number(participant?.id);
-      if (!participantId || participantId === this.currentUser?.id) {
-        continue;
-      }
-
-      if (!participant.is_video_on && !participant.is_screen_sharing) {
-        continue;
-      }
-
-      const track = this.#peerManager.remoteVideoTrack(roomId, participantId);
-      if (track) {
-        this.#remoteStreamRegistry.register(roomId, participantId, track);
-      }
-    }
-  }
-
   #handleKicked(roomId) {
     // eslint-disable-next-line no-console
     console.log(`[resenha] kicked from room ${roomId}`);
     this.leave({ id: roomId });
-  }
-
-  async #handleRoleChange(roomId, payload) {
-    const targetUserId = Number(payload.user_id);
-    const newRole = payload.role;
-
-    if (targetUserId === this.currentUser?.id) {
-      await this.#handleOwnRoleChange(roomId, newRole);
-    } else {
-      this.#handlePeerRoleChange(roomId, targetUserId);
-    }
-  }
-
-  async #handleOwnRoleChange(roomId, newRole) {
-    const canSpeak = newRole === "speaker" || newRole === "moderator";
-
-    // Block #handleParticipants while we reconfigure the local stream,
-    // so the subsequent "participants" broadcast doesn't create peers
-    // before the mic is ready.
-    this.#roleChangeInProgress.add(roomId);
-
-    // Destroy all existing peers immediately. Mesh-only: on other transports
-    // the media session survives a role change untouched, so wiping the
-    // remote registry would silence everyone until they republished.
-    if (this.#isMeshRoom(roomId)) {
-      this.#peerManager.destroyRoom(roomId);
-      this.#removeAllRemoteStreams(roomId);
-      this.#signaling.clearForRoom(roomId);
-      this.#signaling.clearHttpQueue(roomId);
-    }
-
-    if (canSpeak) {
-      if (!this.localStream) {
-        const acquired = await this.#localAudio.acquireMicrophone();
-        if (!acquired) {
-          this.#roleChangeInProgress.delete(roomId);
-          this.toasts.error({
-            duration: 5000,
-            data: { message: i18n("resenha.stage.mic_denied") },
-          });
-          return;
-        }
-
-        this.audioEnabled = true;
-        for (const track of this.localStream.getAudioTracks()) {
-          track.enabled = true;
-        }
-      }
-
-      this.#audioMonitor.ensure(
-        roomId,
-        this.currentUser?.id,
-        this.localStream,
-        true
-      );
-
-      this.toasts.success({
-        duration: 5000,
-        data: { message: i18n("resenha.stage.promoted_to_speaker") },
-      });
-    } else {
-      if (this.localVideoKind) {
-        await this.#localVideo.stop();
-      }
-      this.#localAudio.stop();
-      this.audioEnabled = false;
-      this.toasts.default({
-        duration: 5000,
-        data: { message: i18n("resenha.stage.demoted_to_listener") },
-      });
-    }
-
-    this.#roleChangeInProgress.delete(roomId);
-
-    // Rebuild peers now that localStream is ready (or stopped). Mesh-only:
-    // peer rebuilds are meaningless on other transports.
-    if (this.#isMeshRoom(roomId)) {
-      this.#reconnectAllPeers(roomId);
-    } else {
-      // The SFU connection survives the role change; just publish or release
-      // the microphone to match the new role.
-      try {
-        await this.#livekitSessions.get(roomId)?.refreshPublications();
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha-livekit] failed to refresh publications after a role change in room ${roomId}`,
-          error
-        );
-      }
-    }
-  }
-
-  #handleHandRaise(roomId, payload) {
-    const targetUserId = Number(payload.user_id);
-    const isSelf = targetUserId === this.currentUser?.id;
-
-    if (isSelf && !payload.raised && payload.reason === "dismissed") {
-      this.toasts.default({
-        duration: 5000,
-        data: { message: i18n("resenha.stage.request_dismissed") },
-      });
-      return;
-    }
-
-    const room = this.resenhaRooms?.roomById(roomId);
-    if (!isSelf && payload.raised && room?.can_manage) {
-      const participant = (room.active_participants || []).find(
-        (p) => Number(p?.id) === targetUserId
-      );
-      if (participant) {
-        this.toasts.default({
-          duration: 5000,
-          data: {
-            message: i18n("resenha.stage.hand_raised_toast", {
-              username: participant.username,
-            }),
-          },
-        });
-      }
-    }
-  }
-
-  #handlePeerRoleChange(roomId, userId) {
-    // Destroy the stale peer; the subsequent "participants" broadcast
-    // from the server will rebuild connections with the correct topology.
-    if (this.#peerManager.has(roomId, userId)) {
-      this.#peerManager.destroy(roomId, userId);
-      this.#removeRemoteStream(roomId, userId);
-    }
-  }
-
-  async #createAndOfferPeer(roomId, remoteUserId) {
-    await this.#peerManager.create(roomId, remoteUserId);
-    if (this.currentUser?.id <= remoteUserId) {
-      await this.#peerManager.initiateOffer(roomId, remoteUserId);
-    } else {
-      this.#peerManager.scheduleOfferRetry(roomId, remoteUserId);
-    }
-  }
-
-  #reconnectAllPeers(roomId) {
-    this.#peerManager.destroyRoom(roomId);
-    this.#removeAllRemoteStreams(roomId);
-    this.#signaling.clearForRoom(roomId);
-    this.#signaling.clearHttpQueue(roomId);
-
-    const room = this.resenhaRooms?.roomById(roomId);
-    if (!room) {
-      return;
-    }
-
-    const participants = room.active_participants || [];
-    const iCanSpeak = this.#canSpeakInRoom(room);
-
-    for (const participant of participants) {
-      const participantId = Number(participant?.id);
-      if (participantId === this.currentUser?.id) {
-        continue;
-      }
-
-      const theyCanSpeak = participantCanSpeak(room, participantId);
-      const shouldConnect = iCanSpeak || theyCanSpeak;
-
-      if (shouldConnect) {
-        this.#createAndOfferPeer(roomId, participantId);
-      }
-    }
   }
 
   #currentUserParticipant() {
@@ -2288,14 +1555,7 @@ export default class ResenhaWebrtcService extends Service {
   }
 
   #removeAllRemoteStreams(roomId) {
-    this.#subtitles.detachRoom(roomId);
-    // Rejoining should start with a clean overlay, not replay whatever was
-    // on screen (or still in the transcription queue) when we left.
-    if (this.captions.length) {
-      this.captions = this.captions.filter(
-        (caption) => Number(caption.roomId) !== Number(roomId)
-      );
-    }
+    this.#transcription.detachRoom(roomId);
     this.#remoteStreamRegistry
       .clearRoom(roomId)
       .forEach((userId) => this.#audioMonitor.teardown(roomId, userId));
@@ -2306,7 +1566,7 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    this.#subtitles.detach(roomId, remoteUserId);
+    this.#transcription.detach(roomId, remoteUserId);
     this.#audioMonitor.teardown(roomId, remoteUserId);
     this.#participantAudio.untrackElement(roomId, remoteUserId);
   }
@@ -2357,7 +1617,7 @@ export default class ResenhaWebrtcService extends Service {
       }
     }
 
-    this.#syncLocalTranscriptTap();
+    this.#transcription.syncLocalTap();
   }
 
   #applyLocalTrackState(stream) {
@@ -2372,36 +1632,8 @@ export default class ResenhaWebrtcService extends Service {
       return;
     }
 
-    for (const [roomId, session] of this.#livekitSessions) {
-      try {
-        await session.replaceAudioTrack(newTrack);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[resenha-livekit] failed to replace the published audio track for room ${roomId}`,
-          error
-        );
-      }
-    }
-
-    for (const [, peers] of this.#peerManager.allPeerConnections()) {
-      for (const [, pc] of peers) {
-        // The screen-share audio sender also carries kind "audio"; a mic
-        // device switch or noise suppression toggle must not stomp it.
-        const screenAudioSender =
-          PeerManager.screenAudioTransceiverFor(pc)?.sender;
-        for (const sender of pc.getSenders()) {
-          if (sender.track?.kind === "audio" && sender !== screenAudioSender) {
-            try {
-              await sender.replaceTrack(newTrack);
-            } catch (error) {
-              // eslint-disable-next-line no-console
-              console.warn("[resenha] failed to replace track on peer", error);
-            }
-          }
-        }
-      }
-    }
+    await this.#livekit.replaceAudioTrack(newTrack);
+    await this.#peerManager.replaceMicTrack(newTrack);
   }
 
   // --- Idle tracker callbacks ---
@@ -2454,12 +1686,7 @@ export default class ResenhaWebrtcService extends Service {
       this.#idleTracker.lastBroadcastedIdleState = null;
 
       if (this.audioEnabled) {
-        this.audioEnabled = false;
-        if (this.localStream) {
-          for (const track of this.localStream.getAudioTracks()) {
-            track.enabled = false;
-          }
-        }
+        this.#setMicEnabled(false);
         this.#broadcastMuteState();
       }
 
@@ -2497,25 +1724,12 @@ export default class ResenhaWebrtcService extends Service {
 
   #handlePttPress() {
     this.pttActive = true;
-    this.audioEnabled = true;
-
-    if (this.localStream) {
-      for (const track of this.localStream.getAudioTracks()) {
-        track.enabled = true;
-      }
-    }
-
+    this.#setMicEnabled(true);
     this.#broadcastMuteState();
   }
 
   #handlePttRelease() {
     this.pttActive = false;
-    this.audioEnabled = false;
-
-    if (this.localStream) {
-      for (const track of this.localStream.getAudioTracks()) {
-        track.enabled = false;
-      }
-    }
+    this.#setMicEnabled(false);
   }
 }
