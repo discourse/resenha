@@ -4,6 +4,15 @@ module Resenha
   class UserStatusManager
     EMOJI = "studio_microphone"
     AFK_EMOJI = "zzz"
+    # Users whose current status was written by us. Emoji alone can't identify
+    # ownership — anyone can pick zzz from the status picker — and the sweep
+    # must never touch a status it didn't set. Self-healing: heartbeats
+    # re-add, and Redis drops the key once the set empties.
+    OWNERS_KEY = "resenha:status_owners"
+    # A status younger than this is skipped by the sweep: it may have been set
+    # by a join that raced the sweep's liveness snapshot, and the heartbeat
+    # only refreshes statuses that still exist, so a wrong clear would stick.
+    STALE_GRACE_PERIOD = 30.seconds
 
     # Statuses carry no ends_at: they mirror room presence, not a timer, so
     # the tooltip shows no "until" line. Leave/kick clear them directly;
@@ -25,21 +34,42 @@ module Resenha
 
     def self.clear_voice_status(user)
       return unless SiteSetting.enable_user_status
+
+      Discourse.redis.srem(OWNERS_KEY, user.id)
       return unless resenha_status_active?(user)
 
       user.clear_status!
     end
 
-    # Reaps statuses whose owner is no longer live in any room — the backstop
-    # for exits that never hit leave/kick (crashed client, dead network,
-    # sleeping laptop). Live users' statuses are left untouched.
+    # Reaps owned statuses whose user is no longer live in any room — the
+    # backstop for exits that never hit leave/kick (crashed client, dead
+    # network, sleeping laptop). Only statuses we set are candidates.
     def self.clear_stale_statuses(live_user_ids)
       return unless SiteSetting.enable_user_status
 
-      UserStatus
-        .where(emoji: [EMOJI, AFK_EMOJI])
-        .where.not(user_id: live_user_ids)
-        .find_each { |status| User.find_by(id: status.user_id)&.clear_status! }
+      owner_ids = Discourse.redis.smembers(OWNERS_KEY).map(&:to_i)
+      stale_ids = owner_ids - live_user_ids
+      return if stale_ids.empty?
+
+      released_ids = []
+      users_by_id = User.where(id: stale_ids).includes(:user_status).index_by(&:id)
+      stale_ids.each do |user_id|
+        user = users_by_id[user_id]
+        status = user&.user_status
+
+        if user.nil? || status.nil? || !resenha_emoji?(status.emoji)
+          # Deleted user, or the status was since cleared/replaced: ownership
+          # lapsed on its own.
+          released_ids << user_id
+        elsif status.set_at <= STALE_GRACE_PERIOD.ago
+          user.clear_status!
+          released_ids << user_id
+        end
+        # Within the grace window: a join may have raced this sweep's liveness
+        # snapshot — the next run decides.
+      end
+
+      Discourse.redis.srem(OWNERS_KEY, released_ids) if released_ids.any?
     end
 
     def self.resenha_status_active?(user)
@@ -60,11 +90,17 @@ module Resenha
 
     # Without an expiry to roll, an unchanged status needs no upsert — this
     # keeps the every-beat heartbeat call from republishing over message bus.
+    # A matching status that still carries an ends_at (written before expiries
+    # were dropped) must be rewritten, or it would expire out from under a
+    # live user.
     private_class_method def self.set_status(user, description, emoji)
       status = user.user_status
-      return if status && status.description == description && status.emoji == emoji
+      unless status && status.ends_at.nil? && status.description == description &&
+               status.emoji == emoji
+        user.set_status!(description, emoji)
+      end
 
-      user.set_status!(description, emoji)
+      Discourse.redis.sadd(OWNERS_KEY, user.id)
     end
 
     private_class_method def self.user_has_non_resenha_status?(user)

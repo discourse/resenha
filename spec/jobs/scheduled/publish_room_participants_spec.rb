@@ -107,12 +107,16 @@ RSpec.describe Jobs::PublishRoomParticipants do
       SiteSetting.resenha_auto_status_enabled = true
     end
 
+    # Statuses set within the sweep's grace window are skipped, so specs set
+    # them in the past and re-add the live user's heartbeat after traveling.
     it "clears the status of a participant whose heartbeat lapsed" do
       Resenha::ParticipantTracker.add(room.id, user1.id)
       Resenha::ParticipantTracker.add(room.id, user2.id)
       Resenha::UserStatusManager.set_voice_status(user1, room)
       Resenha::UserStatusManager.set_voice_status(user2, room)
 
+      freeze_time(1.minute.from_now)
+      Resenha::ParticipantTracker.add(room.id, user1.id)
       Discourse.redis.zadd(
         "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
         1.hour.ago.to_f,
@@ -128,6 +132,8 @@ RSpec.describe Jobs::PublishRoomParticipants do
     it "clears lingering statuses of a room that fully emptied" do
       Resenha::ParticipantTracker.add(room.id, user1.id)
       Resenha::UserStatusManager.set_voice_status(user1, room)
+
+      freeze_time(1.minute.from_now)
       Discourse.redis.zadd(
         "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
         1.hour.ago.to_f,
@@ -142,9 +148,10 @@ RSpec.describe Jobs::PublishRoomParticipants do
     it "keeps a user's status while they are live in another active room" do
       other_room = Fabricate(:resenha_room)
       Resenha::ParticipantTracker.add(room.id, user1.id)
-      Resenha::ParticipantTracker.add(other_room.id, user1.id)
       Resenha::UserStatusManager.set_voice_status(user1, other_room)
 
+      freeze_time(1.minute.from_now)
+      Resenha::ParticipantTracker.add(other_room.id, user1.id)
       Discourse.redis.zadd(
         "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
         1.hour.ago.to_f,
@@ -156,12 +163,25 @@ RSpec.describe Jobs::PublishRoomParticipants do
       expect(user1.reload.user_status).to be_present
     end
 
-    it "does not touch non-Resenha statuses" do
+    it "keeps a freshly set status even when the user is not yet live" do
       Resenha::ParticipantTracker.add(room.id, user1.id)
-      user2.set_status!("On vacation", "palm_tree")
+      Resenha::UserStatusManager.set_voice_status(user2, room)
 
       subject.execute({})
 
+      expect(user2.reload.user_status).to be_present
+    end
+
+    it "does not touch manually set statuses, even ones using Resenha emojis" do
+      Resenha::ParticipantTracker.add(room.id, user1.id)
+      user1.set_status!("Sleeping", "zzz")
+      user2.set_status!("On vacation", "palm_tree")
+
+      freeze_time(1.minute.from_now)
+
+      subject.execute({})
+
+      expect(user1.reload.user_status.emoji).to eq("zzz")
       expect(user2.reload.user_status.emoji).to eq("palm_tree")
     end
   end

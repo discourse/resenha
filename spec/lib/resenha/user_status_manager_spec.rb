@@ -57,6 +57,14 @@ RSpec.describe Resenha::UserStatusManager do
       expect(user.user_status.description).to eq("In #{room.name}")
     end
 
+    it "rewrites a matching status that still carries an expiry" do
+      user.set_status!("In #{room.name}", "studio_microphone", 2.minutes.from_now)
+
+      described_class.set_voice_status(user, room)
+
+      expect(user.reload.user_status.ends_at).to be_nil
+    end
+
     it "skips when enable_user_status is false" do
       SiteSetting.enable_user_status = false
 
@@ -149,6 +157,7 @@ RSpec.describe Resenha::UserStatusManager do
       described_class.set_voice_status(user, room)
       described_class.set_voice_status(other_user, room)
       described_class.set_afk_status(other_user, room)
+      freeze_time(1.minute.from_now)
 
       described_class.clear_stale_statuses([user.id])
 
@@ -158,14 +167,43 @@ RSpec.describe Resenha::UserStatusManager do
 
     it "clears everything when no one is live" do
       described_class.set_voice_status(user, room)
+      freeze_time(1.minute.from_now)
 
       described_class.clear_stale_statuses([])
 
       expect(user.reload.user_status).to be_nil
     end
 
+    it "leaves a freshly set status for the next sweep" do
+      described_class.set_voice_status(user, room)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status).to be_present
+    end
+
     it "does not touch non-Resenha statuses" do
       user.set_status!("On vacation", "palm_tree")
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status.emoji).to eq("palm_tree")
+    end
+
+    it "does not clear a manually set status that uses a Resenha emoji" do
+      user.set_status!("Sleeping", "zzz")
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status.emoji).to eq("zzz")
+    end
+
+    it "does not clear a manual status that replaced a Resenha one" do
+      described_class.set_voice_status(user, room)
+      user.set_status!("On vacation", "palm_tree")
+      freeze_time(1.minute.from_now)
 
       described_class.clear_stale_statuses([])
 
@@ -175,6 +213,7 @@ RSpec.describe Resenha::UserStatusManager do
     it "skips when enable_user_status is false" do
       described_class.set_voice_status(user, room)
       SiteSetting.enable_user_status = false
+      freeze_time(1.minute.from_now)
 
       described_class.clear_stale_statuses([])
 
