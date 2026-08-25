@@ -506,13 +506,18 @@ RSpec.describe Resenha::RoomsController do
         Resenha::UserStatusManager.set_voice_status(user, room)
       end
 
-      it "refreshes status expiry on heartbeat" do
-        freeze_time do
-          post "/resenha/rooms/#{room.id}/heartbeat.json"
+      it "keeps the status without an expiry across heartbeats" do
+        post "/resenha/rooms/#{room.id}/heartbeat.json"
 
-          user.reload
-          expect(user.user_status.ends_at).to be_within(1.second).of(2.minutes.from_now)
-        end
+        user.reload
+        expect(user.user_status.emoji).to eq("studio_microphone")
+        expect(user.user_status.ends_at).to be_nil
+      end
+
+      it "does not republish an unchanged status on heartbeat" do
+        messages = MessageBus.track_publish { post "/resenha/rooms/#{room.id}/heartbeat.json" }
+
+        expect(messages.select { |m| m.channel.include?("user-status") }).to be_empty
       end
 
       it "transitions to AFK status" do

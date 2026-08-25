@@ -14,15 +14,21 @@ RSpec.describe Resenha::UserStatusManager do
   end
 
   describe ".set_voice_status" do
-    it "sets the user's status with room name and expiry" do
-      freeze_time do
-        described_class.set_voice_status(user, room)
+    it "sets the user's status with room name and no expiry" do
+      described_class.set_voice_status(user, room)
 
-        user.reload
-        expect(user.user_status.description).to eq("In #{room.name}")
-        expect(user.user_status.emoji).to eq("studio_microphone")
-        expect(user.user_status.ends_at).to be_within(1.second).of(2.minutes.from_now)
-      end
+      user.reload
+      expect(user.user_status.description).to eq("In #{room.name}")
+      expect(user.user_status.emoji).to eq("studio_microphone")
+      expect(user.user_status.ends_at).to be_nil
+    end
+
+    it "does not republish an unchanged status" do
+      described_class.set_voice_status(user, room)
+
+      messages = MessageBus.track_publish { described_class.set_voice_status(user, room) }
+
+      expect(messages).to be_empty
     end
 
     it "does not leak the name of a private room" do
@@ -51,6 +57,14 @@ RSpec.describe Resenha::UserStatusManager do
       expect(user.user_status.description).to eq("In #{room.name}")
     end
 
+    it "rewrites a matching status that still carries an expiry" do
+      user.set_status!("In #{room.name}", "studio_microphone", 2.minutes.from_now)
+
+      described_class.set_voice_status(user, room)
+
+      expect(user.reload.user_status.ends_at).to be_nil
+    end
+
     it "skips when enable_user_status is false" do
       SiteSetting.enable_user_status = false
 
@@ -70,15 +84,13 @@ RSpec.describe Resenha::UserStatusManager do
 
   describe ".set_afk_status" do
     it "transitions to AFK status when Resenha owns the current status" do
-      freeze_time do
-        described_class.set_voice_status(user, room)
-        described_class.set_afk_status(user, room)
+      described_class.set_voice_status(user, room)
+      described_class.set_afk_status(user, room)
 
-        user.reload
-        expect(user.user_status.description).to eq("AFK in #{room.name}")
-        expect(user.user_status.emoji).to eq("zzz")
-        expect(user.user_status.ends_at).to be_within(1.second).of(2.minutes.from_now)
-      end
+      user.reload
+      expect(user.user_status.description).to eq("AFK in #{room.name}")
+      expect(user.user_status.emoji).to eq("zzz")
+      expect(user.user_status.ends_at).to be_nil
     end
 
     it "does not leak the name of a private room" do
@@ -135,6 +147,77 @@ RSpec.describe Resenha::UserStatusManager do
 
     it "does nothing when user has no status" do
       expect { described_class.clear_voice_status(user) }.not_to raise_error
+    end
+  end
+
+  describe ".clear_stale_statuses" do
+    fab!(:other_user, :user)
+
+    it "clears Resenha statuses of users not in the live set" do
+      described_class.set_voice_status(user, room)
+      described_class.set_voice_status(other_user, room)
+      described_class.set_afk_status(other_user, room)
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([user.id])
+
+      expect(user.reload.user_status).to be_present
+      expect(other_user.reload.user_status).to be_nil
+    end
+
+    it "clears everything when no one is live" do
+      described_class.set_voice_status(user, room)
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status).to be_nil
+    end
+
+    it "leaves a freshly set status for the next sweep" do
+      described_class.set_voice_status(user, room)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status).to be_present
+    end
+
+    it "does not touch non-Resenha statuses" do
+      user.set_status!("On vacation", "palm_tree")
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status.emoji).to eq("palm_tree")
+    end
+
+    it "does not clear a manually set status that uses a Resenha emoji" do
+      user.set_status!("Sleeping", "zzz")
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status.emoji).to eq("zzz")
+    end
+
+    it "does not clear a manual status that replaced a Resenha one" do
+      described_class.set_voice_status(user, room)
+      user.set_status!("On vacation", "palm_tree")
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status.emoji).to eq("palm_tree")
+    end
+
+    it "skips when enable_user_status is false" do
+      described_class.set_voice_status(user, room)
+      SiteSetting.enable_user_status = false
+      freeze_time(1.minute.from_now)
+
+      described_class.clear_stale_statuses([])
+
+      expect(user.reload.user_status).to be_present
     end
   end
 
