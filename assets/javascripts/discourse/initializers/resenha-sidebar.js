@@ -77,6 +77,7 @@ export default {
       }
 
       const resenhaWebrtc = owner.lookup("service:resenha-webrtc");
+      const routerService = owner.lookup("service:router");
       const menuService = owner.lookup("service:menu");
       const modalService = owner.lookup("service:modal");
       const capabilities = owner.lookup("service:capabilities");
@@ -160,7 +161,7 @@ export default {
               }
 
               if (state === "connected") {
-                return i18n("resenha.room.leave");
+                return i18n("resenha.room.open_page");
               }
 
               return (
@@ -712,7 +713,14 @@ export default {
         }
 
         if (connectionState === "connected") {
-          resenhaWebrtc.leave(room);
+          const currentRoute = routerService.currentRoute;
+          const onRoomPage =
+            currentRoute?.name === "resenha-room" &&
+            currentRoute?.params?.slug === room.slug;
+
+          if (!onRoomPage) {
+            routerService.transitionTo("resenha-room", room.slug);
+          }
         } else {
           await resenhaWebrtc.join(room);
         }

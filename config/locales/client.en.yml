@@ -8,6 +8,7 @@ en:
       room:
         join: "Join voice room"
         leave: "Leave room"
+        open_page: "Open room page"
         info: "Room info"
         edit: "Edit room"
         copy_link: "Copy link"
