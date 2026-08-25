@@ -30,17 +30,15 @@ module Resenha
       user.clear_status!
     end
 
-    # Reaps the statuses of users whose room presence lapsed without a
-    # leave/kick (crashed client, dead network, sleeping laptop). Callers pass
-    # the lapsed participants — never a site-wide set, so a manually set
-    # status that happens to use our emojis is only ever cleared for someone
-    # who was actually in a room.
-    def self.clear_stale_statuses(user_ids)
+    # Reaps statuses whose owner is no longer live in any room — the backstop
+    # for exits that never hit leave/kick (crashed client, dead network,
+    # sleeping laptop). Live users' statuses are left untouched.
+    def self.clear_stale_statuses(live_user_ids)
       return unless SiteSetting.enable_user_status
-      return if user_ids.empty?
 
       UserStatus
-        .where(user_id: user_ids, emoji: [EMOJI, AFK_EMOJI])
+        .where(emoji: [EMOJI, AFK_EMOJI])
+        .where.not(user_id: live_user_ids)
         .find_each { |status| User.find_by(id: status.user_id)&.clear_status! }
     end
 

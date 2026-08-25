@@ -99,14 +99,6 @@ module Resenha
         user_ids(room_id, migrated: true)
       end
 
-      # Members whose presence lapsed without a deliberate exit: leave/kick
-      # ZREM their entry, so whatever the TTL filter drops but the raw zset
-      # still holds is exactly the silent-disconnect set.
-      def lapsed_user_ids(room_id)
-        all = redis.zrange(key(room_id), 0, -1).map(&:to_i).select(&:positive?)
-        all - user_ids(room_id)
-      end
-
       def last_heartbeat_at(room_id, user_id)
         metadata = get_metadata(room_id, user_id)
         ts = metadata[:last_heartbeat_at]
