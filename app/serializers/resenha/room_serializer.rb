@@ -25,7 +25,6 @@ module Resenha
                :video_allowed,
                :chat_channel_id,
                :chat_idle_minutes,
-               :chat_thread_title_template,
                :chat_available,
                :livekit_enabled,
                :expected_transport,
@@ -134,10 +133,6 @@ module Resenha
     end
 
     def include_chat_idle_minutes?
-      can_manage
-    end
-
-    def include_chat_thread_title_template?
       can_manage
     end
 

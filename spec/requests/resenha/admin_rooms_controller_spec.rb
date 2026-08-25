@@ -64,11 +64,7 @@ RSpec.describe Resenha::AdminRoomsController do
     end
 
     it "includes the chat settings so the edit form can prefill them" do
-      room.update!(
-        chat_channel_id: channel.id,
-        chat_idle_minutes: 2,
-        chat_thread_title_template: "Team meeting at {time} on {date}",
-      )
+      room.update!(chat_channel_id: channel.id, chat_idle_minutes: 2)
       sign_in(admin)
 
       get "/admin/plugins/resenha/rooms/#{room.id}.json"
@@ -76,9 +72,6 @@ RSpec.describe Resenha::AdminRoomsController do
       expect(response.status).to eq(200)
       expect(response.parsed_body["room"]["chat_channel_id"]).to eq(channel.id)
       expect(response.parsed_body["room"]["chat_idle_minutes"]).to eq(2)
-      expect(response.parsed_body["room"]["chat_thread_title_template"]).to eq(
-        "Team meeting at {time} on {date}",
-      )
     end
 
     it "returns 404 for non-existent room" do
@@ -255,21 +248,16 @@ RSpec.describe Resenha::AdminRoomsController do
             room: {
               chat_channel_id: channel.id,
               chat_idle_minutes: 2,
-              chat_thread_title_template: "Team meeting at {time} on {date}",
             },
           }
 
       expect(response.status).to eq(200)
       expect(response.parsed_body["room"]["chat_channel_id"]).to eq(channel.id)
       expect(response.parsed_body["room"]["chat_idle_minutes"]).to eq(2)
-      expect(response.parsed_body["room"]["chat_thread_title_template"]).to eq(
-        "Team meeting at {time} on {date}",
-      )
 
       room.reload
       expect(room.chat_channel_id).to eq(channel.id)
       expect(room.chat_idle_minutes).to eq(2)
-      expect(room.chat_thread_title_template).to eq("Team meeting at {time} on {date}")
     end
 
     it "returns 404 for non-existent room" do

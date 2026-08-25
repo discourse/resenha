@@ -5,15 +5,9 @@ module Resenha
   #
   # A room is linked to a chat channel; each "chat session" lives in a thread on
   # that channel. A session's thread is only created when someone actually sends
-  # a message. There are two flavours, chosen by whether the room has a
-  # thread-title template configured:
-  #
-  # * Templated (e.g. a "Team" room): the system posts the interpolated template
-  #   ("Team meeting at 12:00") as the thread's starter message and the sender's
-  #   message becomes the first reply.
-  #
-  # * Plain (e.g. a "Chill" room): the first message itself roots the thread,
-  #   titled with a default.
+  # a message: that first message roots the thread, prefixed with the room's
+  # hashtag so the opener links back to the room, and the thread is titled
+  # after the room.
   #
   # From then on participants read and post through chat's own UI and API;
   # Resenha only tracks WHICH thread is the room's live session.
@@ -90,8 +84,7 @@ module Resenha
       end
 
       # Posts the session's opening message as +user+: the message is created on
-      # the channel and a thread is opened from it, titled from the room's
-      # template (or the default). Once a thread is live, messages flow through
+      # the channel and a thread is opened from it. Once a thread is live, messages flow through
       # chat's own API instead — this is only called by a panel that believes no
       # thread exists yet, so if one appeared in the meantime the message is
       # delivered there rather than spawning a competing thread.
@@ -143,61 +136,33 @@ module Resenha
         DistributedMutex.synchronize("#{KEY_NAMESPACE}:#{room.id}:chat_lock", &blk)
       end
 
-      # Opens the session's thread from its first message. In a templated room
-      # (e.g. "Team meeting at {time}") the system posts the interpolated
-      # template as the thread's starter message and +message+ becomes the
-      # first reply; in a plain room +message+ itself roots the thread. Either
-      # way the thread is titled with the same text, and the change is
-      # published so every open panel picks the new thread up.
+      # Opens the session's thread from its first message: +message+ itself
+      # roots the thread, prefixed with the room's hashtag so the opener links
+      # back to the room. The change is published so every open panel picks
+      # the new thread up.
       def open_session_thread!(room, channel, user, message)
         # Bail before posting: if the channel can't hold a thread, thread
-        # creation would be rejected and leave the starter (or the message)
-        # orphaned as a loose channel message (re-posted on every retry).
+        # creation would be rejected and leave the message orphaned as a loose
+        # channel message (re-posted on every retry).
         ensure_threading_enabled!(channel)
 
-        title = title_for(room)
-        root_guardian = templated?(room) ? Discourse.system_user.guardian : user.guardian
-        root_text = templated?(room) ? title : message
-
-        root = create_message!(guardian: root_guardian, channel_id: channel.id, message: root_text)
-        thread = open_thread!(channel, root, title: title)
+        root =
+          create_message!(
+            guardian: user.guardian,
+            channel_id: channel.id,
+            message: opener_for(room, message),
+          )
+        thread = open_thread!(channel, root, title: title_for(room))
         # Mark the thread as this room's before anything is published: a panel
         # reacting to the publish looks the thread up by this field right away,
         # and a miss would be cached as "not a session thread". Unlike the
         # Redis pointer, the marker outlives the session, tracing any past
         # session thread back to its room.
         thread.upsert_custom_fields(Resenha::THREAD_ROOM_ID_FIELD => room.id)
-        # Record the thread before posting the templated reply: if that reply
-        # is rejected (e.g. a duplicate), the session must already point at the
-        # real thread so a retry continues it instead of opening another one.
         store_thread(room, thread.id)
-
-        if templated?(room)
-          begin
-            create_message!(
-              guardian: user.guardian,
-              channel_id: channel.id,
-              message: message,
-              thread_id: thread.id,
-            )
-          ensure
-            # Publish only once the sender's reply — and with it their thread
-            # membership — exists: a panel reacting to this signal anchors its
-            # message load on that membership's last-read pointer, and reacting
-            # before the reply lands makes chat serve only messages AFTER it,
-            # skipping the system starter. `ensure` keeps a rejected reply from
-            # hiding the freshly created thread.
-            publish_state(room)
-          end
-        else
-          publish_state(room)
-        end
+        publish_state(room)
 
         thread
-      end
-
-      def templated?(room)
-        room.chat_thread_title_template.present?
       end
 
       # --- chat plumbing -------------------------------------------------------
@@ -328,15 +293,18 @@ module Resenha
         ::Chat::Message.where(thread_id: thread_id).maximum(:created_at)
       end
 
+      # I18n interpolation inserts the message verbatim (no re-interpolation),
+      # so user text containing tokens like %{room} or gsub escapes is safe.
+      def opener_for(room, message)
+        I18n.t(
+          "resenha.chat.default_thread_opener",
+          room: "##{room.slug}::#{Resenha::RoomHashtagDataSource.type}",
+          message: message,
+        )
+      end
+
       def title_for(room)
-        template =
-          room.chat_thread_title_template.presence || I18n.t("resenha.chat.default_thread_title")
-        now = Time.zone.now
-        template
-          .gsub("{time}", now.strftime("%H:%M"))
-          .gsub("{date}", now.strftime("%Y-%m-%d"))
-          .gsub("{room}") { room.name.to_s }
-          .strip
+        I18n.t("resenha.chat.default_thread_title", room: room.name.to_s).strip
       end
 
       def redis

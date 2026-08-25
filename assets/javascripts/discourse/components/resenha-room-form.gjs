@@ -33,8 +33,6 @@ export default class ResenhaRoomForm extends Component {
       livekit_enabled: this.args.room?.livekit_enabled ?? false,
       chat_channel_id: this.args.room?.chat_channel_id || null,
       chat_idle_minutes: this.args.room?.chat_idle_minutes ?? 15,
-      chat_thread_title_template:
-        this.args.room?.chat_thread_title_template || "",
       max_quality_profile:
         this.args.room?.max_quality_profile || "site_default",
     };
@@ -52,19 +50,6 @@ export default class ResenhaRoomForm extends Component {
     return (
       this.siteSettings.chat_enabled && this.siteSettings.resenha_chat_enabled
     );
-  }
-
-  threadTitlePreview(template, roomName) {
-    const text = (template || "").toString();
-    const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, "0")}:${String(
-      now.getMinutes()
-    ).padStart(2, "0")}`;
-    const date = now.toISOString().slice(0, 10);
-    const preview = text.replaceAll("{time}", time).replaceAll("{date}", date);
-    // An unnamed room leaves the token visible rather than a blank gap, so the
-    // placeholder still reads as one.
-    return roomName ? preview.replaceAll("{room}", roomName) : preview;
   }
 
   @action
@@ -343,32 +328,8 @@ export default class ResenhaRoomForm extends Component {
                 <field.Control />
               </form.Field>
 
-              <form.Field
-                @type="input"
-                @name="chat_thread_title_template"
-                @title={{i18n "resenha.admin.room.chat_thread_title_template"}}
-                @description={{i18n
-                  "resenha.admin.room.chat_thread_title_template_help"
-                }}
-                @format="full"
-                @placeholder={{i18n
-                  "resenha.admin.room.chat_thread_title_placeholder"
-                }}
-                as |field|
-              >
-                <field.Control />
-              </form.Field>
-
               <div class="resenha-room-form__chat-preview">
-                {{#if data.chat_thread_title_template}}
-                  {{i18n "resenha.admin.room.chat_thread_title_preview"}}
-                  <strong>{{this.threadTitlePreview
-                      data.chat_thread_title_template
-                      data.name
-                    }}</strong>
-                {{else}}
-                  {{i18n "resenha.admin.room.chat_no_template_hint"}}
-                {{/if}}
+                {{i18n "resenha.admin.room.chat_thread_hint"}}
               </div>
             {{/if}}
           </div>

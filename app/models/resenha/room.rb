@@ -4,6 +4,9 @@ module Resenha
   class Room < ActiveRecord::Base
     self.table_name = "#{Resenha.table_name_prefix}rooms"
 
+    # TODO(02-2027): Remove this line
+    self.ignored_columns += %i[chat_thread_title_template]
+
     ROOM_TYPE_OPEN = 0
     ROOM_TYPE_STAGE = 1
     ROOM_TYPES = { "open" => ROOM_TYPE_OPEN, "stage" => ROOM_TYPE_STAGE }.freeze
@@ -163,25 +166,24 @@ end
 #
 # Table name: resenha_rooms
 #
-#  id                         :bigint           not null, primary key
-#  chat_idle_minutes          :integer          default(15), not null
-#  chat_thread_title_template :string
-#  cooked_description         :text
-#  description                :text
-#  ephemeral                  :boolean          default(FALSE), not null
-#  last_occupied_at           :datetime
-#  livekit_enabled            :boolean          default(FALSE), not null
-#  max_participants           :integer
-#  max_quality_profile        :integer
-#  name                       :string           not null
-#  public                     :boolean          default(FALSE), not null
-#  room_type                  :integer          default(0), not null
-#  slug                       :string           not null
-#  video_enabled              :boolean          default(TRUE), not null
-#  created_at                 :datetime         not null
-#  updated_at                 :datetime         not null
-#  chat_channel_id            :bigint
-#  creator_id                 :bigint           not null
+#  id                  :bigint           not null, primary key
+#  chat_idle_minutes   :integer          default(15), not null
+#  cooked_description  :text
+#  description         :text
+#  ephemeral           :boolean          default(FALSE), not null
+#  last_occupied_at    :datetime
+#  livekit_enabled     :boolean          default(FALSE), not null
+#  max_participants    :integer
+#  max_quality_profile :integer
+#  name                :string           not null
+#  public              :boolean          default(FALSE), not null
+#  room_type           :integer          default(0), not null
+#  slug                :string           not null
+#  video_enabled       :boolean          default(TRUE), not null
+#  created_at          :datetime         not null
+#  updated_at          :datetime         not null
+#  chat_channel_id     :bigint
+#  creator_id          :bigint           not null
 #
 # Indexes
 #
