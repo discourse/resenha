@@ -17,14 +17,19 @@ module Jobs
 
       room_ids = ::Resenha::ParticipantTracker.recently_active_room_ids
 
-      # Auto voice statuses have no ends_at, so a lapsed heartbeat must drop
-      # the status the same way it drops the roster entry. Live-anywhere is
-      # the keep criterion: a user mid-move between rooms is still live.
-      live_user_ids =
-        room_ids.flat_map { |room_id| ::Resenha::ParticipantTracker.user_ids(room_id) }.uniq
-      ::Resenha::UserStatusManager.clear_stale_statuses(live_user_ids)
-
       return if room_ids.empty?
+
+      # Auto voice statuses have no ends_at, so a lapsed heartbeat must drop
+      # the status the same way it drops the roster entry. Only actual lapsed
+      # participants are swept, and being live anywhere keeps the status: a
+      # user mid-move between rooms is still live.
+      live_user_ids = []
+      lapsed_user_ids = []
+      room_ids.each do |room_id|
+        live_user_ids |= ::Resenha::ParticipantTracker.user_ids(room_id)
+        lapsed_user_ids |= ::Resenha::ParticipantTracker.lapsed_user_ids(room_id)
+      end
+      ::Resenha::UserStatusManager.clear_stale_statuses(lapsed_user_ids - live_user_ids)
 
       ::Resenha::Room
         .where(id: room_ids)

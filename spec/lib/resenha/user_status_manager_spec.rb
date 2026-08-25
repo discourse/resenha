@@ -145,29 +145,21 @@ RSpec.describe Resenha::UserStatusManager do
   describe ".clear_stale_statuses" do
     fab!(:other_user, :user)
 
-    it "clears Resenha statuses of users not in the live set" do
+    it "clears Resenha statuses of the given users only" do
       described_class.set_voice_status(user, room)
       described_class.set_voice_status(other_user, room)
       described_class.set_afk_status(other_user, room)
 
-      described_class.clear_stale_statuses([user.id])
+      described_class.clear_stale_statuses([other_user.id])
 
       expect(user.reload.user_status).to be_present
       expect(other_user.reload.user_status).to be_nil
     end
 
-    it "clears everything when no one is live" do
-      described_class.set_voice_status(user, room)
-
-      described_class.clear_stale_statuses([])
-
-      expect(user.reload.user_status).to be_nil
-    end
-
-    it "does not touch non-Resenha statuses" do
+    it "does not touch a non-Resenha status even for a given user" do
       user.set_status!("On vacation", "palm_tree")
 
-      described_class.clear_stale_statuses([])
+      described_class.clear_stale_statuses([user.id])
 
       expect(user.reload.user_status.emoji).to eq("palm_tree")
     end
@@ -176,7 +168,7 @@ RSpec.describe Resenha::UserStatusManager do
       described_class.set_voice_status(user, room)
       SiteSetting.enable_user_status = false
 
-      described_class.clear_stale_statuses([])
+      described_class.clear_stale_statuses([user.id])
 
       expect(user.reload.user_status).to be_present
     end

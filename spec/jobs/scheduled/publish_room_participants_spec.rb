@@ -156,13 +156,28 @@ RSpec.describe Jobs::PublishRoomParticipants do
       expect(user1.reload.user_status).to be_present
     end
 
-    it "does not touch non-Resenha statuses" do
+    it "does not touch a lapsed participant's non-Resenha status" do
       Resenha::ParticipantTracker.add(room.id, user1.id)
+      Resenha::ParticipantTracker.add(room.id, user2.id)
       user2.set_status!("On vacation", "palm_tree")
+      Discourse.redis.zadd(
+        "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
+        1.hour.ago.to_f,
+        user2.id,
+      )
 
       subject.execute({})
 
       expect(user2.reload.user_status.emoji).to eq("palm_tree")
+    end
+
+    it "never touches a user who was not in any room, whatever their emoji" do
+      Resenha::ParticipantTracker.add(room.id, user1.id)
+      user2.set_status!("Recording a podcast", "studio_microphone")
+
+      subject.execute({})
+
+      expect(user2.reload.user_status).to be_present
     end
   end
 
