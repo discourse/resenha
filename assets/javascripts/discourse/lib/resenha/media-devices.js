@@ -76,23 +76,33 @@ const CAMERA_CAPTURE = {
 
 // Ideal dimensions match the device orientation so a phone held in portrait
 // sends an upright portrait frame; the grid lays out whatever aspect the
-// camera actually delivers.
+// camera actually delivers. The swap only applies on touch devices: the
+// orientation media query tracks the viewport, and a tall desktop window
+// must not make Chromium center-crop a landscape webcam into portrait.
 export function cameraConstraints(
   deviceId = preferredVideoInputDeviceId(),
   tier = "standard",
   { exact = false } = {}
 ) {
   const capture = CAMERA_CAPTURE[tier] ?? CAMERA_CAPTURE.standard;
+  const rotatesWithScreen =
+    navigator.userAgentData?.mobile ??
+    window.matchMedia?.("(pointer: coarse)")?.matches ??
+    false;
   const portrait =
-    window.matchMedia?.("(orientation: portrait)")?.matches ?? false;
+    rotatesWithScreen &&
+    (window.matchMedia?.("(orientation: portrait)")?.matches ?? false);
   const [idealWidth, idealHeight] = portrait
     ? [capture.height, capture.width]
     : [capture.width, capture.height];
 
+  // frameRate needs an ideal, not just a ceiling: with only a max, every
+  // lower rate satisfies the constraint equally and Chromium can settle on
+  // a webcam's 5fps uncompressed modes.
   const constraints = {
     width: { ideal: idealWidth },
     height: { ideal: idealHeight },
-    frameRate: { max: capture.frameRate },
+    frameRate: { ideal: capture.frameRate, max: capture.frameRate },
   };
 
   if (deviceId && deviceId !== SYSTEM_DEFAULT_DEVICE_ID) {
