@@ -4,21 +4,23 @@ module Resenha
   class UserStatusManager
     EMOJI = "studio_microphone"
     AFK_EMOJI = "zzz"
-    STATUS_EXPIRY = 2.minutes
 
+    # Statuses carry no ends_at: they mirror room presence, not a timer, so
+    # the tooltip shows no "until" line. Leave/kick clear them directly;
+    # crashed or lapsed clients are reaped by clear_stale_statuses.
     def self.set_voice_status(user, room)
       return unless SiteSetting.enable_user_status
       return unless SiteSetting.resenha_auto_status_enabled
       return if user_has_non_resenha_status?(user)
 
-      user.set_status!(status_description(room), EMOJI, STATUS_EXPIRY.from_now)
+      set_status(user, status_description(room), EMOJI)
     end
 
     def self.set_afk_status(user, room)
       return unless SiteSetting.enable_user_status
       return unless resenha_status_active?(user)
 
-      user.set_status!(status_description(room, afk: true), AFK_EMOJI, STATUS_EXPIRY.from_now)
+      set_status(user, status_description(room, afk: true), AFK_EMOJI)
     end
 
     def self.clear_voice_status(user)
@@ -26,6 +28,18 @@ module Resenha
       return unless resenha_status_active?(user)
 
       user.clear_status!
+    end
+
+    # Reaps statuses whose owner is no longer live in any room — the backstop
+    # for exits that never hit leave/kick (crashed client, dead network,
+    # sleeping laptop). Live users' statuses are left untouched.
+    def self.clear_stale_statuses(live_user_ids)
+      return unless SiteSetting.enable_user_status
+
+      UserStatus
+        .where(emoji: [EMOJI, AFK_EMOJI])
+        .where.not(user_id: live_user_ids)
+        .find_each { |status| User.find_by(id: status.user_id)&.clear_status! }
     end
 
     def self.resenha_status_active?(user)
@@ -42,6 +56,15 @@ module Resenha
       else
         I18n.t("resenha.user_status.#{prefix}in_private_room")
       end
+    end
+
+    # Without an expiry to roll, an unchanged status needs no upsert — this
+    # keeps the every-beat heartbeat call from republishing over message bus.
+    private_class_method def self.set_status(user, description, emoji)
+      status = user.user_status
+      return if status && status.description == description && status.emoji == emoji
+
+      user.set_status!(description, emoji)
     end
 
     private_class_method def self.user_has_non_resenha_status?(user)

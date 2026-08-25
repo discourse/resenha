@@ -101,6 +101,71 @@ RSpec.describe Jobs::PublishRoomParticipants do
     expect(stub).to have_been_requested.once
   end
 
+  describe "stale status sweep" do
+    before do
+      SiteSetting.enable_user_status = true
+      SiteSetting.resenha_auto_status_enabled = true
+    end
+
+    it "clears the status of a participant whose heartbeat lapsed" do
+      Resenha::ParticipantTracker.add(room.id, user1.id)
+      Resenha::ParticipantTracker.add(room.id, user2.id)
+      Resenha::UserStatusManager.set_voice_status(user1, room)
+      Resenha::UserStatusManager.set_voice_status(user2, room)
+
+      Discourse.redis.zadd(
+        "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
+        1.hour.ago.to_f,
+        user2.id,
+      )
+
+      subject.execute({})
+
+      expect(user1.reload.user_status).to be_present
+      expect(user2.reload.user_status).to be_nil
+    end
+
+    it "clears lingering statuses of a room that fully emptied" do
+      Resenha::ParticipantTracker.add(room.id, user1.id)
+      Resenha::UserStatusManager.set_voice_status(user1, room)
+      Discourse.redis.zadd(
+        "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
+        1.hour.ago.to_f,
+        user1.id,
+      )
+
+      subject.execute({})
+
+      expect(user1.reload.user_status).to be_nil
+    end
+
+    it "keeps a user's status while they are live in another active room" do
+      other_room = Fabricate(:resenha_room)
+      Resenha::ParticipantTracker.add(room.id, user1.id)
+      Resenha::ParticipantTracker.add(other_room.id, user1.id)
+      Resenha::UserStatusManager.set_voice_status(user1, other_room)
+
+      Discourse.redis.zadd(
+        "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants",
+        1.hour.ago.to_f,
+        user1.id,
+      )
+
+      subject.execute({})
+
+      expect(user1.reload.user_status).to be_present
+    end
+
+    it "does not touch non-Resenha statuses" do
+      Resenha::ParticipantTracker.add(room.id, user1.id)
+      user2.set_status!("On vacation", "palm_tree")
+
+      subject.execute({})
+
+      expect(user2.reload.user_status.emoji).to eq("palm_tree")
+    end
+  end
+
   it "does not publish when plugin is disabled" do
     Resenha::ParticipantTracker.add(room.id, user1.id)
 

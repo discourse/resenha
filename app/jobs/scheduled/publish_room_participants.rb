@@ -16,6 +16,14 @@ module Jobs
       return unless ::Resenha.enabled?
 
       room_ids = ::Resenha::ParticipantTracker.recently_active_room_ids
+
+      # Auto voice statuses have no ends_at, so a lapsed heartbeat must drop
+      # the status the same way it drops the roster entry. Live-anywhere is
+      # the keep criterion: a user mid-move between rooms is still live.
+      live_user_ids =
+        room_ids.flat_map { |room_id| ::Resenha::ParticipantTracker.user_ids(room_id) }.uniq
+      ::Resenha::UserStatusManager.clear_stale_statuses(live_user_ids)
+
       return if room_ids.empty?
 
       ::Resenha::Room
