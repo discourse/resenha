@@ -44,6 +44,12 @@ const PAGE = `<!doctype html><script type="module">
 window.log = (...args) => console.log("[smoke]", ...args);
 
 window.runTest = async (paths) => {
+  // --- Phase 0: report the adapter; a SwiftShader fallback would otherwise
+  // silently turn this into a CPU test (and one with no shader-f16).
+  const adapter = await navigator.gpu?.requestAdapter();
+  const info = adapter?.info || {};
+  window.log("adapter:", info.vendor, info.architecture, "shader-f16:", !!adapter?.features?.has("shader-f16"));
+
   // --- Phase 1: worker init (downloads/loads the model) ---
   const worker = new Worker(paths.worker);
   const ready = new Promise((resolve, reject) => {
@@ -169,8 +175,11 @@ const context = await chromium.launchPersistentContext(
     headless: true,
     args: [
       "--enable-unsafe-webgpu",
-      "--enable-features=Vulkan",
+      // Vulkan alone still falls back to SwiftShader in headless; the
+      // FromANGLE pair is what actually reaches the host GPU.
+      "--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan",
       "--use-angle=vulkan",
+      "--ignore-gpu-blocklist",
       "--autoplay-policy=no-user-gesture-required",
     ],
   }

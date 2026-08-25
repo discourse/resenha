@@ -8,8 +8,9 @@ import { fromUrls } from "parakeet.js";
 // progress*/ready | error, so the UI can show download progress and flip
 // the toggle off on any failure.
 //
-// The encoder runs on WebGPU (fp32 — the fp16 variant silently decodes to
-// empty strings on some GPU/driver combinations), the decoder on
+// The encoder runs on WebGPU — fp16 when the adapter exposes shader-f16,
+// else fp32 (without the feature, fp16 silently decodes to empty strings;
+// see docs/subtitles-fp16-encoder.md) — the decoder on
 // single-threaded WASM (int8) — single-threaded on purpose: multithreaded
 // ort-wasm needs SharedArrayBuffer and therefore COOP/COEP headers
 // Discourse doesn't set.
@@ -234,6 +235,21 @@ async function initialize(config) {
       throw new Error("WebGPU is not available in this browser");
     }
 
+    // fp16 halves the model download and every activation buffer, but is
+    // only usable where the adapter exposes shader-f16 (no Linux Chromium
+    // today): without it, onnxruntime-web silently mis-executes fp16
+    // models into garbage instead of erroring, and transcription returns
+    // empty strings. See docs/subtitles-fp16-encoder.md. Same argument-less
+    // requestAdapter call onnxruntime-web uses, so the answer matches the
+    // adapter it will run on.
+    let encoderQuant = config.encoderQuant;
+    if (encoderQuant !== "fp16" && encoderQuant !== "fp32") {
+      const adapter = await navigator.gpu.requestAdapter();
+      encoderQuant = adapter?.features?.has("shader-f16") ? "fp16" : "fp32";
+    }
+    // eslint-disable-next-line no-console
+    console.debug("[resenha] stt encoder quant:", encoderQuant);
+
     // Explicit URLs (not a directory prefix) for the ort runtime, set on
     // the bundled ort instance directly: the library's wasmPaths option is
     // never applied, and it falls back to a jsdelivr CDN when env is unset.
@@ -250,7 +266,7 @@ async function initialize(config) {
       // falls through its EP selection, leaving executionProviders empty,
       // and onnxruntime-web then silently runs the encoder on the CPU EP.
       backend: config.backend || "webgpu-hybrid",
-      encoderQuant: config.encoderQuant || "fp32",
+      encoderQuant,
       decoderQuant: config.decoderQuant || "int8",
       cpuThreads: 1,
       progress: ({ loaded, total, file }) =>
@@ -259,16 +275,22 @@ async function initialize(config) {
 
     const base = (config.modelBaseUrl || DEFAULT_MODEL_BASE).replace(/\/$/, "");
     const file = (name) => fetchModelFile(`${base}/${name}`, name);
+    // The fp16 encoder is a single self-contained file; only fp32 splits
+    // its weights into an external-data sidecar.
+    const encoderFile =
+      encoderQuant === "fp16" ? "encoder-model.fp16.onnx" : "encoder-model.onnx";
     model = await fromUrls({
       ...options,
-      encoderUrl: await file("encoder-model.onnx"),
-      encoderDataUrl: await file("encoder-model.onnx.data"),
+      encoderUrl: await file(encoderFile),
+      ...(encoderQuant === "fp32"
+        ? { encoderDataUrl: await file("encoder-model.onnx.data") }
+        : {}),
       decoderUrl: await file("decoder_joint-model.int8.onnx"),
       tokenizerUrl: await file("vocab.txt"),
       // Required for encoderDataUrl to take effect: ort maps the external
       // data to "<filenames.encoder>.data", which must match the path the
       // onnx file references internally.
-      filenames: { encoder: "encoder-model.onnx" },
+      filenames: { encoder: encoderFile },
       preprocessorBackend: "js",
     });
 
