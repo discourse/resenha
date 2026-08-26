@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 # Refuses any LiveKit room policy other than "disabled" unless the server URL
-# (ws:// or wss://), API key, and API secret are all present, so admins get a
-# config-time failure instead of a first-join failure.
+# (a valid wss:// origin — see ResenhaLivekitUrlValidator), API key, and API
+# secret are all present, so admins get a config-time failure instead of a
+# first-join failure.
 class ResenhaLivekitPolicyValidator
   def initialize(opts = {})
     @opts = opts
@@ -12,7 +13,7 @@ class ResenhaLivekitPolicyValidator
     return true if value == "disabled"
 
     @error_key =
-      if !SiteSetting.resenha_livekit_url.to_s.match?(%r{\Awss?://})
+      if !ResenhaLivekitUrlValidator.acceptable?(SiteSetting.resenha_livekit_url)
         "resenha_livekit_policy_requires_url"
       elsif SiteSetting.resenha_livekit_api_key.blank?
         "resenha_livekit_policy_requires_api_key"
