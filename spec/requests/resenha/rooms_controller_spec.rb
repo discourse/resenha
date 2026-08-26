@@ -45,6 +45,13 @@ RSpec.describe Resenha::RoomsController do
     SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
   end
 
+  # Presence plus the server-attested participant session that signal,
+  # heartbeat, and state require. Returns the session id to send back.
+  def establish_presence!(target_room, target_user)
+    Resenha::ParticipantTracker.add(target_room.id, target_user.id)
+    Resenha::ParticipantTracker.create_participant_session!(target_room.id, target_user.id)
+  end
+
   describe "#index" do
     it "returns rooms visible to the user" do
       sign_in(user)
@@ -218,6 +225,27 @@ RSpec.describe Resenha::RoomsController do
   end
 
   describe "#join" do
+    it "returns a participant session id and rotates it on rejoin" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      first_session_id = response.parsed_body["participant_session_id"]
+
+      expect(first_session_id).to be_present
+      expect(
+        Resenha::ParticipantTracker.valid_participant_session?(room.id, user.id, first_session_id),
+      ).to eq(true)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      second_session_id = response.parsed_body["participant_session_id"]
+
+      expect(second_session_id).to be_present
+      expect(second_session_id).not_to eq(first_session_id)
+      expect(
+        Resenha::ParticipantTracker.valid_participant_session?(room.id, user.id, first_session_id),
+      ).to eq(false)
+    end
+
     it "returns 403 when a non-member who can create rooms joins a private room" do
       sign_in(user)
 
@@ -451,19 +479,35 @@ RSpec.describe Resenha::RoomsController do
   end
 
   describe "#heartbeat" do
-    it "refreshes participant presence without rejoining" do
+    it "refreshes lapsed presence when the participant session is still valid" do
       sign_in(user)
-      Resenha::ParticipantTracker.remove(room.id, user.id)
+      session_id = establish_presence!(room, user)
 
-      post "/resenha/rooms/#{room.id}/heartbeat.json"
+      # The heartbeat lapsed (laptop asleep) but the session TTL has not.
+      key = "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants"
+      Discourse.redis.zadd(key, 1.hour.ago.to_f, user.id)
+
+      post "/resenha/rooms/#{room.id}/heartbeat.json",
+           params: {
+             participant_session_id: session_id,
+           }
 
       expect(response.status).to eq(204)
       expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
     end
 
+    it "rejects a heartbeat without a participant session and creates no presence" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/heartbeat.json"
+
+      expect(response.status).to eq(403)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).not_to include(user.id)
+    end
+
     it "broadcasts the participant list when a stale participant has dropped out" do
       sign_in(user)
-      Resenha::ParticipantTracker.add(room.id, user.id)
+      session_id = establish_presence!(room, user)
       Resenha::ParticipantTracker.add(room.id, other_participant.id)
 
       # other_participant left abruptly (refresh/close) and their heartbeat lapsed.
@@ -473,7 +517,10 @@ RSpec.describe Resenha::RoomsController do
       published = []
       allow(MessageBus).to receive(:publish) { |channel, data, _opts| published << data }
 
-      post "/resenha/rooms/#{room.id}/heartbeat.json"
+      post "/resenha/rooms/#{room.id}/heartbeat.json",
+           params: {
+             participant_session_id: session_id,
+           }
 
       expect(response.status).to eq(204)
       participants_message = published.find { |data| data[:type] == "participants" }
@@ -483,14 +530,17 @@ RSpec.describe Resenha::RoomsController do
 
     it "does not broadcast when membership and state are unchanged" do
       sign_in(user)
-      Resenha::ParticipantTracker.add(room.id, user.id)
+      session_id = establish_presence!(room, user)
       # Prime the stored fingerprint so the next heartbeat sees no change.
       Resenha::RoomBroadcaster.publish_participants_if_changed(room)
 
       published = []
       allow(MessageBus).to receive(:publish) { |channel, data, _opts| published << data }
 
-      post "/resenha/rooms/#{room.id}/heartbeat.json"
+      post "/resenha/rooms/#{room.id}/heartbeat.json",
+           params: {
+             participant_session_id: session_id,
+           }
 
       expect(response.status).to eq(204)
       expect(published.find { |data| data[:type] == "participants" }).to be_nil
@@ -501,13 +551,16 @@ RSpec.describe Resenha::RoomsController do
         SiteSetting.enable_user_status = true
         SiteSetting.resenha_auto_status_enabled = true
         sign_in(user)
-        Resenha::ParticipantTracker.add(room.id, user.id)
+        @participant_session_id = establish_presence!(room, user)
         Resenha::ParticipantTracker.update_metadata(room.id, user.id, { role: "participant" })
         Resenha::UserStatusManager.set_voice_status(user, room)
       end
 
       it "keeps the status without an expiry across heartbeats" do
-        post "/resenha/rooms/#{room.id}/heartbeat.json"
+        post "/resenha/rooms/#{room.id}/heartbeat.json",
+             params: {
+               participant_session_id: @participant_session_id,
+             }
 
         user.reload
         expect(user.user_status.emoji).to eq("studio_microphone")
@@ -515,13 +568,23 @@ RSpec.describe Resenha::RoomsController do
       end
 
       it "does not republish an unchanged status on heartbeat" do
-        messages = MessageBus.track_publish { post "/resenha/rooms/#{room.id}/heartbeat.json" }
+        messages =
+          MessageBus.track_publish do
+            post "/resenha/rooms/#{room.id}/heartbeat.json",
+                 params: {
+                   participant_session_id: @participant_session_id,
+                 }
+          end
 
         expect(messages.select { |m| m.channel.include?("user-status") }).to be_empty
       end
 
       it "transitions to AFK status" do
-        post "/resenha/rooms/#{room.id}/heartbeat.json", params: { idle_state: "afk" }
+        post "/resenha/rooms/#{room.id}/heartbeat.json",
+             params: {
+               idle_state: "afk",
+               participant_session_id: @participant_session_id,
+             }
 
         user.reload
         expect(user.user_status.emoji).to eq("zzz")
@@ -531,7 +594,11 @@ RSpec.describe Resenha::RoomsController do
       it "transitions back from AFK to active status" do
         Resenha::UserStatusManager.set_afk_status(user, room)
 
-        post "/resenha/rooms/#{room.id}/heartbeat.json", params: { idle_state: "active" }
+        post "/resenha/rooms/#{room.id}/heartbeat.json",
+             params: {
+               idle_state: "active",
+               participant_session_id: @participant_session_id,
+             }
 
         user.reload
         expect(user.user_status.emoji).to eq("studio_microphone")
@@ -546,7 +613,10 @@ RSpec.describe Resenha::RoomsController do
         )
         user.clear_status!
 
-        post "/resenha/rooms/#{room.id}/heartbeat.json"
+        post "/resenha/rooms/#{room.id}/heartbeat.json",
+             params: {
+               participant_session_id: @participant_session_id,
+             }
 
         user.reload
         expect(user.user_status).to be_nil
@@ -628,7 +698,7 @@ RSpec.describe Resenha::RoomsController do
   end
 
   describe "#toggle_mute" do
-    before { Resenha::ParticipantTracker.add(room.id, user.id) }
+    before { @participant_session_id = establish_presence!(room, user) }
 
     it "sets muted metadata and broadcasts participants" do
       sign_in(user)
@@ -638,7 +708,11 @@ RSpec.describe Resenha::RoomsController do
         published << [channel, data, opts]
       }
 
-      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true }
+      post "/resenha/rooms/#{room.id}/toggle_mute.json",
+           params: {
+             muted: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
 
@@ -655,7 +729,11 @@ RSpec.describe Resenha::RoomsController do
       sign_in(user)
       Resenha::ParticipantTracker.update_metadata(room.id, user.id, { is_muted: true })
 
-      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: false }
+      post "/resenha/rooms/#{room.id}/toggle_mute.json",
+           params: {
+             muted: false,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
 
@@ -666,7 +744,12 @@ RSpec.describe Resenha::RoomsController do
     it "sets deafened metadata" do
       sign_in(user)
 
-      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true, deafened: true }
+      post "/resenha/rooms/#{room.id}/toggle_mute.json",
+           params: {
+             muted: true,
+             deafened: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
 
@@ -685,8 +768,15 @@ RSpec.describe Resenha::RoomsController do
   describe "#state" do
     before do
       SiteSetting.resenha_video_enabled = true
-      Resenha::ParticipantTracker.add(room.id, user.id)
+      @participant_session_id = establish_presence!(room, user)
       sign_in(user)
+    end
+
+    it "rejects a state change without a participant session" do
+      post "/resenha/rooms/#{room.id}/state.json", params: { watching: true }
+
+      expect(response.status).to eq(403)
+      expect(Resenha::ParticipantTracker.get_metadata(room.id, user.id)[:watching_video]).to be_nil
     end
 
     it "sets video metadata and broadcasts participants" do
@@ -695,7 +785,11 @@ RSpec.describe Resenha::RoomsController do
         published << [channel, data, opts]
       }
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
 
@@ -709,7 +803,12 @@ RSpec.describe Resenha::RoomsController do
     end
 
     it "sets screen sharing and watching metadata" do
-      post "/resenha/rooms/#{room.id}/state.json", params: { screen: true, watching: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             screen: true,
+             watching: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
 
@@ -719,13 +818,21 @@ RSpec.describe Resenha::RoomsController do
     end
 
     it "sets and clears the transcribing flag" do
-      post "/resenha/rooms/#{room.id}/state.json", params: { transcribing: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             transcribing: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
       metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
       expect(metadata[:is_transcribing]).to eq(true)
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { transcribing: false }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             transcribing: false,
+             participant_session_id: @participant_session_id,
+           }
 
       metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
       expect(metadata[:is_transcribing]).to eq(false)
@@ -734,7 +841,11 @@ RSpec.describe Resenha::RoomsController do
     it "rejects video when the site setting is disabled" do
       SiteSetting.resenha_video_enabled = false
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(403)
     end
@@ -742,7 +853,11 @@ RSpec.describe Resenha::RoomsController do
     it "rejects video when the room has video disabled" do
       room.update!(video_enabled: false)
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(403)
     end
@@ -750,7 +865,11 @@ RSpec.describe Resenha::RoomsController do
     it "rejects video from a stage listener" do
       room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(403)
     end
@@ -758,7 +877,11 @@ RSpec.describe Resenha::RoomsController do
     it "rejects screen share from a stage listener" do
       room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { screen: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             screen: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(403)
     end
@@ -767,7 +890,11 @@ RSpec.describe Resenha::RoomsController do
       room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
       room.room_memberships.create!(user: user, role: Resenha::RoomMembership::ROLE_SPEAKER)
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
       metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
@@ -778,7 +905,11 @@ RSpec.describe Resenha::RoomsController do
       room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
       room.room_memberships.create!(user: user, role: Resenha::RoomMembership::ROLE_SPEAKER)
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { screen: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             screen: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
     end
@@ -792,7 +923,11 @@ RSpec.describe Resenha::RoomsController do
         Resenha::ParticipantTracker.update_metadata(room.id, publisher.id, { is_video_on: true })
       end
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(400)
     end
@@ -805,7 +940,11 @@ RSpec.describe Resenha::RoomsController do
       Resenha::ParticipantTracker.update_metadata(room.id, publisher.id, { is_video_on: true })
       Resenha::ParticipantTracker.update_metadata(room.id, user.id, { is_video_on: true })
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: true }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
     end
@@ -814,7 +953,11 @@ RSpec.describe Resenha::RoomsController do
       Resenha::ParticipantTracker.update_metadata(room.id, user.id, { is_video_on: true })
       room.update!(video_enabled: false)
 
-      post "/resenha/rooms/#{room.id}/state.json", params: { video: false }
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             video: false,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
       metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
@@ -822,7 +965,11 @@ RSpec.describe Resenha::RoomsController do
     end
 
     it "still updates mute state through the toggle_mute alias" do
-      post "/resenha/rooms/#{room.id}/toggle_mute.json", params: { muted: true }
+      post "/resenha/rooms/#{room.id}/toggle_mute.json",
+           params: {
+             muted: true,
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(204)
       metadata = Resenha::ParticipantTracker.get_metadata(room.id, user.id)
@@ -1041,17 +1188,25 @@ RSpec.describe Resenha::RoomsController do
   end
 
   describe "#signal" do
-    it "rejects missing payloads" do
+    before do
       sign_in(user)
+      @participant_session_id = establish_presence!(room, user)
+      establish_presence!(room, staff)
+      establish_presence!(room, other_participant)
+    end
 
-      post "/resenha/rooms/#{room.id}/signal.json", params: { payload: {} }
+    it "rejects missing payloads" do
+      post "/resenha/rooms/#{room.id}/signal.json",
+           params: {
+             payload: {
+             },
+             participant_session_id: @participant_session_id,
+           }
 
       expect(response.status).to eq(400)
     end
 
-    it "relays ICE candidate payloads" do
-      sign_in(user)
-
+    it "relays ICE candidate payloads with the server-serialized sender" do
       candidate_payload = {
         candidate: "candidate:347230118 1 udp 41819902 203.0.113.1 54400 typ host",
         sdpMid: "0",
@@ -1059,93 +1214,41 @@ RSpec.describe Resenha::RoomsController do
         usernameFragment: "abc123",
       }
 
-      published = []
-      allow(MessageBus).to receive(:publish) do |channel, data, opts|
-        published << [channel, data, opts]
-      end
-
-      post "/resenha/rooms/#{room.id}/signal.json",
-           params: {
-             payload: {
-               type: "candidate",
-               candidate: candidate_payload,
-               recipient_id: staff.id,
-             },
-           }
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/signal.json",
+               params: {
+                 payload: {
+                   type: "candidate",
+                   candidate: candidate_payload,
+                   recipient_id: staff.id,
+                 },
+                 participant_session_id: @participant_session_id,
+               }
+        end
 
       expect(response.status).to eq(204)
+      expect(messages.size).to eq(1)
 
-      # Verify MessageBus received correct parameters
-      expect(MessageBus).to have_received(:publish) do |channel, data, opts|
-        expect(channel).to eq(Resenha.room_channel(room.id))
-        expect(data[:type]).to eq("signal")
-        expect(data[:room_id]).to eq(room.id)
-        expect(data[:sender_id]).to eq(user.id)
-        expect(data[:data][:type]).to eq("candidate")
-        expect(data[:data][:candidate][:candidate]).to eq(candidate_payload[:candidate])
-        expect(opts[:user_ids]).to eq([staff.id])
-      end
+      message = messages.first
+      expect(message.data[:type]).to eq("signal")
+      expect(message.data[:room_id]).to eq(room.id)
+      expect(message.data[:sender_id]).to eq(user.id)
+      expect(message.data[:sender][:username]).to eq(user.username)
+      expect(message.data[:data][:type]).to eq("candidate")
+      expect(message.data[:data][:candidate][:candidate]).to eq(candidate_payload[:candidate])
+      expect(message.user_ids).to eq([staff.id])
     end
 
     it "accepts batched events payloads" do
-      sign_in(user)
-
-      published = []
-      allow(MessageBus).to receive(:publish) do |channel, data, opts|
-        published << [channel, data, opts]
-      end
-
-      post "/resenha/rooms/#{room.id}/signal.json",
-           params: {
-             payload: {
-               recipient_id: staff.id,
-               events: [
-                 { type: "offer", sdp: "v=0" },
-                 {
-                   type: "candidate",
-                   candidate: {
-                     candidate: "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
-                   },
-                 },
-               ],
-             },
-           }
-
-      expect(response.status).to eq(204)
-      expect(MessageBus).to have_received(:publish).twice
-
-      expect(published.map(&:first)).to all(eq(Resenha.room_channel(room.id)))
-      expect(published.map { |(_, data)| data[:sender_id] }).to all(eq(user.id))
-      expect(published.map { |(_, _, opts)| opts[:user_ids] }).to all(eq([staff.id]))
-
-      types = published.map { |(_, data)| data[:data][:type] }
-      expect(types).to contain_exactly("offer", "candidate")
-      expect(published.find { |(_, data)| data[:data][:type] == "offer" }[1][:data][:sdp]).to eq(
-        "v=0",
-      )
-      expect(
-        published.find { |(_, data)| data[:data][:type] == "candidate" }[1][:data][:candidate][
-          :candidate
-        ],
-      ).to eq("candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host")
-    end
-
-    it "relays multi-recipient batched messages" do
-      sign_in(user)
-
-      published = []
-      allow(MessageBus).to receive(:publish) do |channel, data, opts|
-        published << [channel, data, opts]
-      end
-
-      post "/resenha/rooms/#{room.id}/signal.json",
-           params: {
-             payload: {
-               messages: [
-                 { recipient_id: staff.id, events: [{ type: "offer", sdp: "v=0" }] },
-                 {
-                   recipient_id: other_participant.id,
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/signal.json",
+               params: {
+                 payload: {
+                   recipient_id: staff.id,
                    events: [
+                     { type: "offer", sdp: "v=0" },
                      {
                        type: "candidate",
                        candidate: {
@@ -1154,24 +1257,192 @@ RSpec.describe Resenha::RoomsController do
                      },
                    ],
                  },
-               ],
-             },
-           }
+                 participant_session_id: @participant_session_id,
+               }
+        end
 
       expect(response.status).to eq(204)
-      expect(published.size).to eq(2)
-      expect(published.map(&:first)).to all(eq(Resenha.room_channel(room.id)))
-      expect(published.map { |(_, data)| data[:sender_id] }).to all(eq(user.id))
+      expect(messages.size).to eq(2)
+      expect(messages.map { |message| message.data[:sender_id] }).to all(eq(user.id))
+      expect(messages.map(&:user_ids)).to all(eq([staff.id]))
 
-      offer_payload = published.find { |(_, data)| data[:data][:type] == "offer" }
-      candidate_payload = published.find { |(_, data)| data[:data][:type] == "candidate" }
-
-      expect(offer_payload[1][:data][:sdp]).to eq("v=0")
-      expect(offer_payload[2][:user_ids]).to eq([staff.id])
-      expect(candidate_payload[1][:data][:candidate][:candidate]).to eq(
+      types = messages.map { |message| message.data[:data][:type] }
+      expect(types).to contain_exactly("offer", "candidate")
+      offer = messages.find { |message| message.data[:data][:type] == "offer" }
+      candidate = messages.find { |message| message.data[:data][:type] == "candidate" }
+      expect(offer.data[:data][:sdp]).to eq("v=0")
+      expect(candidate.data[:data][:candidate][:candidate]).to eq(
         "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
       )
-      expect(candidate_payload[2][:user_ids]).to eq([other_participant.id])
+    end
+
+    it "relays multi-recipient batched messages" do
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/signal.json",
+               params: {
+                 payload: {
+                   messages: [
+                     { recipient_id: staff.id, events: [{ type: "offer", sdp: "v=0" }] },
+                     {
+                       recipient_id: other_participant.id,
+                       events: [
+                         {
+                           type: "candidate",
+                           candidate: {
+                             candidate: "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
+                           },
+                         },
+                       ],
+                     },
+                   ],
+                 },
+                 participant_session_id: @participant_session_id,
+               }
+        end
+
+      expect(response.status).to eq(204)
+      expect(messages.size).to eq(2)
+      expect(messages.map { |message| message.data[:sender_id] }).to all(eq(user.id))
+
+      offer = messages.find { |message| message.data[:data][:type] == "offer" }
+      candidate = messages.find { |message| message.data[:data][:type] == "candidate" }
+
+      expect(offer.data[:data][:sdp]).to eq("v=0")
+      expect(offer.user_ids).to eq([staff.id])
+      expect(candidate.data[:data][:candidate][:candidate]).to eq(
+        "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
+      )
+      expect(candidate.user_ids).to eq([other_participant.id])
+    end
+  end
+
+  describe "#signal participant session enforcement" do
+    def post_signal(sender_room, session_id, recipient:)
+      post "/resenha/rooms/#{sender_room.id}/signal.json",
+           params: {
+             payload: {
+               type: "offer",
+               sdp: "v=0",
+               recipient_id: recipient.id,
+             },
+             participant_session_id: session_id,
+           }
+    end
+
+    it "relays a valid-session offer even when the sender's roster broadcast is still in flight" do
+      # The recipient is present; the sender joined but no participants
+      # broadcast has been observed yet — the session alone must authorize the
+      # early offer.
+      sign_in(user)
+      establish_presence!(room, other_participant)
+      post "/resenha/rooms/#{room.id}/join.json"
+      session_id = response.parsed_body["participant_session_id"]
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post_signal(room, session_id, recipient: other_participant)
+        end
+
+      expect(response.status).to eq(204)
+      expect(messages.size).to eq(1)
+      expect(messages.first.user_ids).to eq([other_participant.id])
+    end
+
+    it "rejects a signal from a room-eligible user without a participant session" do
+      sign_in(user)
+      establish_presence!(room, other_participant)
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post_signal(room, nil, recipient: other_participant)
+        end
+
+      expect(response.status).to eq(403)
+      expect(messages).to be_empty
+    end
+
+    it "rejects a pre-leave session after the user rejoined" do
+      sign_in(user)
+      establish_presence!(room, other_participant)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      stale_session_id = response.parsed_body["participant_session_id"]
+
+      delete "/resenha/rooms/#{room.id}/leave.json"
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post_signal(room, stale_session_id, recipient: other_participant)
+        end
+
+      expect(response.status).to eq(403)
+      expect(messages).to be_empty
+    end
+
+    it "revokes signaling authority when the user is kicked" do
+      sign_in(user)
+      establish_presence!(room, other_participant)
+      post "/resenha/rooms/#{room.id}/join.json"
+      session_id = response.parsed_body["participant_session_id"]
+
+      sign_in(staff)
+      delete "/resenha/rooms/#{room.id}/kick.json", params: { user_id: user.id }
+
+      sign_in(user)
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post_signal(room, session_id, recipient: other_participant)
+        end
+
+      expect(response.status).to eq(403)
+      expect(messages).to be_empty
+    end
+
+    it "discards messages to recipients without a live session and delivers the rest" do
+      sign_in(user)
+      session_id = establish_presence!(room, user)
+      establish_presence!(room, staff)
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/signal.json",
+               params: {
+                 payload: {
+                   messages: [
+                     { recipient_id: staff.id, events: [{ type: "offer", sdp: "v=0" }] },
+                     {
+                       recipient_id: other_participant.id,
+                       events: [{ type: "offer", sdp: "v=0" }],
+                     },
+                   ],
+                 },
+                 participant_session_id: session_id,
+               }
+        end
+
+      expect(response.status).to eq(204)
+      expect(messages.size).to eq(1)
+      expect(messages.first.user_ids).to eq([staff.id])
+    end
+
+    it "discards a queued offer to a recipient who left the room" do
+      sign_in(other_participant)
+      session_id = establish_presence!(room, other_participant)
+      establish_presence!(room, user)
+
+      sign_in(user)
+      delete "/resenha/rooms/#{room.id}/leave.json"
+
+      sign_in(other_participant)
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post_signal(room, session_id, recipient: user)
+        end
+
+      expect(response.status).to eq(204)
+      expect(messages).to be_empty
     end
   end
 

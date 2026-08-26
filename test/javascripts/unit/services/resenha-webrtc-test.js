@@ -484,6 +484,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
     pretender.post("/resenha/rooms/1/join", () =>
       response({
+        participant_session_id: "session-abc",
         room: JSON.parse(JSON.stringify(this.room)),
       })
     );
@@ -1289,13 +1290,14 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       ),
     });
     const signalRequests = [];
+    const signalSessionIds = [];
 
     // The regression: two peers join near-simultaneously. The other peer
     // gathers and offers before our presence broadcast lists it, so
     // active_participants still only contains us when its offer arrives.
-    // Gating on presence used to silently drop that offer and strand the
-    // connection; a targeted offer is implicit proof the sender shares the
-    // room, so we must answer it.
+    // Gating on the local roster used to silently drop that offer and strand
+    // the connection; the relay is server-attested (the server only relays
+    // for senders holding a live participant session), so we must answer it.
     this.currentUser.id = 50;
     this.room.room_type = "open";
     this.room.membership.role_name = "participant";
@@ -1305,6 +1307,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
     pretender.post("/resenha/rooms/1/signal", (request) => {
       signalRequests.push(signalPayloadFrom(request));
+      signalSessionIds.push(
+        new URLSearchParams(request.requestBody).get("participant_session_id")
+      );
       return response({});
     });
 
@@ -1321,6 +1326,7 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       this.rooms.emit(1, {
         type: "signal",
         sender_id: 2,
+        sender: { id: 2, username: "early-bird" },
         data: { type: "offer", sdp: "early-offer" },
       });
       await waitUntil(() => signalRequests.length === 1, 1500);
@@ -1329,6 +1335,17 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
         signalRequests[0],
         { recipientId: 2, type: "answer", sdp: "fake-answer" },
         "answers the early offer despite the sender being absent from presence"
+      );
+      assert.strictEqual(
+        signalSessionIds[0],
+        "session-abc",
+        "authenticates the answer with the join's participant session"
+      );
+      assert.true(
+        (this.room.active_participants || []).some(
+          (participant) => Number(participant.id) === 2
+        ),
+        "renders the server-serialized sender as a provisional participant"
       );
 
       const pc = FakeRTCPeerConnection.instances[0];
@@ -1842,7 +1859,14 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       const leaveRequests = stateRequests.slice(requestsBeforeLeave);
       assert.deepEqual(
         leaveRequests,
-        [{ watching: "false", video: "false", screen: "false" }],
+        [
+          {
+            watching: "false",
+            video: "false",
+            screen: "false",
+            participant_session_id: "session-abc",
+          },
+        ],
         "page leave sends one combined state request so concurrent " +
           "read-modify-write updates cannot resurrect stale publisher flags"
       );

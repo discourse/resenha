@@ -12,6 +12,7 @@ export default class LivekitCoordinator {
   #rosterIds = new Map();
 
   #getCurrentUserId;
+  #onParticipantSessionRenewed;
   #getLocalStream;
   #getLocalVideoTrack;
   #getLocalScreenAudioTrack;
@@ -32,6 +33,7 @@ export default class LivekitCoordinator {
 
   constructor({
     getCurrentUserId,
+    onParticipantSessionRenewed = () => {},
     getLocalStream,
     getLocalVideoTrack,
     getLocalScreenAudioTrack,
@@ -51,6 +53,7 @@ export default class LivekitCoordinator {
     showNotice,
   }) {
     this.#getCurrentUserId = getCurrentUserId;
+    this.#onParticipantSessionRenewed = onParticipantSessionRenewed;
     this.#getLocalStream = getLocalStream;
     this.#getLocalVideoTrack = getLocalVideoTrack;
     this.#getLocalScreenAudioTrack = getLocalScreenAudioTrack;
@@ -158,8 +161,18 @@ export default class LivekitCoordinator {
       onDisconnected: (kind, reason) =>
         this.#handleDisconnected(roomId, kind, reason),
       onConnectionChange: () => this.#bumpConnectionRevision(),
-      mintToken: () =>
-        ajax(`/resenha/rooms/${roomId}/livekit_token`, { type: "POST" }),
+      mintToken: async () => {
+        const response = await ajax(`/resenha/rooms/${roomId}/livekit_token`, {
+          type: "POST",
+        });
+        // The token endpoint re-establishes presence, so it rotates the
+        // participant session heartbeat/state must keep sending.
+        this.#onParticipantSessionRenewed(
+          roomId,
+          response?.participant_session_id
+        );
+        return response;
+      },
       getQualityTiers: () => this.#getQualityTiers(roomId),
     });
   }

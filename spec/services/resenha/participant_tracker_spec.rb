@@ -32,6 +32,16 @@ RSpec.describe Resenha::ParticipantTracker do
       expect(described_class.user_ids(room.id)).to be_empty
       expect(described_class.get_metadata(room.id, user1.id)).to eq({})
     end
+
+    it "revokes the participant session" do
+      described_class.add(room.id, user1.id)
+      session_id = described_class.create_participant_session!(room.id, user1.id)
+
+      described_class.remove(room.id, user1.id)
+
+      expect(described_class.valid_participant_session?(room.id, user1.id, session_id)).to eq(false)
+      expect(described_class.participant_session?(room.id, user1.id)).to eq(false)
+    end
   end
 
   describe ".mark_left" do
@@ -44,6 +54,40 @@ RSpec.describe Resenha::ParticipantTracker do
       described_class.clear_left(room.id, user1.id)
 
       expect(described_class.recently_left?(room.id, user1.id)).to eq(false)
+    end
+  end
+
+  describe ".create_participant_session!" do
+    it "mints a session that validates only for the exact id" do
+      session_id = described_class.create_participant_session!(room.id, user1.id)
+
+      expect(described_class.valid_participant_session?(room.id, user1.id, session_id)).to eq(true)
+      expect(described_class.valid_participant_session?(room.id, user1.id, "other")).to eq(false)
+      expect(described_class.valid_participant_session?(room.id, user1.id, nil)).to eq(false)
+      expect(described_class.valid_participant_session?(room.id, user2.id, session_id)).to eq(false)
+    end
+
+    it "invalidates the previous session when a new one is minted" do
+      first_session_id = described_class.create_participant_session!(room.id, user1.id)
+      second_session_id = described_class.create_participant_session!(room.id, user1.id)
+
+      expect(described_class.valid_participant_session?(room.id, user1.id, first_session_id)).to eq(
+        false,
+      )
+      expect(
+        described_class.valid_participant_session?(room.id, user1.id, second_session_id),
+      ).to eq(true)
+    end
+
+    it "expires with the session TTL" do
+      session_id = described_class.create_participant_session!(room.id, user1.id)
+
+      key = "#{described_class::KEY_NAMESPACE}:#{room.id}:participant_session:#{user1.id}"
+      expect(Discourse.redis.ttl(key)).to be_between(1, described_class.participant_session_ttl)
+
+      Discourse.redis.del(key)
+
+      expect(described_class.valid_participant_session?(room.id, user1.id, session_id)).to eq(false)
     end
   end
 

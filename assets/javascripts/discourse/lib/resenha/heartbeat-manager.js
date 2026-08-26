@@ -60,7 +60,7 @@ export default class HeartbeatManager {
     try {
       await ajax(`/resenha/rooms/${roomId}/heartbeat`, {
         type: "POST",
-        data: this.#buildPayload(),
+        data: this.#buildPayload(roomId),
       });
       // eslint-disable-next-line no-console
       console.log(`[resenha] heartbeat sent for room ${roomId}`);
