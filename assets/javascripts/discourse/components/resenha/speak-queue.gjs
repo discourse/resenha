@@ -16,6 +16,7 @@ import { speakQueue } from "../../lib/resenha/speak-queue";
 // their own hand.
 export default class ResenhaSpeakQueue extends Component {
   @service currentUser;
+  @service resenhaWebrtc;
 
   get room() {
     return this.args.room;
@@ -65,6 +66,11 @@ export default class ResenhaSpeakQueue extends Component {
     try {
       await ajax(`/resenha/rooms/${this.room.id}/request_to_speak`, {
         type: "DELETE",
+        data: {
+          participant_session_id: this.resenhaWebrtc.participantSessionIdFor(
+            this.room.id
+          ),
+        },
       });
     } catch (error) {
       popupAjaxError(error);

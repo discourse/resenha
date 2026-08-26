@@ -571,6 +571,12 @@ export default class ResenhaWebrtcService extends Service {
     return this.#remoteStreamRegistry.streamsFor(roomId);
   }
 
+  // The server-attested session participant actions (hand raising, state
+  // changes) must carry to be accepted.
+  participantSessionIdFor(roomId) {
+    return this.#roomSessions.get(roomId);
+  }
+
   remoteStreamFor(roomId, userId) {
     this.remoteStreamsRevision;
     return this.#remoteStreamRegistry.streamFor(roomId, userId);

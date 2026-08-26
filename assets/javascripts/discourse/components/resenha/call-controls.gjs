@@ -218,6 +218,11 @@ export default class ResenhaCallControls extends Component {
     try {
       await ajax(`/resenha/rooms/${this.room.id}/request_to_speak`, {
         type: this.handRaisedAt ? "DELETE" : "POST",
+        data: {
+          participant_session_id: this.resenhaWebrtc.participantSessionIdFor(
+            this.room.id
+          ),
+        },
       });
     } catch (error) {
       popupAjaxError(error);
