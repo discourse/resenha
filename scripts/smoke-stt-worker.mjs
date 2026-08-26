@@ -16,15 +16,21 @@
 // Env knobs: STT_MODEL_DIR=/path/to/mirror serves the model from a local
 // directory (validates the resenha_stt_model_base_url mirror path);
 // STT_MODEL_BASE_URL=https://... tests a remote mirror/bucket directly;
-// STT_BACKEND / STT_ENCODER_QUANT override the worker defaults.
+// STT_BACKEND / STT_ENCODER_QUANT override the worker defaults;
+// STT_BROWSER=firefox runs in Playwright Firefox — the only browser with
+// WebGPU shader-f16 on Linux, so the only local way to exercise the fp16
+// encoder end-to-end.
 import http from "node:http";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { chromium } from "playwright";
+import { chromium, firefox } from "playwright";
 
-const pluginDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const pluginDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
 const fixturePath = process.argv[2];
 if (!fixturePath) {
   console.error("usage: node scripts/smoke-stt-worker.mjs <speech.wav>");
@@ -44,6 +50,12 @@ const PAGE = `<!doctype html><script type="module">
 window.log = (...args) => console.log("[smoke]", ...args);
 
 window.runTest = async (paths) => {
+  // --- Phase 0: report the adapter; a SwiftShader fallback would otherwise
+  // silently turn this into a CPU test (and one with no shader-f16).
+  const adapter = await navigator.gpu?.requestAdapter();
+  const info = adapter?.info || {};
+  window.log("adapter:", info.vendor, info.architecture, "shader-f16:", !!adapter?.features?.has("shader-f16"));
+
   // --- Phase 1: worker init (downloads/loads the model) ---
   const worker = new Worker(paths.worker);
   const ready = new Promise((resolve, reject) => {
@@ -98,6 +110,13 @@ window.runTest = async (paths) => {
   const ctx = new AudioContext();
   await ctx.resume();
   const dest = ctx.createMediaStreamDestination();
+  // Keep the stream producing frames after the fixture ends: without a live
+  // source Firefox stops delivering audio, so the VAD never sees the
+  // trailing silence that closes the utterance.
+  const silence = ctx.createConstantSource();
+  silence.offset.value = 0;
+  silence.connect(dest);
+  silence.start();
   const playSrc = ctx.createBufferSource();
   playSrc.buffer = decoded;
   playSrc.connect(dest);
@@ -158,23 +177,43 @@ const server = http.createServer(async (req, res) => {
 });
 // Fixed port: the model cache (Cache API/IndexedDB) is origin-scoped, so a
 // random port would defeat cross-run caching in the persistent profile.
-await new Promise((r) => server.listen(Number(process.env.STT_SMOKE_PORT || 8873), r));
+await new Promise((r) =>
+  server.listen(Number(process.env.STT_SMOKE_PORT || 8873), r)
+);
 
 const toLocal = (file) => `/stt/${file}`;
 
-const context = await chromium.launchPersistentContext(
-  path.join(pluginDir, ".local/stt-smoke-profile"),
-  {
-    executablePath: process.env.CHROMIUM_BIN || undefined,
-    headless: true,
-    args: [
-      "--enable-unsafe-webgpu",
-      "--enable-features=Vulkan",
-      "--use-angle=vulkan",
-      "--autoplay-policy=no-user-gesture-required",
-    ],
-  }
-);
+const useFirefox = process.env.STT_BROWSER === "firefox";
+const context = useFirefox
+  ? await firefox.launchPersistentContext(
+      path.join(pluginDir, ".local/stt-smoke-profile-firefox"),
+      {
+        headless: true,
+        firefoxUserPrefs: {
+          "dom.webgpu.enabled": true,
+          "dom.webgpu.workers.enabled": true,
+          "gfx.webgpu.ignore-blocklist": true,
+          "media.autoplay.default": 0,
+          "media.autoplay.blocking_policy": 0,
+        },
+      }
+    )
+  : await chromium.launchPersistentContext(
+      path.join(pluginDir, ".local/stt-smoke-profile"),
+      {
+        executablePath: process.env.CHROMIUM_BIN || undefined,
+        headless: true,
+        args: [
+          "--enable-unsafe-webgpu",
+          // Vulkan alone still falls back to SwiftShader in headless; the
+          // FromANGLE pair is what actually reaches the host GPU.
+          "--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan",
+          "--use-angle=vulkan",
+          "--ignore-gpu-blocklist",
+          "--autoplay-policy=no-user-gesture-required",
+        ],
+      }
+    );
 const page = await context.newPage();
 // The ort runtime must come from our vendored files, never a CDN — the
 // library silently falls back to jsdelivr when env.wasm.wasmPaths is unset.
