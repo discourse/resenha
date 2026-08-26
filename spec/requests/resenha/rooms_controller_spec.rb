@@ -246,6 +246,101 @@ RSpec.describe Resenha::RoomsController do
       ).to eq(false)
     end
 
+    it "treats a repeated join carrying the live session as idempotent" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      session_id = response.parsed_body["participant_session_id"]
+      expect(Resenha::Session.where(user: user, room: room).count).to eq(1)
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/join.json", params: { participant_session_id: session_id }
+        end
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["participant_session_id"]).to eq(session_id)
+      expect(
+        Resenha::ParticipantTracker.valid_participant_session?(room.id, user.id, session_id),
+      ).to eq(true)
+      expect(Resenha::Session.where(user: user, room: room).count).to eq(1)
+      expect(messages.select { |message| message.data[:type] == "participants" }).to be_empty
+    end
+
+    it "mints a fresh session and analytics session on a genuine rejoin after leave" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      first_session_id = response.parsed_body["participant_session_id"]
+
+      delete "/resenha/rooms/#{room.id}/leave.json",
+             params: {
+               participant_session_id: first_session_id,
+             }
+
+      post "/resenha/rooms/#{room.id}/join.json",
+           params: {
+             participant_session_id: first_session_id,
+           }
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["participant_session_id"]).not_to eq(first_session_id)
+      expect(Resenha::Session.where(user: user, room: room).count).to eq(2)
+    end
+
+    it "returns 422 when the room is at its own participant limit" do
+      room.update!(max_participants: 2)
+      establish_presence!(room, staff)
+      establish_presence!(room, other_participant)
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(422)
+      expect(response.parsed_body["errors"]).to include(I18n.t("resenha.errors.room_full"))
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).not_to include(user.id)
+    end
+
+    it "returns 422 when the room is at the site-wide participant ceiling" do
+      SiteSetting.resenha_max_room_participants = 2
+      establish_presence!(room, staff)
+      establish_presence!(room, other_participant)
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(422)
+    end
+
+    it "lets an existing participant rejoin a full room" do
+      room.update!(max_participants: 2)
+      establish_presence!(room, staff)
+      establish_presence!(room, user)
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(200)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+    end
+
+    it "frees the slots of participants whose presence expired" do
+      room.update!(max_participants: 2)
+      establish_presence!(room, staff)
+      establish_presence!(room, other_participant)
+      key = "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:participants"
+      Discourse.redis.zadd(key, 1.hour.ago.to_f, staff.id)
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+
+      expect(response.status).to eq(200)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).to contain_exactly(
+        other_participant.id,
+        user.id,
+      )
+    end
+
     it "returns 403 when a non-member who can create rooms joins a private room" do
       sign_in(user)
 
@@ -475,6 +570,44 @@ RSpec.describe Resenha::RoomsController do
 
       expect(response.status).to eq(200)
       expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+    end
+
+    it "ignores a leave carrying a session that a newer join superseded" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      stale_session_id = response.parsed_body["participant_session_id"]
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      current_session_id = response.parsed_body["participant_session_id"]
+
+      delete "/resenha/rooms/#{room.id}/leave.json",
+             params: {
+               participant_session_id: stale_session_id,
+             }
+
+      expect(response.status).to eq(204)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+      expect(
+        Resenha::ParticipantTracker.valid_participant_session?(
+          room.id,
+          user.id,
+          current_session_id,
+        ),
+      ).to eq(true)
+    end
+
+    it "removes presence when the leave carries the current session" do
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      session_id = response.parsed_body["participant_session_id"]
+
+      delete "/resenha/rooms/#{room.id}/leave.json", params: { participant_session_id: session_id }
+
+      expect(response.status).to eq(204)
+      expect(Resenha::ParticipantTracker.user_ids(room.id)).not_to include(user.id)
+      expect(Resenha::ParticipantTracker.participant_session?(room.id, user.id)).to eq(false)
     end
   end
 
@@ -964,6 +1097,36 @@ RSpec.describe Resenha::RoomsController do
       expect(metadata[:is_video_on]).to eq(false)
     end
 
+    it "rejects a request with no supported state field" do
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             participant_session_id: @participant_session_id,
+             something_else: true,
+           }
+
+      expect(response.status).to eq(400)
+    end
+
+    it "publishes nothing when the request changes no state" do
+      post "/resenha/rooms/#{room.id}/state.json",
+           params: {
+             muted: true,
+             participant_session_id: @participant_session_id,
+           }
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/state.json",
+               params: {
+                 muted: true,
+                 participant_session_id: @participant_session_id,
+               }
+        end
+
+      expect(response.status).to eq(204)
+      expect(messages).to be_empty
+    end
+
     it "still updates mute state through the toggle_mute alias" do
       post "/resenha/rooms/#{room.id}/toggle_mute.json",
            params: {
@@ -1235,8 +1398,11 @@ RSpec.describe Resenha::RoomsController do
       expect(message.data[:room_id]).to eq(room.id)
       expect(message.data[:sender_id]).to eq(user.id)
       expect(message.data[:sender][:username]).to eq(user.username)
-      expect(message.data[:data][:type]).to eq("candidate")
-      expect(message.data[:data][:candidate][:candidate]).to eq(candidate_payload[:candidate])
+      expect(message.data[:events].size).to eq(1)
+      expect(message.data[:events].first[:type]).to eq("candidate")
+      expect(message.data[:events].first[:candidate][:candidate]).to eq(
+        candidate_payload[:candidate],
+      )
       expect(message.user_ids).to eq([staff.id])
     end
 
@@ -1262,16 +1428,16 @@ RSpec.describe Resenha::RoomsController do
         end
 
       expect(response.status).to eq(204)
-      expect(messages.size).to eq(2)
-      expect(messages.map { |message| message.data[:sender_id] }).to all(eq(user.id))
-      expect(messages.map(&:user_ids)).to all(eq([staff.id]))
+      expect(messages.size).to eq(1)
 
-      types = messages.map { |message| message.data[:data][:type] }
-      expect(types).to contain_exactly("offer", "candidate")
-      offer = messages.find { |message| message.data[:data][:type] == "offer" }
-      candidate = messages.find { |message| message.data[:data][:type] == "candidate" }
-      expect(offer.data[:data][:sdp]).to eq("v=0")
-      expect(candidate.data[:data][:candidate][:candidate]).to eq(
+      message = messages.first
+      expect(message.data[:sender_id]).to eq(user.id)
+      expect(message.user_ids).to eq([staff.id])
+
+      events = message.data[:events]
+      expect(events.map { |event| event[:type] }).to eq(%w[offer candidate])
+      expect(events.first[:sdp]).to eq("v=0")
+      expect(events.last[:candidate][:candidate]).to eq(
         "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
       )
     end
@@ -1305,15 +1471,326 @@ RSpec.describe Resenha::RoomsController do
       expect(messages.size).to eq(2)
       expect(messages.map { |message| message.data[:sender_id] }).to all(eq(user.id))
 
-      offer = messages.find { |message| message.data[:data][:type] == "offer" }
-      candidate = messages.find { |message| message.data[:data][:type] == "candidate" }
+      offer = messages.find { |message| message.data[:events].first[:type] == "offer" }
+      candidate = messages.find { |message| message.data[:events].first[:type] == "candidate" }
 
-      expect(offer.data[:data][:sdp]).to eq("v=0")
+      expect(offer.data[:events].first[:sdp]).to eq("v=0")
       expect(offer.user_ids).to eq([staff.id])
-      expect(candidate.data[:data][:candidate][:candidate]).to eq(
+      expect(candidate.data[:events].first[:candidate][:candidate]).to eq(
         "candidate:1 1 udp 2122260223 10.0.0.1 8998 typ host",
       )
       expect(candidate.user_ids).to eq([other_participant.id])
+    end
+  end
+
+  describe "#signal validation" do
+    before do
+      sign_in(user)
+      @participant_session_id = establish_presence!(room, user)
+      establish_presence!(room, staff)
+      establish_presence!(room, other_participant)
+    end
+
+    def post_signal_payload(payload)
+      MessageBus.track_publish(Resenha.room_channel(room.id)) do
+        post "/resenha/rooms/#{room.id}/signal.json",
+             params: {
+               payload: payload,
+               participant_session_id: @participant_session_id,
+             },
+             as: :json
+      end
+    end
+
+    def candidate_event(seq = 1)
+      {
+        type: "candidate",
+        candidate: {
+          candidate: "candidate:#{seq} 1 udp 2122260223 10.0.0.1 8998 typ host",
+        },
+      }
+    end
+
+    it "rejects an unknown event type and publishes nothing" do
+      messages = post_signal_payload({ recipient_id: staff.id, events: [{ type: "datachannel" }] })
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects an offer missing its sdp" do
+      messages = post_signal_payload({ recipient_id: staff.id, events: [{ type: "offer" }] })
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects an event carrying fields outside its type's shape" do
+      messages =
+        post_signal_payload(
+          {
+            recipient_id: staff.id,
+            events: [{ type: "offer", sdp: "v=0", metadata: { room: "other" } }],
+          },
+        )
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects a candidate whose body has unexpected keys" do
+      messages =
+        post_signal_payload(
+          {
+            recipient_id: staff.id,
+            events: [{ type: "candidate", candidate: { candidate: "a", extra: "b" } }],
+          },
+        )
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects an oversized sdp" do
+      oversized = "a" * (Resenha::SignalValidator::MAX_SDP_BYTES + 1)
+      messages =
+        post_signal_payload({ recipient_id: staff.id, events: [{ type: "offer", sdp: oversized }] })
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects an oversized candidate" do
+      oversized = "a" * (Resenha::SignalValidator::MAX_CANDIDATE_BYTES + 1)
+      messages =
+        post_signal_payload(
+          {
+            recipient_id: staff.id,
+            events: [{ type: "candidate", candidate: { candidate: oversized } }],
+          },
+        )
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects a batch with more events than one recipient may receive" do
+      events =
+        (Resenha::SignalValidator::MAX_EVENTS_PER_RECIPIENT + 1).times.map do |seq|
+          candidate_event(seq)
+        end
+      messages = post_signal_payload({ recipient_id: staff.id, events: events })
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects a batch with more recipients than the room can hold" do
+      room.update!(max_participants: 2)
+
+      messages =
+        post_signal_payload(
+          {
+            messages: [
+              { recipient_id: staff.id, events: [candidate_event] },
+              { recipient_id: other_participant.id, events: [candidate_event] },
+            ],
+          },
+        )
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "rejects a malformed batch wholesale even when other events are valid" do
+      messages =
+        post_signal_payload(
+          {
+            messages: [
+              { recipient_id: staff.id, events: [{ type: "offer", sdp: "v=0" }] },
+              { recipient_id: other_participant.id, events: [{ type: "evil" }] },
+            ],
+          },
+        )
+
+      expect(response.status).to eq(400)
+      expect(messages).to be_empty
+    end
+
+    it "preserves event order within a recipient's batch" do
+      messages =
+        post_signal_payload(
+          {
+            recipient_id: staff.id,
+            events: [{ type: "offer", sdp: "v=0" }, candidate_event(1), candidate_event(2)],
+          },
+        )
+
+      expect(response.status).to eq(204)
+      expect(messages.size).to eq(1)
+
+      events = messages.first.data[:events]
+      expect(events.map { |event| event[:type] }).to eq(%w[offer candidate candidate])
+      expect(events.last[:candidate][:candidate]).to include("candidate:2")
+    end
+
+    it "publishes one envelope per recipient, not per event" do
+      messages =
+        post_signal_payload(
+          {
+            messages: [
+              {
+                recipient_id: staff.id,
+                events: [{ type: "offer", sdp: "v=0" }, candidate_event(1)],
+              },
+              {
+                recipient_id: other_participant.id,
+                events: [{ type: "offer", sdp: "v=0" }, candidate_event(2)],
+              },
+            ],
+          },
+        )
+
+      expect(response.status).to eq(204)
+      expect(messages.size).to eq(2)
+      expect(messages.map(&:user_ids)).to contain_exactly([staff.id], [other_participant.id])
+      expect(messages.map { |message| message.data[:events].size }).to eq([2, 2])
+    end
+  end
+
+  describe "#signal rate limits" do
+    before do
+      RateLimiter.enable
+      sign_in(user)
+      @participant_session_id = establish_presence!(room, user)
+    end
+
+    def candidate_event(seq = 1)
+      {
+        type: "candidate",
+        candidate: {
+          candidate: "candidate:#{seq} 1 udp 2122260223 10.0.0.1 8998 typ host",
+        },
+      }
+    end
+
+    # Recipients only need a live participant session for the relay to
+    # deliver; real User records are not required.
+    def recipient_sessions!(count)
+      (1..count).map do |i|
+        fake_id = 100_000 + i
+        Resenha::ParticipantTracker.create_participant_session!(room.id, fake_id)
+        fake_id
+      end
+    end
+
+    def post_burst(recipient_ids, events_per_recipient)
+      MessageBus.track_publish(Resenha.room_channel(room.id)) do
+        post "/resenha/rooms/#{room.id}/signal.json",
+             params: {
+               payload: {
+                 messages:
+                   recipient_ids.map do |recipient_id|
+                     { recipient_id: recipient_id, events: events_per_recipient }
+                   end,
+               },
+               participant_session_id: @participant_session_id,
+             },
+             as: :json
+      end
+    end
+
+    it "accepts a full 50-person room trickle ICE burst without 429" do
+      recipient_ids = recipient_sessions!(49)
+
+      # The representative burst: one offer plus three 5-candidate batches to
+      # every peer in the room, followed by a straggler candidate round.
+      connect_events = [{ type: "offer", sdp: "v=0" }] + 15.times.map { |seq| candidate_event(seq) }
+      messages = post_burst(recipient_ids, connect_events)
+
+      expect(response.status).to eq(204)
+      expect(messages.size).to eq(49)
+
+      post_burst(recipient_ids, 5.times.map { |seq| candidate_event(seq) })
+      expect(response.status).to eq(204)
+    end
+
+    it "rejects sustained signaling before any MessageBus work happens" do
+      recipient_ids = recipient_sessions!(49)
+      max_events =
+        Resenha::SignalValidator::MAX_EVENTS_PER_RECIPIENT.times.map { |seq| candidate_event(seq) }
+
+      4.times do
+        post_burst(recipient_ids, max_events)
+        expect(response.status).to eq(204)
+      end
+
+      messages = post_burst(recipient_ids, max_events)
+
+      expect(response.status).to eq(429)
+      expect(messages).to be_empty
+    end
+
+    it "limits a room's aggregate signaling across users" do
+      stub_const(Resenha::RoomsController, :SIGNAL_EVENTS_PER_ROOM_PER_MINUTE, 40) do
+        staff_session_id = establish_presence!(room, staff)
+        recipient_sessions!(1)
+
+        post "/resenha/rooms/#{room.id}/signal.json",
+             params: {
+               payload: {
+                 recipient_id: 100_001,
+                 events: 25.times.map { |seq| candidate_event(seq) },
+               },
+               participant_session_id: @participant_session_id,
+             },
+             as: :json
+        expect(response.status).to eq(204)
+
+        sign_in(staff)
+        messages =
+          MessageBus.track_publish(Resenha.room_channel(room.id)) do
+            post "/resenha/rooms/#{room.id}/signal.json",
+                 params: {
+                   payload: {
+                     recipient_id: 100_001,
+                     events: 25.times.map { |seq| candidate_event(seq) },
+                   },
+                   participant_session_id: staff_session_id,
+                 },
+                 as: :json
+          end
+
+        expect(response.status).to eq(429)
+        expect(messages).to be_empty
+      end
+    end
+
+    it "rate limits repeated invalid-session attempts" do
+      sign_in(other_participant)
+
+      30.times do
+        post "/resenha/rooms/#{room.id}/signal.json",
+             params: {
+               payload: {
+                 recipient_id: user.id,
+                 events: [candidate_event],
+               },
+             },
+             as: :json
+        expect(response.status).to eq(403)
+      end
+
+      post "/resenha/rooms/#{room.id}/signal.json",
+           params: {
+             payload: {
+               recipient_id: user.id,
+               events: [candidate_event],
+             },
+           },
+           as: :json
+
+      expect(response.status).to eq(429)
     end
   end
 

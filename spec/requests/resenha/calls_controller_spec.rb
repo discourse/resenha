@@ -223,5 +223,46 @@ RSpec.describe Resenha::CallsController do
 
       expect(response.status).to eq(403)
     end
+
+    context "with rate limits enabled" do
+      before do
+        RateLimiter.enable
+        sign_in(caller)
+      end
+
+      it "creates no ephemeral room once the daily invite budget is exhausted" do
+        SiteSetting.resenha_max_invites_per_day = 1
+        RateLimiter.new(caller, "resenha-invites-daily", 1, 1.day).performed!
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(429)
+        expect(Resenha::Room.ephemeral.count).to eq(0)
+        expect(callee.notifications.count).to eq(0)
+      end
+
+      it "destroys the room instead of orphaning it when the ring fails" do
+        allow(Resenha::RoomInviter).to receive(:invite!).and_raise(
+          RateLimiter::LimitExceeded.new(10, "resenha-invites-daily"),
+        )
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(429)
+        expect(Resenha::Room.ephemeral.count).to eq(0)
+      end
+    end
+
+    it "rejects the call when the caller has too many live ephemeral rooms" do
+      stub_const(Resenha::EphemeralRoomManager, :MAX_LIVE_ROOMS_PER_CREATOR, 1) do
+        Resenha::EphemeralRoomManager.create!(creator: caller, name: "Ongoing call")
+        sign_in(caller)
+
+        post "/resenha/calls.json", params: { username: callee.username }
+
+        expect(response.status).to eq(403)
+        expect(Resenha::Room.ephemeral.count).to eq(1)
+      end
+    end
   end
 end

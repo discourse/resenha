@@ -1034,6 +1034,73 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
     }
   });
 
+  test("processes a batched signal envelope's events in order", async function (assert) {
+    assert.timeout(2000);
+
+    const rawTrack = createFakeTrack("raw-track");
+    const rawStream = createFakeStream("raw-stream", rawTrack);
+    const audioEnvironment = installFakeAudioEnvironment({
+      rawStream,
+      processedStream: createFakeStream(
+        "processed-stream",
+        createFakeTrack("processed-track")
+      ),
+    });
+    const signalRequests = [];
+
+    this.currentUser.id = 50;
+    this.room.room_type = "open";
+    this.room.membership.role_name = "participant";
+    this.room.active_participants = [
+      { id: this.currentUser.id, role: "participant" },
+      { id: 2, role: "participant" },
+    ];
+
+    pretender.post("/resenha/rooms/1/signal", (request) => {
+      signalRequests.push(signalPayloadFrom(request));
+      return response({});
+    });
+
+    try {
+      await this.subject.join(this.room);
+      await wait(50);
+
+      // One envelope per recipient: the offer plus its trickle candidate ride
+      // in a single ordered event batch.
+      this.rooms.emit(1, {
+        type: "signal",
+        sender_id: 2,
+        events: [
+          { type: "offer", sdp: "peer-offer" },
+          {
+            type: "candidate",
+            candidate: {
+              candidate: "candidate:1 1 UDP 2122252543 127.0.0.1 3478 typ host",
+              sdpMid: "0",
+            },
+          },
+        ],
+      });
+      await waitUntil(() => signalRequests.length === 1, 1500);
+
+      assert.deepEqual(
+        signalRequests[0],
+        { recipientId: 2, type: "answer", sdp: "fake-answer" },
+        "answers the offer delivered in a batched envelope"
+      );
+
+      const pc = FakeRTCPeerConnection.instances[0];
+      await waitUntil(() => pc.addedCandidates.length === 1, 1500);
+      assert.strictEqual(
+        pc.addedCandidates[0].candidate,
+        "candidate:1 1 UDP 2122252543 127.0.0.1 3478 typ host",
+        "applies the candidate after the offer it followed in the batch"
+      );
+    } finally {
+      audioEnvironment.restore();
+    }
+  });
+
   test("slow mic, lower-id local user: offer queued during the permission prompt connects via rollback", async function (assert) {
     assert.timeout(2000);
 

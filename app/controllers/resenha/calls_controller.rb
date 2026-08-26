@@ -31,6 +31,23 @@ module Resenha
 
       RateLimiter.new(current_user, "resenha-calls", 10, 1.minute).performed!
 
+      # The ring consumes the daily invite budget inside RoomInviter; checked
+      # here first so an exhausted budget rejects the call before an ephemeral
+      # room exists, instead of leaving one behind for cleanup.
+      invite_limiter =
+        RateLimiter.new(
+          current_user,
+          "resenha-invites-daily",
+          SiteSetting.resenha_max_invites_per_day,
+          1.day,
+        )
+      unless invite_limiter.can_perform?
+        raise RateLimiter::LimitExceeded.new(
+                invite_limiter.seconds_to_wait,
+                "resenha-invites-daily",
+              )
+      end
+
       room =
         Resenha::EphemeralRoomManager.create!(
           creator: current_user,
@@ -47,7 +64,13 @@ module Resenha
           moderators: [callee],
         )
 
-      Resenha::RoomInviter.invite!(room: room, inviter: current_user, users: [callee])
+      begin
+        Resenha::RoomInviter.invite!(room: room, inviter: current_user, users: [callee])
+      rescue StandardError
+        # A call that could not ring must not leave an orphaned room behind.
+        Resenha::EphemeralRoomManager.destroy!(room)
+        raise
+      end
 
       render_serialized room, Resenha::RoomSerializer, root: :room
     end

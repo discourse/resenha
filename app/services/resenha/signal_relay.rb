@@ -6,12 +6,13 @@ module Resenha
       @room = room
     end
 
-    # Relays only to recipients holding a live participant session, so a
-    # queued signal to someone who already left is discarded rather than
+    # Relays one envelope per recipient carrying that recipient's ordered
+    # event batch, and only to recipients holding a live participant session —
+    # a queued signal to someone who already left is discarded rather than
     # delivered. The serialized sender rides along so the recipient can render
     # a provisional participant before the roster broadcast catches up.
-    def publish!(from:, recipient_id:, data:)
-      if data.blank? || recipient_id.blank?
+    def publish!(from:, recipient_id:, events:)
+      if events.blank? || recipient_id.blank?
         raise Discourse::InvalidParameters.new(I18n.t("resenha.errors.missing_payload"))
       end
 
@@ -24,7 +25,7 @@ module Resenha
           room_id: room.id,
           sender_id: from.id,
           sender: sender_json(from),
-          data: data,
+          events: events,
         },
         user_ids: Array(recipient_id),
       )

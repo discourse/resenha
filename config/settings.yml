@@ -32,6 +32,10 @@ plugins:
     max: 10080
   resenha_participant_ttl_seconds:
     default: 30
+  resenha_max_room_participants:
+    default: 50
+    min: 2
+    max: 200
   resenha_stun_servers:
     default: "stun:stun.l.google.com:19302|stun:global.stun.twilio.com:3478"
   resenha_turn_servers:

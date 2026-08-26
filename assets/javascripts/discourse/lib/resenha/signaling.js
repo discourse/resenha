@@ -4,6 +4,9 @@ export default class SignalingManager {
   static #defaultCandidateBatchDelayMs = 75;
   static #defaultCandidateBatchSize = 5;
   static #defaultHttpBatchDelayMs = 200;
+  // The server rejects batches with more than 25 events for one recipient;
+  // flushing at 20 keeps a candidate batch appended mid-window under that cap.
+  static #httpFlushEventThreshold = 20;
 
   static peerKey(roomId, userId) {
     return `${roomId}:${userId}`;
@@ -193,7 +196,20 @@ export default class SignalingManager {
       entry.pending.push({ recipientId, resolve, reject });
     });
 
-    this.#scheduleHttpFlush(roomId);
+    const queuedEvents = roomQueue.get(recipientId);
+    if (queuedEvents.length >= SignalingManager.#httpFlushEventThreshold) {
+      const timer = this.#httpSignalFlushTimers.get(roomId);
+      if (timer) {
+        clearTimeout(timer);
+        this.#httpSignalFlushTimers.delete(roomId);
+      }
+      this.#flushHttp(roomId).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[resenha] failed to flush HTTP signal queue", error);
+      });
+    } else {
+      this.#scheduleHttpFlush(roomId);
+    }
 
     return promise;
   }
