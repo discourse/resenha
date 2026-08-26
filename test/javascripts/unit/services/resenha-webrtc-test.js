@@ -1859,7 +1859,14 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
       const leaveRequests = stateRequests.slice(requestsBeforeLeave);
       assert.deepEqual(
         leaveRequests,
-        [{ watching: "false", video: "false", screen: "false" }],
+        [
+          {
+            watching: "false",
+            video: "false",
+            screen: "false",
+            participant_session_id: "session-abc",
+          },
+        ],
         "page leave sends one combined state request so concurrent " +
           "read-modify-write updates cannot resurrect stale publisher flags"
       );
