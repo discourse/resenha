@@ -13,6 +13,7 @@ export default class MeshSignalHandler {
   #isActiveRoom;
   #getRoom;
   #isRoleChangeInProgress;
+  #addProvisionalParticipant;
   #onOfferHandled;
 
   constructor({
@@ -23,6 +24,7 @@ export default class MeshSignalHandler {
     isActiveRoom,
     getRoom,
     isRoleChangeInProgress,
+    addProvisionalParticipant = () => {},
     onOfferHandled,
   }) {
     this.#peerManager = peerManager;
@@ -32,6 +34,7 @@ export default class MeshSignalHandler {
     this.#isActiveRoom = isActiveRoom;
     this.#getRoom = getRoom;
     this.#isRoleChangeInProgress = isRoleChangeInProgress;
+    this.#addProvisionalParticipant = addProvisionalParticipant;
     this.#onOfferHandled = onOfferHandled;
   }
 
@@ -64,10 +67,12 @@ export default class MeshSignalHandler {
     return iCanSpeak || theyCanSpeak;
   }
 
-  // A targeted offer is implicit proof the sender shares this room with us:
-  // presence (active_participants) lags behind WebRTC signaling when two peers
-  // join near-simultaneously, so shouldMaintainPeerConnection can still be
-  // false at the instant the offer arrives. Gating offers on presence silently
+  // A relayed signal is server-attested proof the sender holds a live
+  // participant session in this room: the server only relays for senders who
+  // joined and only to recipients still present. The local roster
+  // (active_participants) lags behind that relay when two peers join
+  // near-simultaneously, so shouldMaintainPeerConnection can still be false at
+  // the instant the offer arrives. Gating offers on the local roster silently
   // drops that legitimate first offer and strands the media connection (the
   // sender finishes gathering before we ever engage, so its candidates are
   // never re-sent). Honor early offers in non-stage rooms, where peering does
@@ -145,6 +150,12 @@ export default class MeshSignalHandler {
       this.#peerManager.clearOfferRetry(roomId, remoteUserId);
       if (!this.shouldMaintainPeerConnection(roomId, remoteUserId)) {
         this.#presencePending.mark(roomId, remoteUserId);
+        // Media may flow before the roster broadcast lands; render the
+        // server-serialized sender immediately so nobody receives audio while
+        // invisible. The next roster broadcast reconciles it.
+        if (payload.sender) {
+          this.#addProvisionalParticipant(roomId, payload.sender);
+        }
       }
 
       // If the remote restarted its ICE session — it left and rejoined, so its

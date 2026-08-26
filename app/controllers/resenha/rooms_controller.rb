@@ -144,6 +144,8 @@ module Resenha
 
       Resenha::ParticipantTracker.clear_left(@room.id, current_user.id)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
+      participant_session_id =
+        Resenha::ParticipantTracker.create_participant_session!(@room.id, current_user.id)
 
       membership = @room.room_memberships.find_by(user_id: current_user.id)
       role = membership&.role_name || "participant"
@@ -183,6 +185,7 @@ module Resenha
 
       payload = {
         transport: transport,
+        participant_session_id: participant_session_id,
         ice: Resenha::IceConfig.payload(current_user),
         room:
           Resenha::RoomSerializer.new(
@@ -213,6 +216,10 @@ module Resenha
       # call, so an explicit token request voids any leave/kick tombstone.
       Resenha::ParticipantTracker.clear_left(@room.id, current_user.id)
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
+      # The session may have expired along with the lapsed presence — mint a
+      # fresh one so heartbeat/state keep working after the reconnect.
+      participant_session_id =
+        Resenha::ParticipantTracker.create_participant_session!(@room.id, current_user.id)
       metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
       metadata[:last_heartbeat_at] = Time.now.to_f
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
@@ -224,7 +231,7 @@ module Resenha
         return render_json_error(I18n.t("resenha.errors.livekit_unavailable"), status: 503)
       end
 
-      render json: livekit
+      render json: livekit.merge(participant_session_id: participant_session_id)
     end
 
     def start_recording
@@ -266,7 +273,10 @@ module Resenha
         return head :no_content
       end
 
+      ensure_participant_session!
+
       Resenha::ParticipantTracker.add(@room.id, current_user.id)
+      Resenha::ParticipantTracker.refresh_participant_session(@room.id, current_user.id)
 
       metadata = Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id)
       metadata[:last_heartbeat_at] = Time.now.to_f
@@ -316,6 +326,7 @@ module Resenha
 
     def state
       guardian.ensure_can_join_resenha_room!(@room)
+      ensure_participant_session!
 
       bool = ActiveModel::Type::Boolean.new
       wants_unmute = params.key?(:muted) && !bool.cast(params[:muted])
@@ -465,6 +476,10 @@ module Resenha
 
     def signal
       guardian.ensure_can_join_resenha_room!(@room)
+      # Room eligibility alone is not enough: signaling authority comes from
+      # the server-attested session minted by join, so an eligible user who
+      # never joined can't reach anyone's media stack.
+      ensure_participant_session!
 
       # Defense in depth: LiveKit rooms never exchange WebRTC signals.
       if Resenha::ParticipantTracker.pinned_transport(@room.id) == "livekit"
@@ -562,6 +577,22 @@ module Resenha
     end
 
     private
+
+    def ensure_participant_session!
+      if Resenha::ParticipantTracker.valid_participant_session?(
+           @room.id,
+           current_user.id,
+           params[:participant_session_id],
+         )
+        return
+      end
+
+      raise Discourse::InvalidAccess.new(
+              :resenha_participant_session_required,
+              nil,
+              custom_message: "resenha.errors.participant_session_required",
+            )
+    end
 
     def mark_invitation_notifications_read!
       notification_ids =

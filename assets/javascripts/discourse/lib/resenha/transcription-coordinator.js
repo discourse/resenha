@@ -25,6 +25,7 @@ export default class TranscriptionCoordinator {
   #captionCounter = 0;
 
   #siteSettings;
+  #getParticipantSessionId;
   #getCurrentUserId;
   #getRoom;
   #isActiveRoom;
@@ -39,6 +40,7 @@ export default class TranscriptionCoordinator {
 
   constructor({
     siteSettings,
+    getParticipantSessionId = () => undefined,
     getCurrentUserId,
     getRoom,
     isActiveRoom,
@@ -52,6 +54,7 @@ export default class TranscriptionCoordinator {
     showError,
   }) {
     this.#siteSettings = siteSettings;
+    this.#getParticipantSessionId = getParticipantSessionId;
     this.#getCurrentUserId = getCurrentUserId;
     this.#getRoom = getRoom;
     this.#isActiveRoom = isActiveRoom;
@@ -212,7 +215,10 @@ export default class TranscriptionCoordinator {
     this.#setParticipantTranscribing(roomId, transcribing);
     ajax(`/resenha/rooms/${roomId}/state`, {
       type: "POST",
-      data: { transcribing },
+      data: {
+        transcribing,
+        participant_session_id: this.#getParticipantSessionId(roomId),
+      },
     }).catch(() => {});
   }
 

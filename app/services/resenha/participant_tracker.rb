@@ -26,7 +26,45 @@ module Resenha
       def remove(room_id, user_id)
         redis.zrem(key(room_id), user_id)
         redis.hdel(metadata_key(room_id), user_id)
+        revoke_participant_session(room_id, user_id)
         touch_recently_active(room_id)
+      end
+
+      # Server-attested participant session: minted synchronously by join (and
+      # rotated by livekit_token), so signaling authority never depends on the
+      # eventually-consistent roster broadcast. Rotating on every mint is what
+      # invalidates a pre-leave session after a rejoin.
+      def create_participant_session!(room_id, user_id)
+        session_id = SecureRandom.hex(16)
+        redis.setex(participant_session_key(room_id, user_id), participant_session_ttl, session_id)
+        session_id
+      end
+
+      def valid_participant_session?(room_id, user_id, session_id)
+        return false if session_id.blank?
+
+        stored = redis.get(participant_session_key(room_id, user_id))
+        return false if stored.blank?
+
+        ActiveSupport::SecurityUtils.secure_compare(stored, session_id.to_s)
+      end
+
+      def participant_session?(room_id, user_id)
+        redis.exists?(participant_session_key(room_id, user_id))
+      end
+
+      def refresh_participant_session(room_id, user_id)
+        redis.expire(participant_session_key(room_id, user_id), participant_session_ttl)
+      end
+
+      def revoke_participant_session(room_id, user_id)
+        redis.del(participant_session_key(room_id, user_id))
+      end
+
+      # 2x the presence TTL (like the transport pin) so a briefly-lapsed
+      # heartbeat can still self-heal presence before the session dies.
+      def participant_session_ttl
+        SiteSetting.resenha_participant_ttl_seconds.to_i * 2
       end
 
       # Short-lived tombstone for a deliberate departure (leave/kick), letting
@@ -267,6 +305,10 @@ module Resenha
 
       def left_key(room_id, user_id)
         "#{KEY_NAMESPACE}:#{room_id}:left:#{user_id}"
+      end
+
+      def participant_session_key(room_id, user_id)
+        "#{KEY_NAMESPACE}:#{room_id}:participant_session:#{user_id}"
       end
 
       def livekit_sid_key(room_id)

@@ -37,6 +37,7 @@ export default class LocalVideoManager {
   #epoch = 0;
 
   #peerManager;
+  #getParticipantSessionId;
   #getLivekitSession;
   #isMeshRoom;
   #isActiveRoom;
@@ -54,6 +55,8 @@ export default class LocalVideoManager {
 
   constructor(options) {
     this.#peerManager = options.peerManager;
+    this.#getParticipantSessionId =
+      options.getParticipantSessionId ?? (() => undefined);
     this.#getLivekitSession = options.getLivekitSession;
     this.#isMeshRoom = options.isMeshRoom;
     this.#isActiveRoom = options.isActiveRoom;
@@ -722,7 +725,11 @@ export default class LocalVideoManager {
 
     return ajax(`/resenha/rooms/${roomId}/state`, {
       type: "POST",
-      data: { video, screen },
+      data: {
+        video,
+        screen,
+        participant_session_id: this.#getParticipantSessionId(roomId),
+      },
     });
   }
 }

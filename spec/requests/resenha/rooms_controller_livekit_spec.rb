@@ -54,7 +54,12 @@ RSpec.describe Resenha::RoomsController do
       post "/resenha/rooms/#{room.id}/join.json"
 
       expect(response.status).to eq(200)
-      expect(response.parsed_body.keys).to contain_exactly("transport", "ice", "room")
+      expect(response.parsed_body.keys).to contain_exactly(
+        "transport",
+        "participant_session_id",
+        "ice",
+        "room",
+      )
       expect(response.parsed_body["transport"]).to eq("mesh")
     end
 
@@ -177,7 +182,7 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(403)
     end
 
-    it "reissues a token and re-adds lapsed presence" do
+    it "reissues a token, re-adds lapsed presence, and mints a fresh participant session" do
       sign_in(user)
       Resenha::ParticipantTracker.pin_transport!(room.id, "livekit")
 
@@ -187,6 +192,13 @@ RSpec.describe Resenha::RoomsController do
       expect(response.parsed_body["url"]).to eq("wss://livekit.example.com")
       expect(response.parsed_body["token"]).to be_present
       expect(Resenha::ParticipantTracker.user_ids(room.id)).to include(user.id)
+      expect(
+        Resenha::ParticipantTracker.valid_participant_session?(
+          room.id,
+          user.id,
+          response.parsed_body["participant_session_id"],
+        ),
+      ).to eq(true)
     end
 
     it "re-establishes presence even for a user who recently left" do
@@ -243,11 +255,15 @@ RSpec.describe Resenha::RoomsController do
     it "refreshes the transport pin ttl" do
       configure_livekit!
       post "/resenha/rooms/#{room.id}/join.json"
+      participant_session_id = response.parsed_body["participant_session_id"]
 
       key = "#{Resenha::ParticipantTracker::KEY_NAMESPACE}:#{room.id}:transport"
       Discourse.redis.expire(key, 1)
 
-      post "/resenha/rooms/#{room.id}/heartbeat.json"
+      post "/resenha/rooms/#{room.id}/heartbeat.json",
+           params: {
+             participant_session_id: participant_session_id,
+           }
 
       expect(Discourse.redis.ttl(key)).to be > 1
     end
@@ -378,6 +394,7 @@ RSpec.describe Resenha::RoomsController do
     it "rejects signaling in a livekit-pinned room" do
       configure_livekit!
       post "/resenha/rooms/#{room.id}/join.json"
+      participant_session_id = response.parsed_body["participant_session_id"]
 
       post "/resenha/rooms/#{room.id}/signal.json",
            params: {
@@ -386,6 +403,7 @@ RSpec.describe Resenha::RoomsController do
                type: "offer",
                sdp: "sdp",
              },
+             participant_session_id: participant_session_id,
            }
 
       expect(response.status).to eq(422)
@@ -395,18 +413,26 @@ RSpec.describe Resenha::RoomsController do
     end
 
     it "still relays signals in a mesh room" do
+      Resenha::ParticipantTracker.add(room.id, other_user.id)
+      Resenha::ParticipantTracker.create_participant_session!(room.id, other_user.id)
       post "/resenha/rooms/#{room.id}/join.json"
+      participant_session_id = response.parsed_body["participant_session_id"]
 
-      post "/resenha/rooms/#{room.id}/signal.json",
-           params: {
-             payload: {
-               recipient_id: other_user.id,
-               type: "offer",
-               sdp: "sdp",
-             },
-           }
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          post "/resenha/rooms/#{room.id}/signal.json",
+               params: {
+                 payload: {
+                   recipient_id: other_user.id,
+                   type: "offer",
+                   sdp: "sdp",
+                 },
+                 participant_session_id: participant_session_id,
+               }
+        end
 
       expect(response.status).to eq(204)
+      expect(messages.map(&:user_ids)).to eq([[other_user.id]])
     end
   end
 

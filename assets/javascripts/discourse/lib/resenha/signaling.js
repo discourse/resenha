@@ -46,23 +46,31 @@ export default class SignalingManager {
 
   #isActiveRoom;
   #hasPeer;
+  #getParticipantSessionId;
   #requestSignals;
 
   constructor({
     isActiveRoom,
     hasPeer,
-    requestSignals = (roomId, payload) =>
-      ajax(`/resenha/rooms/${roomId}/signal`, {
-        type: "POST",
-        data: { payload },
-      }),
+    getParticipantSessionId = () => undefined,
+    requestSignals,
     candidateBatchDelayMs = SignalingManager.#defaultCandidateBatchDelayMs,
     candidateBatchSize = SignalingManager.#defaultCandidateBatchSize,
     httpBatchDelayMs = SignalingManager.#defaultHttpBatchDelayMs,
   }) {
     this.#isActiveRoom = isActiveRoom;
     this.#hasPeer = hasPeer;
-    this.#requestSignals = requestSignals;
+    this.#getParticipantSessionId = getParticipantSessionId;
+    this.#requestSignals =
+      requestSignals ??
+      ((roomId, payload) =>
+        ajax(`/resenha/rooms/${roomId}/signal`, {
+          type: "POST",
+          data: {
+            payload,
+            participant_session_id: this.#getParticipantSessionId(roomId),
+          },
+        }));
     this.#candidateBatchDelayMs = candidateBatchDelayMs;
     this.#candidateBatchSize = candidateBatchSize;
     this.#httpBatchDelayMs = httpBatchDelayMs;
