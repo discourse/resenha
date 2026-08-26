@@ -2327,6 +2327,9 @@ module("Resenha | Unit | Service | resenha-webrtc", function (hooks) {
 
     this.room.room_type = "open";
     this.room.video_enabled = true;
+    // The serializer's combined room+site flag; the receive-side track
+    // policy consults it before registering the remote video track.
+    this.room.video_allowed = true;
     this.room.membership = { role_name: "participant" };
     this.room.active_participants = [
       { id: this.currentUser.id, role: "participant" },
