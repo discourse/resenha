@@ -65,7 +65,6 @@ tr_TR:
       video_publisher_limit: "Bu odada aynı anda yayınlanabilecek en yüksek video akışı sayısına ulaşıldı."
       chat_unavailable: "Bu oda için sohbet kullanılamıyor."
       chat_requires_presence: "Sohbeti kullanmak için sesli odaya katılın."
-      speak_request_requires_presence: "Konuşma isteğinde bulunmak için odadaki görüşmeye katılın."
       flag_target_never_joined: "Bu kullanıcı odaya katılmadı."
       flag_already_handled: "Teşekkürler, bu kullanıcı hakkında daha önce bilgilendirildik ve durumu inceliyoruz."
       chat_threading_disabled: "Bağlı sohbet kanalında konu özelliği artık etkin değil, bu nedenle sohbet oturumu başlatılamıyor."

@@ -12,6 +12,7 @@ export default class LivekitCoordinator {
   #rosterIds = new Map();
 
   #getCurrentUserId;
+  #getParticipantSessionId;
   #onParticipantSessionRenewed;
   #getLocalStream;
   #getLocalVideoTrack;
@@ -33,6 +34,7 @@ export default class LivekitCoordinator {
 
   constructor({
     getCurrentUserId,
+    getParticipantSessionId = () => undefined,
     onParticipantSessionRenewed = () => {},
     getLocalStream,
     getLocalVideoTrack,
@@ -53,6 +55,7 @@ export default class LivekitCoordinator {
     showNotice,
   }) {
     this.#getCurrentUserId = getCurrentUserId;
+    this.#getParticipantSessionId = getParticipantSessionId;
     this.#onParticipantSessionRenewed = onParticipantSessionRenewed;
     this.#getLocalStream = getLocalStream;
     this.#getLocalVideoTrack = getLocalVideoTrack;
@@ -129,7 +132,12 @@ export default class LivekitCoordinator {
     }
 
     if (failureMessage) {
-      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      ajax(`/resenha/rooms/${room.id}/leave`, {
+        type: "DELETE",
+        data: {
+          participant_session_id: this.#getParticipantSessionId(room.id),
+        },
+      });
       this.#unwindFailedJoin(room.id);
       this.#showError(failureMessage);
       return false;
@@ -139,7 +147,12 @@ export default class LivekitCoordinator {
       // Superseded while connecting; the superseding join already tore this
       // room down (disconnecting the session), so only the server needs
       // telling.
-      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      ajax(`/resenha/rooms/${room.id}/leave`, {
+        type: "DELETE",
+        data: {
+          participant_session_id: this.#getParticipantSessionId(room.id),
+        },
+      });
       return false;
     }
 

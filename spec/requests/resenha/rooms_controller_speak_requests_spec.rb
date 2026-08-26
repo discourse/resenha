@@ -45,6 +45,8 @@ RSpec.describe Resenha::RoomsController do
     SiteSetting.resenha_create_room_allowed_groups = "#{Group::AUTO_GROUPS[:trust_level_2]}"
     room.update!(room_type: Resenha::Room::ROOM_TYPE_STAGE)
     Resenha::ParticipantTracker.add(room.id, listener.id)
+    @listener_session_id =
+      Resenha::ParticipantTracker.create_participant_session!(room.id, listener.id)
   end
 
   after { Resenha::ParticipantTracker.clear(room.id) }
@@ -55,7 +57,10 @@ RSpec.describe Resenha::RoomsController do
 
       messages =
         MessageBus.track_publish(Resenha.room_channel(room.id)) do
-          post "/resenha/rooms/#{room.id}/request_to_speak.json"
+          post "/resenha/rooms/#{room.id}/request_to_speak.json",
+               params: {
+                 participant_session_id: @listener_session_id,
+               }
         end
 
       expect(response.status).to eq(204)
@@ -76,12 +81,18 @@ RSpec.describe Resenha::RoomsController do
 
     it "keeps the original timestamp and publishes nothing on a repeat request" do
       sign_in(listener)
-      post "/resenha/rooms/#{room.id}/request_to_speak.json"
+      post "/resenha/rooms/#{room.id}/request_to_speak.json",
+           params: {
+             participant_session_id: @listener_session_id,
+           }
       original = Resenha::ParticipantTracker.get_metadata(room.id, listener.id)[:hand_raised_at]
 
       messages =
         MessageBus.track_publish(Resenha.room_channel(room.id)) do
-          post "/resenha/rooms/#{room.id}/request_to_speak.json"
+          post "/resenha/rooms/#{room.id}/request_to_speak.json",
+               params: {
+                 participant_session_id: @listener_session_id,
+               }
         end
 
       expect(response.status).to eq(204)
@@ -127,15 +138,20 @@ RSpec.describe Resenha::RoomsController do
       expect(response.status).to eq(403)
     end
 
-    it "returns 403 with a presence message for a stage listener who is not in the call" do
+    it "returns 403 with a session message for a stage listener who is not in the call" do
+      # Leaving revokes the participant session, so the retained session id no
+      # longer authorizes a hand raise.
       Resenha::ParticipantTracker.remove(room.id, listener.id)
       sign_in(listener)
 
-      post "/resenha/rooms/#{room.id}/request_to_speak.json"
+      post "/resenha/rooms/#{room.id}/request_to_speak.json",
+           params: {
+             participant_session_id: @listener_session_id,
+           }
 
       expect(response.status).to eq(403)
       expect(response.parsed_body["errors"]).to include(
-        I18n.t("resenha.errors.speak_request_requires_presence"),
+        I18n.t("resenha.errors.participant_session_required"),
       )
       expect(
         Resenha::ParticipantTracker.get_metadata(room.id, listener.id)[:hand_raised_at],
@@ -156,7 +172,10 @@ RSpec.describe Resenha::RoomsController do
 
       messages =
         MessageBus.track_publish(Resenha.room_channel(room.id)) do
-          delete "/resenha/rooms/#{room.id}/request_to_speak.json"
+          delete "/resenha/rooms/#{room.id}/request_to_speak.json",
+                 params: {
+                   participant_session_id: @listener_session_id,
+                 }
         end
 
       expect(response.status).to eq(204)
@@ -178,7 +197,10 @@ RSpec.describe Resenha::RoomsController do
 
       messages =
         MessageBus.track_publish(Resenha.room_channel(room.id)) do
-          delete "/resenha/rooms/#{room.id}/request_to_speak.json"
+          delete "/resenha/rooms/#{room.id}/request_to_speak.json",
+                 params: {
+                   participant_session_id: @listener_session_id,
+                 }
         end
 
       expect(response.status).to eq(204)

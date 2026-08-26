@@ -45,6 +45,25 @@ RSpec.describe Resenha::EphemeralRoomManager do
       expect(room.moderator_ids).to contain_exactly(creator.id, member.id)
     end
 
+    it "caps how many live ephemeral rooms one creator can accumulate" do
+      stub_const(described_class, :MAX_LIVE_ROOMS_PER_CREATOR, 2) do
+        2.times { |i| described_class.create!(creator: creator, name: "Call #{i}") }
+
+        expect { described_class.create!(creator: creator, name: "One too many") }.to raise_error(
+          Discourse::InvalidAccess,
+        )
+        expect(Resenha::Room.ephemeral.where(creator_id: creator.id).count).to eq(2)
+      end
+    end
+
+    it "does not count other creators' rooms against the cap" do
+      stub_const(described_class, :MAX_LIVE_ROOMS_PER_CREATOR, 1) do
+        described_class.create!(creator: member, name: "Someone else's call")
+
+        expect(described_class.create!(creator: creator, name: "Call")).to be_persisted
+      end
+    end
+
     it "passes room attributes through" do
       room =
         described_class.create!(

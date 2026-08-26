@@ -68,6 +68,12 @@ module Resenha
       QUALITY_PROFILES.key(max_quality_profile)
     end
 
+    # The hard presence cap: a room-level limit can lower the site ceiling,
+    # never raise it. Enforced atomically when presence is established.
+    def effective_max_participants
+      [max_participants, SiteSetting.resenha_max_room_participants].compact.min
+    end
+
     # Room-level capability only; per-user publish rights are guardian-driven
     # (stage listeners never publish even when this is true).
     def video_allowed?

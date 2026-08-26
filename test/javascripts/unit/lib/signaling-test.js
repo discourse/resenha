@@ -48,6 +48,41 @@ module("Resenha | Unit | Lib | signaling", function () {
     manager.destroy();
   });
 
+  test("flushes a recipient's batch early once it reaches the event cap", async function (assert) {
+    assert.timeout(2000);
+
+    const payloads = [];
+
+    const manager = new SignalingManager({
+      isActiveRoom: () => true,
+      hasPeer: () => true,
+      // Far beyond the test's patience: only the early flush can send.
+      httpBatchDelayMs: 5000,
+      requestSignals: async (roomId, payload) => {
+        payloads.push(payload);
+      },
+    });
+
+    const sends = [];
+    for (let i = 0; i < 20; i++) {
+      sends.push(manager.send(1, 2, { type: "offer", sdp: `sdp-${i}` }));
+    }
+    await Promise.all(sends);
+
+    assert.strictEqual(
+      payloads.length,
+      1,
+      "sends without waiting for the batch timer"
+    );
+    assert.strictEqual(
+      payloads[0].events.length,
+      20,
+      "carries the whole accumulated batch"
+    );
+
+    manager.destroy();
+  });
+
   test("each HTTP flush only settles the signals it actually sent", async function (assert) {
     assert.timeout(2000);
 

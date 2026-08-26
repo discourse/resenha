@@ -308,6 +308,7 @@ export default class ResenhaWebrtcService extends Service {
 
     this.#livekit = new LivekitCoordinator({
       getCurrentUserId: () => this.currentUser?.id,
+      getParticipantSessionId: (roomId) => this.#roomSessions.get(roomId),
       onParticipantSessionRenewed: (roomId, sessionId) => {
         if (sessionId) {
           this.#roomSessions.set(roomId, sessionId);
@@ -570,6 +571,12 @@ export default class ResenhaWebrtcService extends Service {
     return this.#remoteStreamRegistry.streamsFor(roomId);
   }
 
+  // The server-attested session participant actions (hand raising, state
+  // changes) must carry to be accepted.
+  participantSessionIdFor(roomId) {
+    return this.#roomSessions.get(roomId);
+  }
+
   remoteStreamFor(roomId, userId) {
     this.remoteStreamsRevision;
     return this.#remoteStreamRegistry.streamFor(roomId, userId);
@@ -695,6 +702,12 @@ export default class ResenhaWebrtcService extends Service {
       if (invitedBy) {
         joinData.invited_by = invitedBy;
       }
+      // Carrying the live session makes a duplicated join idempotent on the
+      // server: it refreshes the existing grant instead of rotating it.
+      const existingSessionId = this.#roomSessions.get(room.id);
+      if (existingSessionId) {
+        joinData.participant_session_id = existingSessionId;
+      }
       response = await ajax(`/resenha/rooms/${room.id}/join`, {
         type: "POST",
         data: joinData,
@@ -707,7 +720,10 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     if (this.#joinRevision !== revision) {
-      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      ajax(`/resenha/rooms/${room.id}/leave`, {
+        type: "DELETE",
+        data: { participant_session_id: response?.participant_session_id },
+      });
       return;
     }
 
@@ -736,14 +752,20 @@ export default class ResenhaWebrtcService extends Service {
     if (!isStageListener && !this.localStream) {
       const acquired = await this.#localAudio.acquireMicrophone();
       if (!acquired) {
-        ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+        ajax(`/resenha/rooms/${room.id}/leave`, {
+          type: "DELETE",
+          data: { participant_session_id: this.#roomSessions.get(room.id) },
+        });
         this.#handleJoinFailure(room.id);
         return;
       }
     }
 
     if (this.#joinRevision !== revision) {
-      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      ajax(`/resenha/rooms/${room.id}/leave`, {
+        type: "DELETE",
+        data: { participant_session_id: this.#roomSessions.get(room.id) },
+      });
       return;
     }
 
@@ -861,7 +883,12 @@ export default class ResenhaWebrtcService extends Service {
     this.#pttManager.resetActive();
     this.pttActive = false;
     if (!skipServer) {
-      ajax(`/resenha/rooms/${room.id}/leave`, { type: "DELETE" });
+      // The session id lets the server drop a leave from a stale tab whose
+      // session a newer join has already superseded.
+      ajax(`/resenha/rooms/${room.id}/leave`, {
+        type: "DELETE",
+        data: { participant_session_id: this.#roomSessions.get(room.id) },
+      });
     }
     this.#connectingRoomIds.delete(room.id);
     this.#activeRoomIds.delete(room.id);

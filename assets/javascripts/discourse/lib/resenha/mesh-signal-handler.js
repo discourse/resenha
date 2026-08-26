@@ -98,9 +98,22 @@ export default class MeshSignalHandler {
     );
   }
 
+  // The relay batches one envelope per recipient (payload.events, in send
+  // order); a single-event payload.data is still accepted for compatibility.
   async handle(roomId, payload) {
+    const events = Array.isArray(payload.events)
+      ? payload.events
+      : payload.data
+        ? [payload.data]
+        : [];
+
+    for (const data of events) {
+      await this.#handleEvent(roomId, payload, data);
+    }
+  }
+
+  async #handleEvent(roomId, payload, data) {
     const remoteUserId = Number(payload.sender_id);
-    const data = payload.data;
 
     if (!Number.isFinite(remoteUserId) || remoteUserId <= 0) {
       return;

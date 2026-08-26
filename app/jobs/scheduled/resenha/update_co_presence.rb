@@ -12,13 +12,19 @@ module Jobs
         return unless SiteSetting.resenha_enabled && SiteSetting.resenha_analytics_enabled
 
         each_active_room do |room_id|
-          user_ids = ::Resenha::ParticipantTracker.user_ids(room_id)
+          # Bounded by the site capacity ceiling even if Redis holds strays,
+          # since the pair count below grows quadratically.
+          user_ids =
+            ::Resenha::ParticipantTracker
+              .user_ids(room_id)
+              .sort
+              .first(SiteSetting.resenha_max_room_participants)
           next if user_ids.size < 2
 
-          pairs = user_ids.sort.combination(2).to_a
           today = Date.today
 
-          pairs.each { |user_a, user_b| upsert_co_presence(user_a, user_b, today) }
+          # Block form: iterates the pairs without materializing them all.
+          user_ids.combination(2) { |user_a, user_b| upsert_co_presence(user_a, user_b, today) }
         end
       end
 

@@ -293,6 +293,11 @@ export default class ResenhaParticipantSidebarContextMenu extends Component {
     try {
       await ajax(`/resenha/rooms/${this.room.id}/request_to_speak`, {
         type: this.handRaised ? "DELETE" : "POST",
+        data: {
+          participant_session_id: this.resenhaWebrtc.participantSessionIdFor(
+            this.room.id
+          ),
+        },
       });
       this.args.close();
     } catch (error) {

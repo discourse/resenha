@@ -44,6 +44,53 @@ RSpec.describe Resenha::ParticipantTracker do
     end
   end
 
+  describe ".add_within_capacity" do
+    it "admits users until the capacity is reached, then returns :full" do
+      expect(described_class.add_within_capacity(room.id, user1.id, 2)).to eq(:added)
+      expect(described_class.add_within_capacity(room.id, user2.id, 2)).to eq(:added)
+
+      expect(described_class.add_within_capacity(room.id, 999, 2)).to eq(:full)
+      expect(described_class.user_ids(room.id)).to contain_exactly(user1.id, user2.id)
+    end
+
+    it "refreshes an existing participant even when the room is full" do
+      described_class.add_within_capacity(room.id, user1.id, 2)
+      described_class.add_within_capacity(room.id, user2.id, 2)
+
+      expect(described_class.add_within_capacity(room.id, user1.id, 2)).to eq(:existing)
+      expect(described_class.user_ids(room.id)).to contain_exactly(user1.id, user2.id)
+    end
+
+    it "frees slots held by expired presence" do
+      described_class.add_within_capacity(room.id, user1.id, 2)
+      described_class.add_within_capacity(room.id, user2.id, 2)
+
+      key = "#{described_class::KEY_NAMESPACE}:#{room.id}:participants"
+      Discourse.redis.zadd(key, 1.hour.ago.to_f, user1.id)
+
+      expect(described_class.add_within_capacity(room.id, 999, 2)).to eq(:added)
+      expect(described_class.user_ids(room.id)).to contain_exactly(user2.id, 999)
+    end
+
+    it "never admits concurrent joiners past the capacity" do
+      results =
+        (1..10)
+          .map do |candidate_id|
+            Thread.new { described_class.add_within_capacity(room.id, candidate_id, 3) }
+          end
+          .map(&:value)
+
+      expect(results.count(:added)).to eq(3)
+      expect(results.count(:full)).to eq(7)
+      expect(described_class.user_ids(room.id).size).to eq(3)
+    end
+
+    it "rejects invalid user ids" do
+      expect(described_class.add_within_capacity(room.id, 0, 2)).to eq(:full)
+      expect(described_class.user_ids(room.id)).to be_empty
+    end
+  end
+
   describe ".mark_left" do
     it "reports a recent departure until cleared" do
       described_class.mark_left(room.id, user1.id)
