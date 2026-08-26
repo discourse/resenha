@@ -1,11 +1,11 @@
-# Subtitles: fp16 encoder (blocked)
+# Subtitles: fp16 encoder
 
-Status (2026-08-25): **auto-selected.** The worker picks fp16 when the
-adapter exposes `shader-f16` and fp32 otherwise (all of Linux today). Root
-cause of the historical empty-string failure is diagnosed below. Remaining:
-validate fp16 output quality on a browser that has the feature
-(macOS/ChromeOS/newer Windows) — the fp16 branch has only been exercised
-mechanically, never on real f16 hardware.
+Status (2026-08-26): **auto-selected and validated.** The worker picks fp16
+when the adapter exposes `shader-f16` and fp32 otherwise (Chromium on
+Linux). Root cause of the historical empty-string failure is diagnosed
+below. The fp16 path is validated end-to-end on real f16 hardware via
+Firefox on Linux (`STT_BROWSER=firefox` in the smoke harness), which —
+unlike Chromium — exposes `shader-f16` there.
 
 ## Why we want it
 
@@ -46,10 +46,12 @@ the failure (RTX 5090, NVIDIA 610.57.04, Chromium 151):
    intent-to-ship for WebGPU f16, the feature shipped on macOS/ChromeOS
    first and on Windows behind the DXC migration; Linux never got it.
    "Works on some machines, fails on others" is **feature availability by
-   platform**, not driver numerics.
+   platform**, not driver numerics. (Firefox's WebGPU on the same
+   machine/driver _does_ expose `shader-f16` — the gap is Chromium's, not
+   Vulkan's.)
 2. **onnxruntime-web runs fp16 models anyway when the feature is missing.**
    The JSEP WebGPU EP requests `shader-f16` on the device and prepends
-   `enable f16;` to WGSL *only if the adapter has it*, but never refuses an
+   `enable f16;` to WGSL _only if the adapter has it_, but never refuses an
    fp16 model when it doesn't — execution proceeds and produces garbage
    encodings, the decoder emits nothing, and no error surfaces. (Upstream
    bug worth filing: this should be a hard error or a fallback.)
@@ -83,21 +85,24 @@ harness forces it via `STT_ENCODER_QUANT`), anything else auto-selects via
 float32 feeds work unchanged); fp32 keeps the sidecar pair. Today that
 means fp16 for macOS/ChromeOS/newer-Windows Chrome, fp32 for all of Linux.
 
-Verified on a no-f16 adapter: auto picks fp32 and transcribes; forced fp16
-downloads and runs the fp16 model and reproduces the empty-string failure,
-as expected.
+Verified both ways on the same machine (RTX 5090):
+
+- Chromium (no `shader-f16`): auto picks fp32 and transcribes; forced fp16
+  reproduces the empty-string failure, as expected.
+- Firefox (`shader-f16` exposed): auto picks fp16 and the full smoke
+  harness passes — correct transcription and VAD utterances with the
+  shipped `encoder-model.fp16.onnx`.
 
 ## Still open
 
-1. **Validate fp16 output quality on a browser that has the feature**
-   (macOS/ChromeOS/Windows); no Linux machine can exercise it. CPU-EP
-   numerics say the export is fine (cosine ≥ 0.999998 vs fp32), but the
-   WebGPU f16 kernels have never been checked end-to-end by us.
-2. Consider an init warm-up canary (a fixture must transcribe to non-empty
+1. Consider an init warm-up canary (a fixture must transcribe to non-empty
    text, else re-init as fp32) as a belt-and-braces fallback for genuinely
    broken f16 drivers.
-3. Watch for Chromium enabling `shader-f16` on Linux, and consider filing
+2. Watch for Chromium enabling `shader-f16` on Linux, and consider filing
    the ORT-web silent-execution bug upstream.
+3. The f16 kernels are only exercised on Firefox/Vulkan so far; Chromium's
+   Metal/D3D backends (where it will actually run fp16 in production) run
+   the same ORT WGSL but haven't been checked by us directly.
 
 Note: int8/fp8 are not alternatives for the encoder — WGSL has no 8-bit
 types (only packed DP4a-style dot products), ORT-web falls back off the
@@ -145,3 +150,16 @@ Check the `adapter:` line in the output: on an adapter without
 says nothing about the export's numerics. Use `STT_SMOKE_PORT` to give each
 model dir its own origin, since downloads are cached per-origin in the
 persistent profile.
+
+To exercise the fp16 path on Linux, run the harness in Firefox — the only
+browser exposing `shader-f16` here (WebGPU is enabled via prefs in a
+separate persistent profile):
+
+```bash
+STT_BROWSER=firefox STT_MODEL_DIR=/path/to/model-dir \
+  node scripts/smoke-stt-worker.mjs /tmp/fix.wav
+```
+
+The model dir needs `encoder-model.fp16.onnx` (self-contained; a zero-byte
+`encoder-model.onnx.data` still satisfies the fp32 branch if you force it)
+— auto-select picks fp16 there and the whole chain should PASS.
