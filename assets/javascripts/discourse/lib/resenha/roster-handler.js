@@ -25,6 +25,7 @@ export default class RosterHandler {
   #isConnectingRoom;
   #isMeshRoom;
   #registerTrack;
+  #getRemoteUserIds;
   #removeRemoteStream;
   #removeAllRemoteStreams;
   #getLocalVideoKind;
@@ -49,6 +50,7 @@ export default class RosterHandler {
     isConnectingRoom,
     isMeshRoom,
     registerTrack,
+    getRemoteUserIds = () => [],
     removeRemoteStream,
     removeAllRemoteStreams,
     getLocalVideoKind,
@@ -72,6 +74,7 @@ export default class RosterHandler {
     this.#isConnectingRoom = isConnectingRoom;
     this.#isMeshRoom = isMeshRoom;
     this.#registerTrack = registerTrack;
+    this.#getRemoteUserIds = getRemoteUserIds;
     this.#removeRemoteStream = removeRemoteStream;
     this.#removeAllRemoteStreams = removeAllRemoteStreams;
     this.#getLocalVideoKind = getLocalVideoKind;
@@ -182,6 +185,7 @@ export default class RosterHandler {
     }
 
     this.#syncRemoteVideoTracks(roomId, participants);
+    this.#dropDisallowedStreams(roomId, participants, { isStage });
 
     if (!this.#isMeshRoom(roomId)) {
       // Publisher-count changes move camera subscriptions between simulcast
@@ -208,6 +212,32 @@ export default class RosterHandler {
       const track = this.#peerManager.remoteVideoTrack(roomId, participantId);
       if (track) {
         this.#registerTrack(roomId, participantId, track);
+      }
+    }
+  }
+
+  // Re-evaluates playing media against the fresh roster: a mesh participant
+  // demoted to a role that cannot publish must stop being heard immediately,
+  // even when the demotion arrives as a roster refresh rather than a
+  // role_change message. The receive-side track policy stops new tracks;
+  // this drops the ones already registered.
+  #dropDisallowedStreams(roomId, participants, { isStage }) {
+    if (!isStage || !this.#isMeshRoom(roomId)) {
+      return;
+    }
+
+    const allowedToPublish = new Set(
+      participants
+        .filter(
+          (participant) =>
+            participant.role === "moderator" || participant.role === "speaker"
+        )
+        .map((participant) => Number(participant.id))
+    );
+
+    for (const userId of this.#getRemoteUserIds(roomId)) {
+      if (!allowedToPublish.has(userId)) {
+        this.#removeRemoteStream(roomId, userId);
       }
     }
   }

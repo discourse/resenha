@@ -212,8 +212,11 @@ export default class MeshSignalHandler {
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
-        PeerManager.alignVideoTransceiverForAnswer(pc);
-        PeerManager.alignScreenAudioTransceiverForAnswer(pc);
+        const room = this.#getRoom(roomId);
+        const canPublish =
+          !room || participantCanSpeak(room, this.#getCurrentUserId());
+        PeerManager.alignVideoTransceiverForAnswer(pc, { canPublish });
+        PeerManager.alignScreenAudioTransceiverForAnswer(pc, { canPublish });
         await this.#peerManager.flushPendingCandidates(
           roomId,
           remoteUserId,
