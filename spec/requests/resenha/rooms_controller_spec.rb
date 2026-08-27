@@ -267,6 +267,31 @@ RSpec.describe Resenha::RoomsController do
       expect(messages.select { |message| message.data[:type] == "participants" }).to be_empty
     end
 
+    it "reuses the open analytics session and skips join side effects for a present user omitting the session id" do
+      SiteSetting.resenha_analytics_enabled = true
+      sign_in(user)
+
+      post "/resenha/rooms/#{room.id}/join.json"
+      first_session_id = response.parsed_body["participant_session_id"]
+      analytics_id = Resenha::Session.find_by(user: user, room: room).id
+
+      messages =
+        MessageBus.track_publish(Resenha.room_channel(room.id)) do
+          5.times { post "/resenha/rooms/#{room.id}/join.json" }
+        end
+
+      expect(response.status).to eq(200)
+      # The takeover still rotates the participant session so the newest tab
+      # holds signaling authority...
+      expect(response.parsed_body["participant_session_id"]).not_to eq(first_session_id)
+      # ...but replayed joins are not an analytics-row or broadcast factory.
+      sessions = Resenha::Session.where(user: user, room: room)
+      expect(sessions.count).to eq(1)
+      expect(sessions.first.id).to eq(analytics_id)
+      expect(sessions.first.left_at).to be_nil
+      expect(messages.select { |message| message.data[:type] == "participants" }).to be_empty
+    end
+
     it "mints a fresh session and analytics session on a genuine rejoin after leave" do
       sign_in(user)
 
@@ -444,9 +469,10 @@ RSpec.describe Resenha::RoomsController do
 
       ice = response.parsed_body["ice"]
       turn_server = ice["servers"].first
-      expiry, credential_user_id = turn_server["username"].split(":")
+      expiry, site, credential_user_id = turn_server["username"].split(":")
 
       expect(credential_user_id).to eq(user.id.to_s)
+      expect(site).to eq(Discourse.current_hostname)
       expect(expiry.to_i).to be > Time.zone.now.to_i
       expect(turn_server["credential"]).to eq(
         Base64.strict_encode64(
@@ -467,6 +493,9 @@ RSpec.describe Resenha::RoomsController do
     end
 
     it "broadcasts participants untargeted when access is open to everyone" do
+      # With the granular flag on, a stored `everyone` reads as
+      # logged_in_users and the broadcast is group-targeted instead.
+      SiteSetting.granular_anonymous_and_logged_in_groups_permissions = false
       sign_in(user)
       Resenha::ParticipantTracker.add(room.id, other_participant.id)
 

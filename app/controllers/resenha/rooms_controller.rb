@@ -201,6 +201,17 @@ module Resenha
         return render_json_error(I18n.t("resenha.errors.room_full"), status: 422)
       end
 
+      # A joiner already in the roster but without the live session proof (a
+      # reloaded tab, a second device — or a client replaying this endpoint)
+      # takes over the existing grant rather than re-running first-join side
+      # effects: the session still rotates so the new tab gains signaling
+      # authority, but the open analytics row is reused and badge/invite
+      # hooks don't re-fire. Otherwise every replayed join is a free
+      # analytics insert and roster broadcast.
+      takeover = admission == :existing
+      previous_metadata =
+        takeover ? Resenha::ParticipantTracker.get_metadata(@room.id, current_user.id) : {}
+
       participant_session_id =
         Resenha::ParticipantTracker.create_participant_session!(@room.id, current_user.id)
 
@@ -209,25 +220,41 @@ module Resenha
       metadata = { role: role, last_heartbeat_at: Time.now.to_f }
 
       if SiteSetting.resenha_analytics_enabled
-        session = Resenha::Session.create!(user: current_user, room: @room, joined_at: Time.current)
+        session = nil
+        if previous_metadata[:session_id]
+          session =
+            Resenha::Session.find_by(
+              id: previous_metadata[:session_id],
+              user_id: current_user.id,
+              room_id: @room.id,
+              left_at: nil,
+            )
+        end
+        session ||=
+          Resenha::Session.create!(user: current_user, room: @room, joined_at: Time.current)
         metadata[:session_id] = session.id
       end
 
       metadata[:skip_status] = true if params[:skip_status].present?
       Resenha::ParticipantTracker.update_metadata(@room.id, current_user.id, metadata)
-      Resenha::RoomBroadcaster.publish_participants(@room)
 
-      participants = Resenha::ParticipantTracker.list(@room.id)
-      Resenha::BadgeGranterHooks.on_join(current_user, @room, participants)
+      if takeover
+        Resenha::RoomBroadcaster.publish_participants_if_changed(@room)
+      else
+        Resenha::RoomBroadcaster.publish_participants(@room)
 
-      if params[:invited_by].present?
-        invite =
-          Resenha::Invite.redeem!(
-            room: @room,
-            user: current_user,
-            inviter_username: params[:invited_by],
-          )
-        Resenha::BadgeGranterHooks.on_invite_redeemed(invite) if invite
+        participants = Resenha::ParticipantTracker.list(@room.id)
+        Resenha::BadgeGranterHooks.on_join(current_user, @room, participants)
+
+        if params[:invited_by].present?
+          invite =
+            Resenha::Invite.redeem!(
+              room: @room,
+              user: current_user,
+              inviter_username: params[:invited_by],
+            )
+          Resenha::BadgeGranterHooks.on_invite_redeemed(invite) if invite
+        end
       end
 
       # A join settles this room's pending invitation/call notifications: the

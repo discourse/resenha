@@ -169,6 +169,16 @@ RSpec.describe Resenha::InvitesController do
       expect(outsider.notifications.count).to eq(0)
     end
 
+    it "rejects a usernames list over the per-request maximum instead of truncating it" do
+      sign_in(user)
+
+      usernames = (1..Resenha::InvitesController::MAX_USERS_PER_REQUEST + 1).map { |i| "user#{i}" }
+      post "/resenha/rooms/#{room.id}/invites.json", params: { usernames: usernames }
+
+      expect(response.status).to eq(400)
+      expect(Resenha::Invite.count).to eq(0)
+    end
+
     it "returns 403 when a non-manager invites to a private room" do
       private_room.room_memberships.create!(
         user: user,

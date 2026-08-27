@@ -11,8 +11,14 @@ module Resenha
       guardian.ensure_can_invite_to_resenha_room!(@room)
       RateLimiter.new(current_user, "resenha-invites", 10, 1.minute).performed!
 
-      usernames = Array.wrap(params.require(:usernames)).map(&:to_s).uniq
-      raise Discourse::InvalidParameters.new(:usernames) if usernames.blank?
+      # Bounded before any normalization or query construction: `limit` below
+      # caps the rows returned, not the size of the IN list an oversized
+      # parameter would otherwise be interpolated into.
+      usernames = Array.wrap(params.require(:usernames))
+      if usernames.blank? || usernames.size > MAX_USERS_PER_REQUEST
+        raise Discourse::InvalidParameters.new(:usernames)
+      end
+      usernames = usernames.map(&:to_s).uniq
 
       users =
         User
