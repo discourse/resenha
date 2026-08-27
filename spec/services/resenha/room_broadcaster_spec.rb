@@ -8,6 +8,9 @@ RSpec.describe Resenha::RoomBroadcaster do
 
   describe ".publish_participants" do
     it "publishes without targets when allowed groups include everyone" do
+      # With the granular flag on, a stored `everyone` reads as logged_in_users
+      # and the publish is group-targeted instead (covered below).
+      SiteSetting.granular_anonymous_and_logged_in_groups_permissions = false
       SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:everyone].to_s
       Resenha::ParticipantTracker.add(room.id, participant.id)
 
@@ -21,7 +24,7 @@ RSpec.describe Resenha::RoomBroadcaster do
       expect(messages.first.group_ids).to be_nil
     end
 
-    it "publishes without targets when allowed groups include logged_in_users" do
+    it "targets logged-in subscribers, never anonymous ones, when allowed groups are logged_in_users" do
       SiteSetting.resenha_allowed_groups = Group::AUTO_GROUPS[:logged_in_users].to_s
       Resenha::ParticipantTracker.add(room.id, participant.id)
 
@@ -30,8 +33,15 @@ RSpec.describe Resenha::RoomBroadcaster do
           described_class.publish_participants(room)
         end
 
-      expect(messages.first.user_ids).to be_nil
-      expect(messages.first.group_ids).to be_nil
+      expect(messages.first.group_ids).to contain_exactly(Group::AUTO_GROUPS[:logged_in_users])
+
+      anonymous_client =
+        MessageBus::Client.new(
+          client_id: "anonymous",
+          user_id: nil,
+          group_ids: [Group::AUTO_GROUPS[:anonymous_users]],
+        )
+      expect(anonymous_client.allowed?(messages.first)).to eq(false)
     end
 
     it "targets allowed groups plus current participants when access is restricted" do

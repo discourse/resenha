@@ -40,10 +40,14 @@ module Resenha
     end
 
     # Expiry-first username and HMAC-SHA1 credential are dictated by the
-    # TURN REST API spec; the user id suffix only aids attribution in
-    # TURN server logs.
+    # TURN REST API spec. coturn drops the numeric expiry before applying
+    # user-quota, so the hostname:user_id remainder is the quota identity —
+    # without it, same-numbered users on different sites sharing a coturn
+    # realm would share quota. It also attributes relay traffic to a site
+    # in TURN server logs.
     def self.ephemeral_credentials(user)
-      username = "#{EPHEMERAL_CREDENTIAL_TTL.from_now.to_i}:#{user.id}"
+      username =
+        "#{EPHEMERAL_CREDENTIAL_TTL.from_now.to_i}:#{Discourse.current_hostname}:#{user.id}"
       digest = OpenSSL::HMAC.digest("SHA1", SiteSetting.resenha_turn_secret, username)
       [username, Base64.strict_encode64(digest)]
     end

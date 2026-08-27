@@ -40,7 +40,7 @@ RSpec.describe Resenha::IceConfig do
       expect(payload[:servers]).to contain_exactly({ urls: "turn:turn.example.com:3478" })
     end
 
-    it "mints ephemeral HMAC credentials scoped to the user for secret TURN servers" do
+    it "mints ephemeral HMAC credentials scoped to the site and user for secret TURN servers" do
       SiteSetting.resenha_stun_servers = ""
       SiteSetting.resenha_turn_secret = "coturn-shared-secret"
       SiteSetting.resenha_turn_secret_servers = "turn:turn.example.com:3478"
@@ -50,7 +50,7 @@ RSpec.describe Resenha::IceConfig do
         server = payload[:servers].first
 
         expected_username =
-          "#{(Time.zone.now + described_class::EPHEMERAL_CREDENTIAL_TTL).to_i}:#{user.id}"
+          "#{(Time.zone.now + described_class::EPHEMERAL_CREDENTIAL_TTL).to_i}:#{Discourse.current_hostname}:#{user.id}"
         expected_credential =
           Base64.strict_encode64(
             OpenSSL::HMAC.digest("SHA1", "coturn-shared-secret", expected_username),
@@ -60,6 +60,24 @@ RSpec.describe Resenha::IceConfig do
           urls: "turn:turn.example.com:3478",
           username: expected_username,
           credential: expected_credential,
+        )
+      end
+    end
+
+    it "separates quota identities of same-numbered users on different sites" do
+      SiteSetting.resenha_stun_servers = ""
+      SiteSetting.resenha_turn_secret = "coturn-shared-secret"
+      SiteSetting.resenha_turn_secret_servers = "turn:coturn.example.com:3478"
+
+      freeze_time do
+        username = described_class.payload(user)[:servers].first[:username]
+
+        SiteSetting.force_hostname = "other-site.example.com"
+        other_site_username = described_class.payload(user)[:servers].first[:username]
+
+        expect(username).not_to eq(other_site_username)
+        expect(other_site_username).to eq(
+          "#{(Time.zone.now + described_class::EPHEMERAL_CREDENTIAL_TTL).to_i}:other-site.example.com:#{user.id}",
         )
       end
     end
@@ -79,7 +97,7 @@ RSpec.describe Resenha::IceConfig do
       expect(servers.size).to eq(2)
       expect(static_server[:username]).to eq("static-user")
       expect(static_server[:credential]).to eq("static-pass")
-      expect(secret_server[:username]).to end_with(":#{user.id}")
+      expect(secret_server[:username]).to end_with(":#{Discourse.current_hostname}:#{user.id}")
       expect(secret_server[:credential]).to eq(
         Base64.strict_encode64(
           OpenSSL::HMAC.digest("SHA1", "coturn-shared-secret", secret_server[:username]),
