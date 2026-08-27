@@ -78,7 +78,9 @@ export default class PeerManager {
   // createAnswer: flips the associated transceiver to sendrecv (the answer
   // then carries it, no renegotiation) and migrates any track off the now
   // orphaned pre-allocated transceiver.
-  static alignVideoTransceiverForAnswer(pc) {
+  // Answerers whose server-side role cannot publish keep the m-line
+  // receive-only: defense in depth on top of the receive-side track policy.
+  static alignVideoTransceiverForAnswer(pc, { canPublish = true } = {}) {
     const videoTransceivers = pc
       .getTransceivers()
       .filter((transceiver) => transceiver.receiver?.track?.kind === "video");
@@ -90,8 +92,9 @@ export default class PeerManager {
       return;
     }
 
-    if (associated.direction !== "sendrecv") {
-      associated.direction = "sendrecv";
+    const direction = canPublish ? "sendrecv" : "recvonly";
+    if (associated.direction !== direction) {
+      associated.direction = direction;
     }
 
     const orphan = videoTransceivers.find(
@@ -114,7 +117,7 @@ export default class PeerManager {
   // track is added before the pre-allocated transceivers, and fresh answerer
   // transceivers are created in m-line order), so among the audio
   // transceivers associated with an m-line the screen one is the last.
-  static alignScreenAudioTransceiverForAnswer(pc) {
+  static alignScreenAudioTransceiverForAnswer(pc, { canPublish = true } = {}) {
     const associated = pc
       .getTransceivers()
       .filter(
@@ -130,8 +133,9 @@ export default class PeerManager {
     }
 
     const screenTransceiver = associated[associated.length - 1];
-    if (screenTransceiver.direction !== "sendrecv") {
-      screenTransceiver.direction = "sendrecv";
+    const direction = canPublish ? "sendrecv" : "recvonly";
+    if (screenTransceiver.direction !== direction) {
+      screenTransceiver.direction = direction;
     }
 
     const orphan = screenAudioTransceivers.get(pc);
@@ -160,6 +164,7 @@ export default class PeerManager {
 
   #getIceServers;
   #getIceTransportPolicy;
+  #canPublishMedia;
   #getLocalStream;
   #getLocalVideoTrack;
   #getLocalScreenAudioTrack;
@@ -174,6 +179,7 @@ export default class PeerManager {
   constructor({
     getIceServers,
     getIceTransportPolicy = () => "all",
+    canPublishMedia = () => true,
     getLocalStream,
     getLocalVideoTrack = () => null,
     getLocalScreenAudioTrack = () => null,
@@ -187,6 +193,7 @@ export default class PeerManager {
   }) {
     this.#getIceServers = getIceServers;
     this.#getIceTransportPolicy = getIceTransportPolicy;
+    this.#canPublishMedia = canPublishMedia;
     this.#getLocalStream = getLocalStream;
     this.#getLocalVideoTrack = getLocalVideoTrack;
     this.#getLocalScreenAudioTrack = getLocalScreenAudioTrack;
@@ -283,9 +290,12 @@ export default class PeerManager {
     // The video m-line is negotiated up-front so that turning a camera or
     // screen share on later is a plain replaceTrack with no renegotiation —
     // the signaling layer only supports one-shot negotiation at peer setup.
-    // An idle sender transmits nothing.
+    // An idle sender transmits nothing. When the local role cannot publish
+    // (stage listener) the m-line is receive-only; a promotion rebuilds all
+    // peers, so the direction never needs to change on a live connection.
+    const canPublish = this.#canPublishMedia(roomId);
     const videoTransceiver = pc.addTransceiver("video", {
-      direction: "sendrecv",
+      direction: canPublish ? "sendrecv" : "recvonly",
     });
     const videoTrack = this.#getLocalVideoTrack(roomId, remoteUserId);
     if (videoTrack) {
@@ -300,7 +310,7 @@ export default class PeerManager {
     // the mic m-line so voice mute/PTT and receiver-side speaking detection
     // never touch content audio.
     const screenAudioTransceiver = pc.addTransceiver("audio", {
-      direction: "sendrecv",
+      direction: canPublish ? "sendrecv" : "recvonly",
     });
     screenAudioTransceivers.set(pc, screenAudioTransceiver);
     const screenAudioTrack = this.#getLocalScreenAudioTrack(

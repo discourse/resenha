@@ -249,4 +249,36 @@ RSpec.describe Resenha::Livekit::RoomServiceClient do
       expect(described_class.remove_participant(room, user.id)).to eq(false)
     end
   end
+
+  describe ".list_rooms" do
+    it "keeps the upstream response body out of the probe result" do
+      upstream_body = "upstream stack trace with internal hostnames"
+      twirp_stub("ListRooms").to_return(status: 503, body: upstream_body)
+
+      result = described_class.list_rooms
+
+      expect(result[:ok]).to eq(false)
+      expect(result[:error]).to eq("HTTP 503")
+      expect(result[:error]).not_to include(upstream_body)
+    end
+  end
+
+  context "when the URL resolves to a disallowed address" do
+    it "refuses the connection and reports it without probing the host" do
+      FinalDestination::TestHelper.stub_to_fail do
+        result = described_class.list_rooms
+
+        expect(result[:ok]).to eq(false)
+        expect(result[:error]).to eq(
+          "The LiveKit URL resolves to an address this server is not allowed to reach",
+        )
+      end
+    end
+
+    it "fails a sync call without raising" do
+      FinalDestination::TestHelper.stub_to_fail do
+        expect(described_class.remove_participant(room, user.id)).to eq(false)
+      end
+    end
+  end
 end

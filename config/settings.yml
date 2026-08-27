@@ -53,6 +53,7 @@ plugins:
     validator: "ResenhaTurnSecretServersValidator"
   resenha_livekit_url:
     default: ""
+    validator: "ResenhaLivekitUrlValidator"
   resenha_livekit_api_key:
     default: ""
   resenha_livekit_api_secret:

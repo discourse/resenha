@@ -52,10 +52,19 @@ module Resenha
           if response.status == 200
             { ok: true, data: JSON.parse(response.body) }
           else
-            error = "HTTP #{response.status} #{response.body.to_s.truncate(200)}"
-            Rails.logger.warn("[resenha-livekit] #{method} failed: #{error}")
-            { ok: false, error: error }
+            # The upstream body goes to the log for the operator; the result
+            # surfaced to the UI only carries the status code.
+            Rails.logger.warn(
+              "[resenha-livekit] #{method} failed: " \
+                "HTTP #{response.status} #{response.body.to_s.truncate(200)}",
+            )
+            { ok: false, error: "HTTP #{response.status}" }
           end
+        rescue FinalDestination::SSRFDetector::DisallowedIpError
+          {
+            ok: false,
+            error: "The LiveKit URL resolves to an address this server is not allowed to reach",
+          }
         rescue StandardError => e
           Rails.logger.warn("[resenha-livekit] #{method} failed: #{e.class} #{e.message}")
           { ok: false, error: "#{e.class}: #{e.message}" }

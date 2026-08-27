@@ -30,7 +30,7 @@ en:
     resenha_turn_credential: "Static password for the TURN servers in {{setting:resenha_turn_servers}}."
     resenha_turn_secret: "Shared secret used to mint short-lived TURN credentials for the servers in {{setting:resenha_turn_secret_servers}} (TURN REST API, coturn's use-auth-secret mode). Must match the secret configured on those TURN servers."
     resenha_turn_secret_servers: "TURN server URIs (turn:host:port or turns:host:port), separated by |, that authenticate with short-lived per-user credentials derived from {{setting:resenha_turn_secret}} instead of a static username and password, so credentials cannot be reused by third parties."
-    resenha_livekit_url: "WebSocket URL (ws:// or wss://) of a self-hosted LiveKit server. Together with the API key and secret, lets voice rooms use it as their media server (SFU) instead of the peer-to-peer mesh."
+    resenha_livekit_url: "WebSocket URL (wss://, or ws:// outside production) of a self-hosted LiveKit server. Together with the API key and secret, lets voice rooms use it as their media server (SFU) instead of the peer-to-peer mesh. The server must be reachable at a public address."
     resenha_livekit_api_key: "API key of the LiveKit server."
     resenha_livekit_api_secret: "API secret of the LiveKit server, used to sign short-lived room access tokens."
     resenha_livekit_room_policy: "Which rooms use the LiveKit media server instead of the peer-to-peer mesh. Changes never affect calls already in progress — each room switches when its next call starts."
@@ -40,7 +40,9 @@ en:
     resenha_livekit_recording_filepath: "Filepath passed to LiveKit Egress for recordings. Supports LiveKit's template placeholders such as {room_name}, {room_id}, {time} and {utc}; the file extension is added automatically."
     errors:
       resenha_turn_secret_servers_requires_secret: "Set resenha_turn_secret before adding TURN servers that use short-lived credentials."
-      resenha_livekit_policy_requires_url: "Set resenha_livekit_url to a ws:// or wss:// URL before enabling a LiveKit room policy."
+      resenha_livekit_policy_requires_url: "Set resenha_livekit_url to a valid wss:// URL before enabling a LiveKit room policy."
+      resenha_livekit_url_invalid: "The LiveKit URL must be a ws:// or wss:// URL with a hostname and no embedded credentials."
+      resenha_livekit_url_requires_wss: "The LiveKit URL must use wss:// in production."
       resenha_livekit_policy_requires_api_key: "Set resenha_livekit_api_key before enabling a LiveKit room policy."
       resenha_livekit_policy_requires_api_secret: "Set resenha_livekit_api_secret before enabling a LiveKit room policy."
   resenha:

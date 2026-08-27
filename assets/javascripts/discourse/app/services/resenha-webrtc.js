@@ -53,7 +53,10 @@ import {
   startWaitingSound,
   stopCallSounds,
 } from "../../lib/resenha/sound-effects";
-import { participantCanSpeak } from "../../lib/resenha/stage-roles";
+import {
+  participantCanSpeak,
+  remoteTrackAllowed,
+} from "../../lib/resenha/stage-roles";
 import TranscriptionCoordinator from "../../lib/resenha/transcription-coordinator";
 import { applyVoiceQuality } from "../../lib/resenha/video-quality";
 
@@ -156,8 +159,9 @@ export default class ResenhaWebrtcService extends Service {
         this.#signaling.send(roomId, uid, payload),
       flushQueuedSignals: (roomId, uid) =>
         this.#signaling.flushQueued(roomId, uid),
+      canPublishMedia: (roomId) => this.#canPublishMediaIn(roomId),
       onTrack: (roomId, uid, track, streams) =>
-        this.#remoteStreamRegistry.register(roomId, uid, track, streams),
+        this.#registerRemoteTrack(roomId, uid, track, streams),
       clearSignalQueue: (roomId, uid) =>
         this.#signaling.clearForPeer(roomId, uid),
       onPeerDestroyed: (roomId, uid) => this.#removeRemoteStream(roomId, uid),
@@ -366,7 +370,9 @@ export default class ResenhaWebrtcService extends Service {
       isConnectingRoom: (roomId) => this.#connectingRoomIds.has(roomId),
       isMeshRoom: (roomId) => this.#isMeshRoom(roomId),
       registerTrack: (roomId, userId, track) =>
-        this.#remoteStreamRegistry.register(roomId, userId, track),
+        this.#registerRemoteTrack(roomId, userId, track),
+      getRemoteUserIds: (roomId) =>
+        this.#remoteStreamRegistry.userIdsFor(roomId),
       removeRemoteStream: (roomId, userId) =>
         this.#removeRemoteStream(roomId, userId),
       removeAllRemoteStreams: (roomId) => this.#removeAllRemoteStreams(roomId),
@@ -1604,6 +1610,35 @@ export default class ResenhaWebrtcService extends Service {
     }
 
     this.resenhaRooms?.removeParticipant(roomId, this.currentUser.id);
+  }
+
+  // Mesh receive-side media boundary: only register (and therefore play) a
+  // remote track the sender's server-attested role and the room's media
+  // policy allow. On LiveKit the SFU enforces publish permissions instead.
+  #registerRemoteTrack(roomId, userId, track, streams) {
+    const room = this.resenhaRooms?.roomById(roomId);
+    if (!remoteTrackAllowed(room, userId, track, streams)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[resenha] dropping ${track?.kind} track from user ${userId}: not allowed to publish in room ${roomId}`
+      );
+      try {
+        track?.stop();
+      } catch {
+        // a remote track may already be ended
+      }
+      return;
+    }
+
+    this.#remoteStreamRegistry.register(roomId, userId, track, streams);
+  }
+
+  // Whether the local user may attach media to peers in this room. Honest
+  // stage listeners keep their pre-negotiated transceivers receive-only;
+  // the receiving side's #registerRemoteTrack is the actual boundary.
+  #canPublishMediaIn(roomId) {
+    const room = this.resenhaRooms?.roomById(roomId);
+    return !room || this.#canSpeakInRoom(room);
   }
 
   #removeAllRemoteStreams(roomId) {

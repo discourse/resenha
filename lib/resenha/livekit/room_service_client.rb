@@ -112,12 +112,20 @@ module Resenha
           if response.status == 200
             { ok: true, latency_ms:, data: JSON.parse(response.body) }
           else
-            {
-              ok: false,
-              latency_ms:,
-              error: "HTTP #{response.status} #{response.body.to_s.truncate(200)}",
-            }
+            # The upstream body goes to the log for the operator; the result
+            # shown to admins only carries the status code.
+            Rails.logger.warn(
+              "[resenha-livekit] #{method} probe failed: " \
+                "HTTP #{response.status} #{response.body.to_s.truncate(200)}",
+            )
+            { ok: false, latency_ms:, error: "HTTP #{response.status}" }
           end
+        rescue FinalDestination::SSRFDetector::DisallowedIpError
+          {
+            ok: false,
+            latency_ms: elapsed_ms(started),
+            error: "The LiveKit URL resolves to an address this server is not allowed to reach",
+          }
         rescue StandardError => e
           { ok: false, latency_ms: elapsed_ms(started), error: "#{e.class}: #{e.message}" }
         end
