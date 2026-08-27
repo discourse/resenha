@@ -176,7 +176,10 @@ en:
         start: "Record transcript"
         stop: "Stop transcript recording"
         indicator: "Transcribing"
-        indicator_tooltip: "Recording a transcript of this call: %{usernames}. The transcript never leaves the recorder's device."
+        indicator_tooltip:
+          one: "%{usernames} is transcribing"
+          other: "%{usernames} are transcribing"
+        indicator_tooltip_self: "You are transcribing"
         transcriber_you: "You"
         draft_topic: "Open transcript draft"
         stop_and_open: "Stop recording and open draft"

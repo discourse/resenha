@@ -1026,6 +1026,10 @@
   }
 }
 
+.fk-d-tooltip__content.resenha-transcript-badge-content {
+  font-size: var(--font-down-1);
+}
+
 .resenha-room-page__transcript-toggle {
   &.--recording {
     .d-icon {

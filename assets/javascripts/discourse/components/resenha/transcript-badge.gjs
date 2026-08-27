@@ -39,8 +39,13 @@ export default class ResenhaTranscriptBadge extends Component {
   }
 
   get tooltip() {
+    const names = this.transcriberNames;
+    if (this.selfTranscribing && names.length === 1) {
+      return i18n("resenha.transcript.indicator_tooltip_self");
+    }
     return i18n("resenha.transcript.indicator_tooltip", {
-      usernames: this.transcriberNames.join(", "),
+      count: names.length,
+      usernames: names.join(", "),
     });
   }
 
