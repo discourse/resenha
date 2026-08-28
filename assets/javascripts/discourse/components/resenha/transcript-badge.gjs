@@ -1,5 +1,6 @@
 import Component from "@glimmer/component";
 import { service } from "@ember/service";
+import DTooltip from "discourse/float-kit/components/d-tooltip";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 
@@ -29,12 +30,22 @@ export default class ResenhaTranscriptBadge extends Component {
     return this.selfTranscribing || this.otherTranscribers.length > 0;
   }
 
-  get title() {
+  get transcriberNames() {
+    const names = this.otherTranscribers;
     if (this.selfTranscribing) {
-      return i18n("resenha.transcript.indicator_title");
+      names.unshift(i18n("resenha.transcript.transcriber_you"));
     }
-    return i18n("resenha.transcript.indicator_title_other", {
-      usernames: this.otherTranscribers.join(", "),
+    return names;
+  }
+
+  get tooltip() {
+    const names = this.transcriberNames;
+    if (this.selfTranscribing && names.length === 1) {
+      return i18n("resenha.transcript.indicator_tooltip_self");
+    }
+    return i18n("resenha.transcript.indicator_tooltip", {
+      count: names.length,
+      usernames: names.join(", "),
     });
   }
 
@@ -52,12 +63,21 @@ export default class ResenhaTranscriptBadge extends Component {
 
   <template>
     {{#if this.visible}}
-      <span class="resenha-transcript-badge" title={{this.title}}>
-        {{dIcon "closed-captioning"}}
-        <span class="resenha-transcript-badge__label">
-          {{this.label}}
-        </span>
-      </span>
+      <DTooltip
+        @identifier="resenha-transcript-badge"
+        @placement="bottom"
+        class="resenha-transcript-badge"
+      >
+        <:trigger>
+          {{dIcon "closed-captioning"}}
+          <span class="resenha-transcript-badge__label">
+            {{this.label}}
+          </span>
+        </:trigger>
+        <:content>
+          {{this.tooltip}}
+        </:content>
+      </DTooltip>
     {{/if}}
   </template>
 }

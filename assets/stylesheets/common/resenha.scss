@@ -999,6 +999,11 @@
   align-items: center;
   flex-shrink: 0;
   gap: 0.4em;
+
+  .fk-d-tooltip__trigger-container {
+    align-items: center;
+    gap: 0.4em;
+  }
   padding: 0.15em 0.65em;
   border: 1px solid var(--primary-low-mid);
   border-radius: 1em;
@@ -1019,6 +1024,10 @@
       animation: none;
     }
   }
+}
+
+.fk-d-tooltip__content.resenha-transcript-badge-content {
+  font-size: var(--font-down-1);
 }
 
 .resenha-room-page__transcript-toggle {
