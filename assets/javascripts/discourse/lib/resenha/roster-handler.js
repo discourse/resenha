@@ -273,13 +273,11 @@ export default class RosterHandler {
 
     if (canSpeak) {
       if (!this.#getLocalStream()) {
+        // The acquisition callback owns the user-facing failure feedback
+        // (permission help modal or toast).
         const acquired = await this.#acquireMicrophone();
         if (!acquired) {
           this.#roleChangeInProgress.delete(roomId);
-          this.#toasts.error({
-            duration: 5000,
-            data: { message: i18n("resenha.stage.mic_denied") },
-          });
           return;
         }
 

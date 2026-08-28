@@ -37,6 +37,11 @@ export default class LocalAudioPipeline {
   @tracked gateThreshold = InputGateManager.storedSliderValue();
   @tracked inputDeviceId = preferredInputDeviceId();
 
+  // Why the last acquisition failed (a getUserMedia DOMException); lets the
+  // service distinguish a browser-level permission block from a missing or
+  // busy device. Null after a successful acquisition.
+  lastAcquisitionError = null;
+
   #rawStream = null;
   #upstream = null;
   #noiseSuppression;
@@ -85,6 +90,7 @@ export default class LocalAudioPipeline {
       const rawStream = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraints(this.inputDeviceId),
       });
+      this.lastAcquisitionError = null;
       // eslint-disable-next-line no-console
       console.log("[resenha] local stream obtained");
 
@@ -105,6 +111,7 @@ export default class LocalAudioPipeline {
 
       return true;
     } catch (error) {
+      this.lastAcquisitionError = error;
       // eslint-disable-next-line no-console
       console.warn("[resenha] failed to obtain local stream", error);
       return false;

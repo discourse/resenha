@@ -1200,6 +1200,20 @@
   }
 }
 
+.resenha-mic-permission-modal {
+  .d-modal__container {
+    max-width: 32rem;
+  }
+
+  &__body {
+    margin: 0;
+  }
+
+  &__instructions {
+    margin: 1rem 0 0;
+  }
+}
+
 .resenha-incoming-call-modal {
   .d-modal__container {
     max-width: 22rem;
