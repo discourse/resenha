@@ -77,7 +77,7 @@ plugins:
   resenha_livekit_recording_filepath:
     default: "resenha/{room_name}-{utc}"
   resenha_video_enabled:
-    default: false
+    default: true
     client: true
   resenha_video_max_publishers:
     default: 8

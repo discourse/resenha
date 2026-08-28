@@ -36,6 +36,7 @@ RSpec.describe Resenha::Livekit::EgressClient do
 
   describe ".start_room_composite" do
     it "POSTs the room name and file output with a roomRecord-granted token" do
+      SiteSetting.resenha_video_enabled = false
       stub = twirp_stub("StartRoomCompositeEgress").to_return(body: { egressId: "EG_1" }.to_json)
 
       result = described_class.start_room_composite(room, filepath: "resenha/test-abc123")
