@@ -6,6 +6,7 @@ import { ajax } from "discourse/lib/ajax";
 import Draft from "discourse/models/draft";
 import { i18n } from "discourse-i18n";
 import { confirmMeshPrivacy } from "../../components/modal/resenha-mesh-privacy-warning";
+import { reportMicAcquisitionFailure } from "../../components/modal/resenha-mic-permission";
 import AudioMonitor from "../../lib/resenha/audio-monitor";
 import { RING_SECONDS } from "../../lib/resenha/call-constants";
 import HeartbeatManager from "../../lib/resenha/heartbeat-manager";
@@ -380,7 +381,7 @@ export default class ResenhaWebrtcService extends Service {
       syncVideoSenders: (roomId) => this.#localVideo.syncSenders(roomId),
       stopLocalVideo: () => this.#localVideo.stop(),
       getLocalStream: () => this.localStream,
-      acquireMicrophone: () => this.#localAudio.acquireMicrophone(),
+      acquireMicrophone: () => this.#acquireMicrophoneWithFeedback(),
       setMicEnabled: (enabled) => this.#setMicEnabled(enabled),
       stopLocalAudio: () => this.#localAudio.stop(),
       ensureLocalAudioMonitor: (roomId) =>
@@ -637,6 +638,17 @@ export default class ResenhaWebrtcService extends Service {
     return this.#roomTransports.get(roomId) === "livekit";
   }
 
+  async #acquireMicrophoneWithFeedback() {
+    const acquired = await this.#localAudio.acquireMicrophone();
+    if (!acquired) {
+      reportMicAcquisitionFailure(this.#localAudio.lastAcquisitionError, {
+        modal: this.modal,
+        toasts: this.toasts,
+      });
+    }
+    return acquired;
+  }
+
   async join(room) {
     if (!room?.id) {
       return;
@@ -756,7 +768,7 @@ export default class ResenhaWebrtcService extends Service {
       joinedRoom?.room_type === "stage" && !this.#canSpeakInRoom(joinedRoom);
 
     if (!isStageListener && !this.localStream) {
-      const acquired = await this.#localAudio.acquireMicrophone();
+      const acquired = await this.#acquireMicrophoneWithFeedback();
       if (!acquired) {
         ajax(`/resenha/rooms/${room.id}/leave`, {
           type: "DELETE",

@@ -184,7 +184,6 @@ tr_TR:
       stage:
         promoted_to_speaker: "Konuşmacı yapıldınız."
         demoted_to_listener: "Dinleyicilere taşındınız."
-        mic_denied: "Mikrofon erişimi reddedildi. Konuşabilmek için mikrofon erişimine izin vermelisiniz."
         speakers: "Konuşmacılar"
         listeners: "Dinleyiciler"
         more_listeners: "+%{count} kişi daha"
