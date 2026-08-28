@@ -1,10 +1,14 @@
 const SAVE_INTERVAL_MS = 10_000;
 
+// new_topic-prefixed so core's drafts list and resume flow treat these as
+// normal new-topic drafts; the rest marks them as ours (see the draft-icon
+// transformer registration).
+export const TRANSCRIPT_DRAFT_KEY_PREFIX = "new_topic_resenha_";
+
 // Mirrors an in-progress transcript into a server-side topic draft so the
 // recording survives a crashed tab and shows up in the user's drafts like
 // any half-written topic. Saves ride a fixed cadence and only when entries
-// changed; the draft key is new_topic-prefixed so core's drafts list and
-// resume flow treat it as a normal new-topic draft.
+// changed.
 //
 // The sync only ever runs while recording — opening the draft stops the
 // recording first, so the composer never competes with it. A sequence
@@ -35,7 +39,7 @@ export default class TranscriptDraftSync {
 
   start(roomId, startedAt) {
     this.dispose();
-    this.#key = `new_topic_resenha_${roomId}_${startedAt}`;
+    this.#key = `${TRANSCRIPT_DRAFT_KEY_PREFIX}${roomId}_${startedAt}`;
     this.#sequence = 0;
     this.#dirty = false;
     this.#conflicted = false;
