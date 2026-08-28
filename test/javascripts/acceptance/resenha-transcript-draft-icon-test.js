@@ -10,6 +10,9 @@ acceptance("Resenha transcript draft icon", function (needs) {
   needs.settings({ resenha_enabled: true });
 
   needs.pretender((server, helper) => {
+    server.get("/resenha/rooms.json", () =>
+      helper.response({ rooms: [], can_create_room: false })
+    );
     server.get("/drafts.json", () =>
       helper.response({
         drafts: [
