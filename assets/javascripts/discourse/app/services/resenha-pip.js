@@ -95,7 +95,10 @@ export default class ResenhaPip extends Service {
   }
 
   // Registered only while a call is active: the handler's presence is what
-  // makes the browser offer/trigger automatic pip on tab switch.
+  // makes the browser offer/trigger automatic pip on tab switch. Chromium
+  // only dispatches it on https:// or file:// pages — a literal scheme
+  // check, independent of secure-context status — so this never fires on an
+  // http dev server even though the manual open() works there.
   enableAutoPip() {
     if (!this.supported) {
       return;
