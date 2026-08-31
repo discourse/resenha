@@ -59,6 +59,13 @@ export default class ResenhaCallControls extends Component {
     return this.args.room;
   }
 
+  // Inside a picture-in-picture window the dropdowns are useless (FloatKit
+  // portals them into the opener document) and dialogs open in the hidden
+  // tab, so pip hosts keep only the plain toggle buttons.
+  get isPip() {
+    return !!this.args.pipMode;
+  }
+
   get videoAllowed() {
     return this.resenhaWebrtc.videoAllowedIn(this.room);
   }
@@ -177,6 +184,7 @@ export default class ResenhaCallControls extends Component {
 
   get canRecord() {
     return (
+      !this.isPip &&
       this.room?.can_manage &&
       this.siteSettings.resenha_livekit_recording_enabled &&
       this.resenhaWebrtc.isLivekitRoom(this.room?.id)
@@ -208,9 +216,17 @@ export default class ResenhaCallControls extends Component {
     this.resenhaWebrtc.toggleCamera();
   }
 
+  // Capture must run against the window that received the click: transient
+  // activation is per-window, so inside the picture-in-picture window the
+  // picker has to be requested through that window's own mediaDevices.
   @action
-  toggleScreenShare() {
-    this.resenhaWebrtc.toggleScreenShare();
+  toggleScreenShare(event) {
+    const view = event?.currentTarget?.ownerDocument?.defaultView;
+    this.resenhaWebrtc.toggleScreenShare(
+      view && view !== window
+        ? { mediaDevices: view.navigator.mediaDevices }
+        : undefined
+    );
   }
 
   @action
@@ -429,78 +445,80 @@ export default class ResenhaCallControls extends Component {
           </span>
         {{/if}}
       </DButton>
-      <DMenu
-        @identifier="resenha-audio-menu"
-        @icon="angle-down"
-        @title={{i18n "resenha.room.audio_options"}}
-        @ariaLabel={{i18n "resenha.room.audio_options"}}
-        @placement="top-end"
-        @onShow={{this.loadAudioDevices}}
-        @triggerClass="btn-default resenha-call-controls__combo-caret"
-      >
-        <:content as |audioMenu|>
-          <DDropdownMenu as |dropdown|>
-            <dropdown.item>
-              <DButton
-                @action={{this.openInputDeviceMenu}}
-                @forwardEvent={{true}}
-                @icon="microphone"
-                @label="resenha.voice_settings.input_audio"
-                @suffixIcon="angle-right"
-                class="btn-transparent resenha-call-menu__device-row"
-              >
-                {{#if this.currentInputDeviceName}}
-                  <span class="resenha-call-menu__current-device">
-                    {{this.currentInputDeviceName}}
-                  </span>
-                {{/if}}
-              </DButton>
-            </dropdown.item>
-            {{#if this.audioOutputSupported}}
+      {{#unless this.isPip}}
+        <DMenu
+          @identifier="resenha-audio-menu"
+          @icon="angle-down"
+          @title={{i18n "resenha.room.audio_options"}}
+          @ariaLabel={{i18n "resenha.room.audio_options"}}
+          @placement="top-end"
+          @onShow={{this.loadAudioDevices}}
+          @triggerClass="btn-default resenha-call-controls__combo-caret"
+        >
+          <:content as |audioMenu|>
+            <DDropdownMenu as |dropdown|>
               <dropdown.item>
                 <DButton
-                  @action={{this.openOutputDeviceMenu}}
+                  @action={{this.openInputDeviceMenu}}
                   @forwardEvent={{true}}
-                  @icon="volume-high"
-                  @label="resenha.voice_settings.output_audio"
+                  @icon="microphone"
+                  @label="resenha.voice_settings.input_audio"
                   @suffixIcon="angle-right"
                   class="btn-transparent resenha-call-menu__device-row"
                 >
-                  {{#if this.currentOutputDeviceName}}
+                  {{#if this.currentInputDeviceName}}
                     <span class="resenha-call-menu__current-device">
-                      {{this.currentOutputDeviceName}}
+                      {{this.currentInputDeviceName}}
                     </span>
                   {{/if}}
                 </DButton>
               </dropdown.item>
-            {{/if}}
-            <dropdown.divider />
-            <dropdown.item>
-              <DButton
-                @action={{this.openNoiseSuppressionMenu}}
-                @forwardEvent={{true}}
-                @icon="discourse-sparkles"
-                @label="resenha.voice_settings.noise_suppression"
-                @suffixIcon="angle-right"
-                @disabled={{this.noiseSuppressionStarting}}
-                class="btn-transparent resenha-call-menu__device-row resenha-call-menu__noise-suppression"
-              >
-                <span class="resenha-call-menu__current-device">
-                  {{this.currentNoiseSuppressionModeName}}
-                </span>
-              </DButton>
-            </dropdown.item>
-            <dropdown.item>
-              <DButton
-                @action={{fn this.openVoiceSettings audioMenu.close}}
-                @icon="sliders"
-                @label="resenha.voice_settings.audio_settings"
-                class="btn-transparent"
-              />
-            </dropdown.item>
-          </DDropdownMenu>
-        </:content>
-      </DMenu>
+              {{#if this.audioOutputSupported}}
+                <dropdown.item>
+                  <DButton
+                    @action={{this.openOutputDeviceMenu}}
+                    @forwardEvent={{true}}
+                    @icon="volume-high"
+                    @label="resenha.voice_settings.output_audio"
+                    @suffixIcon="angle-right"
+                    class="btn-transparent resenha-call-menu__device-row"
+                  >
+                    {{#if this.currentOutputDeviceName}}
+                      <span class="resenha-call-menu__current-device">
+                        {{this.currentOutputDeviceName}}
+                      </span>
+                    {{/if}}
+                  </DButton>
+                </dropdown.item>
+              {{/if}}
+              <dropdown.divider />
+              <dropdown.item>
+                <DButton
+                  @action={{this.openNoiseSuppressionMenu}}
+                  @forwardEvent={{true}}
+                  @icon="discourse-sparkles"
+                  @label="resenha.voice_settings.noise_suppression"
+                  @suffixIcon="angle-right"
+                  @disabled={{this.noiseSuppressionStarting}}
+                  class="btn-transparent resenha-call-menu__device-row resenha-call-menu__noise-suppression"
+                >
+                  <span class="resenha-call-menu__current-device">
+                    {{this.currentNoiseSuppressionModeName}}
+                  </span>
+                </DButton>
+              </dropdown.item>
+              <dropdown.item>
+                <DButton
+                  @action={{fn this.openVoiceSettings audioMenu.close}}
+                  @icon="sliders"
+                  @label="resenha.voice_settings.audio_settings"
+                  class="btn-transparent"
+                />
+              </dropdown.item>
+            </DDropdownMenu>
+          </:content>
+        </DMenu>
+      {{/unless}}
     </div>
     {{#if this.isStageListener}}
       <DButton
@@ -535,45 +553,47 @@ export default class ResenhaCallControls extends Component {
           full button height and aligns with its DButton siblings. }}
           <span aria-hidden="true">&#8203;</span>
         </button>
-        <DMenu
-          @identifier="resenha-video-menu"
-          @icon="angle-down"
-          @title={{i18n "resenha.room.video_options"}}
-          @ariaLabel={{i18n "resenha.room.video_options"}}
-          @placement="top-end"
-          @onShow={{this.loadVideoDevices}}
-          @triggerClass="btn-default resenha-call-controls__combo-caret"
-        >
-          <:content as |videoMenu|>
-            <DDropdownMenu as |dropdown|>
-              <dropdown.item>
-                <DButton
-                  @action={{this.openCameraMenu}}
-                  @forwardEvent={{true}}
-                  @icon="video"
-                  @label="resenha.video_settings.camera"
-                  @suffixIcon="angle-right"
-                  class="btn-transparent resenha-call-menu__device-row"
-                >
-                  {{#if this.currentVideoDeviceName}}
-                    <span class="resenha-call-menu__current-device">
-                      {{this.currentVideoDeviceName}}
-                    </span>
-                  {{/if}}
-                </DButton>
-              </dropdown.item>
-              <dropdown.divider />
-              <dropdown.item>
-                <DButton
-                  @action={{fn this.openVideoSettings videoMenu.close}}
-                  @icon="sliders"
-                  @label="resenha.video_settings.title"
-                  class="btn-transparent"
-                />
-              </dropdown.item>
-            </DDropdownMenu>
-          </:content>
-        </DMenu>
+        {{#unless this.isPip}}
+          <DMenu
+            @identifier="resenha-video-menu"
+            @icon="angle-down"
+            @title={{i18n "resenha.room.video_options"}}
+            @ariaLabel={{i18n "resenha.room.video_options"}}
+            @placement="top-end"
+            @onShow={{this.loadVideoDevices}}
+            @triggerClass="btn-default resenha-call-controls__combo-caret"
+          >
+            <:content as |videoMenu|>
+              <DDropdownMenu as |dropdown|>
+                <dropdown.item>
+                  <DButton
+                    @action={{this.openCameraMenu}}
+                    @forwardEvent={{true}}
+                    @icon="video"
+                    @label="resenha.video_settings.camera"
+                    @suffixIcon="angle-right"
+                    class="btn-transparent resenha-call-menu__device-row"
+                  >
+                    {{#if this.currentVideoDeviceName}}
+                      <span class="resenha-call-menu__current-device">
+                        {{this.currentVideoDeviceName}}
+                      </span>
+                    {{/if}}
+                  </DButton>
+                </dropdown.item>
+                <dropdown.divider />
+                <dropdown.item>
+                  <DButton
+                    @action={{fn this.openVideoSettings videoMenu.close}}
+                    @icon="sliders"
+                    @label="resenha.video_settings.title"
+                    class="btn-transparent"
+                  />
+                </dropdown.item>
+              </DDropdownMenu>
+            </:content>
+          </DMenu>
+        {{/unless}}
       </div>
     {{/if}}
     <DButton

@@ -1228,8 +1228,8 @@ export default class ResenhaWebrtcService extends Service {
     return this.#localVideo.toggleCamera();
   }
 
-  toggleScreenShare() {
-    return this.#localVideo.toggleScreenShare();
+  toggleScreenShare(options) {
+    return this.#localVideo.toggleScreenShare(options);
   }
 
   toggleVideoBlur() {

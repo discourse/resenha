@@ -54,6 +54,7 @@ tr_TR:
         expand: "Görüşme penceresini genişlet"
         hide: "Görüşme penceresini gizle"
         show: "Görüşme penceresini göster"
+        pip_open: "Pencere içinde pencere aç"
         overflow_tile:
           one: "%{count} katılımcı daha göster"
           other: "%{count} katılımcı daha göster"

@@ -87,6 +87,9 @@ plugins:
   resenha_video_background_blur_enabled:
     default: true
     client: true
+  resenha_picture_in_picture_enabled:
+    default: false
+    client: true
   resenha_subtitles_enabled:
     default: false
     client: true

@@ -56,6 +56,7 @@ en:
         expand: "Expand call widget"
         hide: "Hide call widget"
         show: "Show call widget"
+        pip_open: "Open picture-in-picture"
         overflow_tile:
           one: "Show %{count} more participant"
           other: "Show %{count} more participants"

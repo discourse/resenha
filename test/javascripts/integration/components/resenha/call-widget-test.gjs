@@ -92,8 +92,56 @@ class RouterStub extends Service {
   transitionTo() {}
 }
 
+class ResenhaPipStub extends Service {
+  @tracked pipWindow = null;
+  @tracked supported = false;
+
+  openCalls = 0;
+  closeCalls = 0;
+
+  get active() {
+    return !!this.pipWindow;
+  }
+
+  get pipBody() {
+    return this.pipWindow?.document.body ?? null;
+  }
+
+  open() {
+    this.openCalls++;
+  }
+
+  close() {
+    this.closeCalls++;
+  }
+
+  enableAutoPip() {}
+  disableAutoPip() {}
+}
+
 module("Integration | Component | resenha/call-widget", function (hooks) {
   setupRenderingTest(hooks);
+
+  // Laying the widget out in a foreign document (the pip test's iframe)
+  // trips Chrome's benign "ResizeObserver loop completed with undelivered
+  // notifications" report, which testem's global error hook turns into a
+  // failure — and it can land a frame after the test that caused it, so the
+  // filter has to cover the whole module.
+  let originalOnError;
+
+  hooks.before(function () {
+    originalOnError = window.onerror;
+    window.onerror = (message, ...args) => {
+      if (String(message).includes("ResizeObserver loop")) {
+        return true;
+      }
+      return originalOnError?.(message, ...args);
+    };
+  });
+
+  hooks.after(function () {
+    window.onerror = originalOnError;
+  });
 
   hooks.beforeEach(function () {
     this.currentUser = logIn(this.owner);
@@ -104,7 +152,10 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
     this.owner.register("service:resenha-webrtc", ResenhaWebrtcStub);
     this.owner.unregister("service:router");
     this.owner.register("service:router", RouterStub);
+    this.owner.unregister("service:resenha-pip");
+    this.owner.register("service:resenha-pip", ResenhaPipStub);
 
+    this.resenhaPip = this.owner.lookup("service:resenha-pip");
     this.resenhaRooms = this.owner.lookup("service:resenha-rooms");
     this.resenhaWebrtc = this.owner.lookup("service:resenha-webrtc");
     this.resenhaWebrtc.resenhaRooms = this.resenhaRooms;
@@ -346,6 +397,113 @@ module("Integration | Component | resenha/call-widget", function (hooks) {
     assert
       .dom(".resenha-call-widget__overflow-tile")
       .doesNotExist("no overflow tile when everyone fits");
+  });
+
+  test("pip mode fills the window and drops the floating chrome", async function (assert) {
+    // The gates that normally suppress the widget don't apply in the pip
+    // window: it covers for the tab itself.
+    this.owner.lookup("service:router").currentRoute = {
+      name: "resenha-room",
+      params: { slug: "test-room" },
+    };
+    this.resenhaWebrtc.callWidgetHidden = true;
+    this.resenhaPip.supported = true;
+
+    await render(<template><ResenhaCallWidget @pipMode={{true}} /></template>);
+
+    assert
+      .dom(".resenha-call-widget")
+      .exists("renders even on the room page with the widget hidden")
+      .hasClass("--pip");
+    assert.strictEqual(
+      document.querySelector(".resenha-call-widget").getAttribute("style"),
+      null,
+      "no floating geometry"
+    );
+    assert
+      .dom(".resenha-call-widget__resize")
+      .doesNotExist("no resize corners");
+    assert
+      .dom("[data-identifier='resenha-widget-room-menu']")
+      .doesNotExist("no portal-based room menu");
+    assert
+      .dom(".resenha-call-widget__pip")
+      .doesNotExist("no pip button inside the pip window");
+    assert
+      .dom(".resenha-call-widget__open-room")
+      .doesNotExist(
+        "no expand button in pip — the window chrome covers returning"
+      );
+  });
+
+  test("offers picture-in-picture only when the service supports it", async function (assert) {
+    await render(<template><ResenhaCallWidget /></template>);
+
+    assert
+      .dom(".resenha-call-widget__pip")
+      .doesNotExist("hidden while unsupported");
+    assert
+      .dom("[data-identifier='resenha-widget-room-menu']")
+      .exists("the room menu renders normally outside pip");
+
+    this.resenhaPip.supported = true;
+    await settled();
+
+    assert.dom(".resenha-call-widget__pip").exists();
+
+    await click(".resenha-call-widget__pip");
+    assert.strictEqual(
+      this.resenhaPip.openCalls,
+      1,
+      "clicking asks the service to open the pip window"
+    );
+  });
+
+  test("renders into a foreign document in pip mode", async function (assert) {
+    const iframe = document.createElement("iframe");
+    iframe.style.width = "400px";
+    iframe.style.height = "300px";
+    document.getElementById("ember-testing").appendChild(iframe);
+
+    // The real pip window gets the site's compiled CSS (pip-window.js);
+    // mirror the pieces the grid measurement depends on — without
+    // `contain: size` the ResizeObserver feeds back on itself.
+    const style = iframe.contentDocument.createElement("style");
+    style.textContent = `
+      body { margin: 0; }
+      .resenha-call-widget { display: flex; flex-direction: column; height: 100vh; }
+      .resenha-call-widget__tiles { flex: 1; min-height: 0; contain: size; display: flex; flex-wrap: wrap; overflow: hidden; }
+    `;
+    iframe.contentDocument.head.appendChild(style);
+
+    const pipBody = iframe.contentDocument.body;
+    this.set("pipBody", pipBody);
+
+    try {
+      await render(
+        <template>
+          {{#in-element this.pipBody}}
+            <ResenhaCallWidget @pipMode={{true}} />
+          {{/in-element}}
+        </template>
+      );
+
+      assert.true(
+        !!pipBody.querySelector(".resenha-call-widget.--pip"),
+        "the widget renders inside the foreign document"
+      );
+      assert.true(
+        !!pipBody.querySelector(".resenha-video-tile"),
+        "participant tiles render across documents"
+      );
+      assert.deepEqual(
+        this.resenhaWebrtc.watchingCalls.at(-1),
+        { roomId: 1, watching: true, options: {} },
+        "the pip widget keeps the room watched"
+      );
+    } finally {
+      iframe.remove();
+    }
   });
 
   test("resizing below the widget threshold enters extra minimized mode", async function (assert) {

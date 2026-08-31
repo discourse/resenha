@@ -129,13 +129,13 @@ export default class LocalVideoManager {
     await this.start("camera");
   }
 
-  async toggleScreenShare() {
+  async toggleScreenShare({ mediaDevices } = {}) {
     if (this.kind === "screen") {
       await this.stop();
       return;
     }
 
-    await this.start("screen");
+    await this.start("screen", { mediaDevices });
   }
 
   #enqueueOp(operation) {
@@ -414,7 +414,11 @@ export default class LocalVideoManager {
     }
   }
 
-  async start(kind) {
+  // `mediaDevices` lets the caller capture through another same-origin
+  // window's devices (the picture-in-picture window): transient activation
+  // is per-window, so a click there can't authorize this window's
+  // getDisplayMedia — but the stream it returns works fine across windows.
+  async start(kind, { mediaDevices = navigator.mediaDevices } = {}) {
     const roomId = this.#getFirstActiveRoomId();
     if (!roomId) {
       return;
@@ -437,7 +441,7 @@ export default class LocalVideoManager {
         // is disabled because it is tuned for speech and mangles content
         // audio; browsers without display-audio support just return no audio
         // track. The user can still untick audio in the picker.
-        stream = await navigator.mediaDevices.getDisplayMedia({
+        stream = await mediaDevices.getDisplayMedia({
           video: {
             frameRate: {
               max: screenCaptureFramerate(this.#getScreenQuality(roomId)),

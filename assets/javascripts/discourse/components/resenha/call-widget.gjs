@@ -12,6 +12,7 @@ import { avatarUrl } from "discourse/lib/avatar-utils";
 import DButton from "discourse/ui-kit/d-button";
 import DDropdownMenu from "discourse/ui-kit/d-dropdown-menu";
 import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 import { activeRingingEntries } from "../../lib/resenha/ringing";
 import {
@@ -34,7 +35,7 @@ const WIDGET_EXTRA_MINIMIZED_WIDTH = 118;
 const WIDGET_EXTRA_MINIMIZED_HEIGHT = 52;
 const WIDGET_MAX_WIDTH_RATIO = 0.5;
 const WIDGET_MAX_HEIGHT_RATIO = 0.5;
-const WIDGET_SIZE_KEY = "resenha-widget-size";
+export const WIDGET_SIZE_KEY = "resenha-widget-size";
 const DRAG_THRESHOLD = 3;
 const RESIZE_CORNERS = ["nw", "ne", "sw", "se"];
 
@@ -50,6 +51,7 @@ export default class ResenhaCallWidget extends Component {
   @service currentUser;
   @service modal;
   @service router;
+  @service resenhaPip;
   @service resenhaRooms;
   @service resenhaWebrtc;
   @service keyValueStore;
@@ -78,7 +80,9 @@ export default class ResenhaCallWidget extends Component {
 
   constructor() {
     super(...arguments);
-    this.#loadSize();
+    if (!this.isPip) {
+      this.#loadSize();
+    }
 
     // The widget is always mounted, so the tick only touches tracked state
     // while an ephemeral call could actually be showing ringing tiles.
@@ -169,7 +173,19 @@ export default class ResenhaCallWidget extends Component {
     );
   }
 
+  get isPip() {
+    return !!this.args.pipMode;
+  }
+
   get shouldRender() {
+    // In the pip window the widget is the whole page: it shows regardless of
+    // the opener's route or the hidden flag (mirroring how Meet's pip covers
+    // for the tab itself). The one-floating-surface invariant lives in the
+    // global call layer's pip/normal branch.
+    if (this.isPip) {
+      return !!this.room;
+    }
+
     return (
       !!this.room &&
       !this.onActiveRoomPage &&
@@ -323,7 +339,19 @@ export default class ResenhaCallWidget extends Component {
     return i18n("resenha.widget.expand");
   }
 
+  get pipTitle() {
+    return i18n("resenha.widget.pip_open");
+  }
+
+  get showPipButton() {
+    return !this.isPip && this.resenhaPip.supported;
+  }
+
   get widgetStyle() {
+    if (this.isPip) {
+      return null;
+    }
+
     const parts = [];
 
     if (this.capabilities.touch) {
@@ -388,13 +416,25 @@ export default class ResenhaCallWidget extends Component {
 
   @action
   openRoom() {
-    if (this.room?.slug) {
-      this.router.transitionTo("resenha-room", this.room.slug);
+    if (!this.room?.slug) {
+      return;
     }
+
+    if (this.isPip) {
+      // Returning from pip: dismiss the window and pull the opener tab back
+      // to the foreground before navigating it.
+      this.resenhaPip.close();
+      window.focus();
+    }
+
+    this.router.transitionTo("resenha-room", this.room.slug);
   }
 
   @action
   startDrag(event) {
+    if (this.isPip) {
+      return;
+    }
     if (event.type === "mousedown" && event.button !== 0) {
       return;
     }
@@ -479,6 +519,9 @@ export default class ResenhaCallWidget extends Component {
 
   @action
   startResize(corner, event) {
+    if (this.isPip) {
+      return;
+    }
     if (event.type === "mousedown" && event.button !== 0) {
       return;
     }
@@ -604,6 +647,11 @@ export default class ResenhaCallWidget extends Component {
   }
 
   @action
+  openPip() {
+    this.resenhaPip.open();
+  }
+
+  @action
   expandWidget() {
     this.extraMinimized = false;
     this.widgetWidth = null;
@@ -673,6 +721,13 @@ export default class ResenhaCallWidget extends Component {
   }
 
   stopWatchingWidgetRoom() {
+    // A pip widget can be destroyed while the room page for the same room is
+    // showing; unwatching here would tear down the page's video
+    // subscriptions out from under it.
+    if (this.onActiveRoomPage) {
+      return;
+    }
+
     const roomId = this.room?.id;
     if (roomId) {
       this.resenhaWebrtc.setWatching(roomId, false, { keepVideo: true });
@@ -685,6 +740,7 @@ export default class ResenhaCallWidget extends Component {
       <section
         class={{dConcatClass
           "resenha-call-widget"
+          (if this.isPip "--pip")
           (if this.resizing "--resizing")
           (if this.dragging "--dragging")
           (if this.extraMinimized "--extra-minimized")
@@ -768,55 +824,77 @@ export default class ResenhaCallWidget extends Component {
               class="resenha-call-widget__expand"
             />
           {{else}}
-            <ResenhaCallControls @room={{this.room}} />
-            <DButton
-              @action={{this.openRoom}}
-              @icon="expand"
-              @translatedTitle={{this.openRoomTitle}}
-              class="btn-default"
-            />
-            <DMenu
-              @identifier="resenha-widget-room-menu"
-              @icon="ellipsis-vertical"
-              @title={{i18n "resenha.room.more"}}
-              @ariaLabel={{i18n "resenha.room.more"}}
-              @placement="top-end"
-              @modalForMobile={{true}}
-              @triggerClass="btn-default"
-            >
-              <:content as |roomMenu|>
-                <DDropdownMenu as |dropdown|>
-                  {{#if this.chatAvailable}}
+            <ResenhaCallControls @room={{this.room}} @pipMode={{this.isPip}} />
+            {{#if this.showPipButton}}
+              {{! Plain <button>: requestWindow() consumes transient
+              activation, and DButton defers actions via next(), which lands
+              outside the click dispatch. }}
+              <button
+                type="button"
+                class="btn btn-icon no-text btn-default resenha-call-widget__pip"
+                title={{this.pipTitle}}
+                aria-label={{this.pipTitle}}
+                {{on "click" this.openPip}}
+              >
+                {{dIcon "window-restore"}}
+                <span aria-hidden="true">&#8203;</span>
+              </button>
+            {{/if}}
+            {{! No expand affordance in pip: the browser chrome's Back to Tab
+            and Close cover returning, and closing the pip re-renders the
+            floating widget on its own. }}
+            {{#unless this.isPip}}
+              <DButton
+                @action={{this.openRoom}}
+                @icon="expand"
+                @translatedTitle={{this.openRoomTitle}}
+                class="btn-default resenha-call-widget__open-room"
+              />
+            {{/unless}}
+            {{#unless this.isPip}}
+              <DMenu
+                @identifier="resenha-widget-room-menu"
+                @icon="ellipsis-vertical"
+                @title={{i18n "resenha.room.more"}}
+                @ariaLabel={{i18n "resenha.room.more"}}
+                @placement="top-end"
+                @modalForMobile={{true}}
+                @triggerClass="btn-default"
+              >
+                <:content as |roomMenu|>
+                  <DDropdownMenu as |dropdown|>
+                    {{#if this.chatAvailable}}
+                      <dropdown.item>
+                        <DButton
+                          @action={{fn this.openChatFromMenu roomMenu.close}}
+                          @icon="far-comment"
+                          @translatedLabel={{this.chatTitle}}
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                    {{/if}}
+                    {{#if this.room.can_invite}}
+                      <dropdown.item>
+                        <DButton
+                          @action={{fn this.openInviteModal roomMenu.close}}
+                          @icon="user-plus"
+                          @label="resenha.invite.menu"
+                          class="btn-transparent"
+                        />
+                      </dropdown.item>
+                    {{/if}}
                     <dropdown.item>
                       <DButton
-                        @action={{fn this.openChatFromMenu roomMenu.close}}
-                        @icon="far-comment"
-                        @translatedLabel={{this.chatTitle}}
+                        @action={{fn this.openRoomInfo roomMenu.close}}
+                        @icon="circle-info"
+                        @label="resenha.room.info"
                         class="btn-transparent"
                       />
                     </dropdown.item>
-                  {{/if}}
-                  {{#if this.room.can_invite}}
-                    <dropdown.item>
-                      <DButton
-                        @action={{fn this.openInviteModal roomMenu.close}}
-                        @icon="user-plus"
-                        @label="resenha.invite.menu"
-                        class="btn-transparent"
-                      />
-                    </dropdown.item>
-                  {{/if}}
-                  <dropdown.item>
-                    <DButton
-                      @action={{fn this.openRoomInfo roomMenu.close}}
-                      @icon="circle-info"
-                      @label="resenha.room.info"
-                      class="btn-transparent"
-                    />
-                  </dropdown.item>
-                </DDropdownMenu>
-              </:content>
-            </DMenu>
+                  </DDropdownMenu>
+                </:content>
+              </DMenu>
+            {{/unless}}
           {{/if}}
           <DButton
             @action={{this.leaveRoom}}
@@ -826,20 +904,22 @@ export default class ResenhaCallWidget extends Component {
           />
         </footer>
 
-        {{#unless this.capabilities.touch}}
-          {{#each this.resizeCorners as |corner|}}
-            {{#unless this.extraMinimized}}
-              <div
-                class={{dConcatClass
-                  "resenha-call-widget__resize"
-                  (concat "--" corner)
-                }}
-                aria-hidden="true"
-                {{on "mousedown" (fn this.startResize corner)}}
-                {{on "touchstart" (fn this.startResize corner)}}
-              ></div>
-            {{/unless}}
-          {{/each}}
+        {{#unless this.isPip}}
+          {{#unless this.capabilities.touch}}
+            {{#each this.resizeCorners as |corner|}}
+              {{#unless this.extraMinimized}}
+                <div
+                  class={{dConcatClass
+                    "resenha-call-widget__resize"
+                    (concat "--" corner)
+                  }}
+                  aria-hidden="true"
+                  {{on "mousedown" (fn this.startResize corner)}}
+                  {{on "touchstart" (fn this.startResize corner)}}
+                ></div>
+              {{/unless}}
+            {{/each}}
+          {{/unless}}
         {{/unless}}
       </section>
     {{/if}}
